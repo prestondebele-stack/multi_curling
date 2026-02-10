@@ -140,6 +140,7 @@
             angle: 0,
             active: true,
             moving: false,
+            hasHitStone: false, // tracks if this stone has contacted another stone
         };
     }
 
@@ -1706,10 +1707,14 @@
                 deactivateStone(stone, true);
             }
 
-            // Didn't reach the far hog line (only for delivered stone after it has stopped)
-            if (stone === gameState.deliveredStone && !stone.moving && stone.y < P.farHogLine) {
-                hogLineViolation = { x: stone.x, y: stone.y, timer: 1500 }; // show text for 1.5s
-                deactivateStone(stone, true);
+            // Didn't completely cross the far hog line
+            // Rule: stone must COMPLETELY cross (leading edge past the line)
+            // Exception: if the delivered stone hit another stone first, it stays in play
+            if (stone === gameState.deliveredStone && !stone.moving && (stone.y - STONE_R) < P.farHogLine) {
+                if (!stone.hasHitStone) {
+                    hogLineViolation = { x: stone.x, y: stone.y, timer: 1500 };
+                    deactivateStone(stone, true);
+                }
             }
         }
     }

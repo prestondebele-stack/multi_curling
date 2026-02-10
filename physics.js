@@ -326,6 +326,11 @@ const CurlingPhysics = (() => {
         // Mark both as moving
         a.moving = true;
         b.moving = true;
+
+        // Track that these stones have been involved in a collision
+        // (used for hog-line exception: stones that hit another stone stay in play)
+        a.hasHitStone = true;
+        b.hasHitStone = true;
     }
 
     // Playing area bounds check
