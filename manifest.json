@@ -1,0 +1,20 @@
+{
+    "name": "Capital Curling Club",
+    "short_name": "Curling",
+    "description": "Realistic curling game with real physics — Capital Curling Club, Bismarck ND",
+    "start_url": "./",
+    "scope": "./",
+    "display": "standalone",
+    "orientation": "any",
+    "background_color": "#1a1a2e",
+    "theme_color": "#1565c0",
+    "icons": [
+        {
+            "src": "ccc-final-png_orig.png",
+            "sizes": "192x192 512x512",
+            "type": "image/png",
+            "purpose": "any"
+        }
+    ],
+    "categories": ["games", "sports"]
+}
