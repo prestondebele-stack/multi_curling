@@ -149,6 +149,9 @@
     // Trail for showing curl path
     let stoneTrail = [];
 
+    // Hog-line violation indicator
+    let hogLineViolation = null; // { x, y, timer }
+
     function deliverStone() {
         const aimDeg = parseFloat(document.getElementById('aim-slider').value);
         const weightPct = parseFloat(document.getElementById('weight-slider').value);
@@ -1213,228 +1216,7 @@
         ctx.setLineDash([]);
     }
 
-    // --------------------------------------------------------
-    // DOWN-ICE (PIP) VIEW - overhead house view for aiming
-    // --------------------------------------------------------
-    // roundRect polyfill for older browsers
-    if (!CanvasRenderingContext2D.prototype.roundRect) {
-        CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
-            if (typeof r === 'number') r = [r];
-            const rad = r[0] || 0;
-            this.moveTo(x + rad, y);
-            this.arcTo(x + w, y, x + w, y + h, rad);
-            this.arcTo(x + w, y + h, x, y + h, rad);
-            this.arcTo(x, y + h, x, y, rad);
-            this.arcTo(x, y, x + w, y, rad);
-            this.closePath();
-        };
-    }
-    function drawDownIceView() {
-        // Show during aiming and while stone is in flight
-        if (gameState.phase !== 'aiming' && gameState.phase !== 'delivering' &&
-            gameState.phase !== 'waitingNextTurn') return;
 
-        // PIP dimensions and position (top-left of canvas)
-        // Scale down on mobile so it doesn't dominate the smaller canvas
-        const mobile = isMobile();
-        const pipMargin = mobile ? 6 : 12;
-        const pipW = mobile
-            ? Math.min(100, canvas.width * 0.25)
-            : Math.min(280, canvas.width * 0.28);
-        // House is roughly square (width:height ≈ sheet width : house diameter*2+margin)
-        const houseViewWidth = CurlingPhysics.SHEET.width;  // 4.75m
-        const houseViewHeight = HOUSE.twelveFoot * 2 + 4;   // ~7.66m visible
-        const pipH = pipW * (houseViewHeight / houseViewWidth);
-
-        const pipX = pipMargin;
-        const pipY = pipMargin;
-
-        // PIP coordinate transforms
-        const pipScale = pipW / houseViewWidth;
-        const houseCenter = P.farTeeLine; // y-center of the view
-
-        function toPipX(realX) {
-            return pipX + (realX + houseViewWidth / 2) * pipScale;
-        }
-        function toPipY(realY) {
-            return pipY + pipH - (realY - (houseCenter - houseViewHeight / 2)) * pipScale;
-        }
-        function toPipLen(m) {
-            return m * pipScale;
-        }
-
-        // Background with border
-        ctx.save();
-
-        // Clip to PIP rect
-        ctx.beginPath();
-        ctx.roundRect(pipX, pipY, pipW, pipH, 6);
-        ctx.clip();
-
-        // Ice background
-        ctx.fillStyle = '#dde5ee';
-        ctx.fillRect(pipX, pipY, pipW, pipH);
-
-        // House rings
-        const hcx = toPipX(0);
-        const hcy = toPipY(P.farTeeLine);
-
-        // 12-foot blue
-        ctx.fillStyle = '#2a6cb6';
-        ctx.beginPath();
-        ctx.arc(hcx, hcy, toPipLen(HOUSE.twelveFoot), 0, Math.PI * 2);
-        ctx.fill();
-        // 8-foot white
-        ctx.fillStyle = '#e8ecf0';
-        ctx.beginPath();
-        ctx.arc(hcx, hcy, toPipLen(HOUSE.eightFoot), 0, Math.PI * 2);
-        ctx.fill();
-        // 4-foot red
-        ctx.fillStyle = '#cc3333';
-        ctx.beginPath();
-        ctx.arc(hcx, hcy, toPipLen(HOUSE.fourFoot), 0, Math.PI * 2);
-        ctx.fill();
-        // Button white
-        ctx.fillStyle = '#e8ecf0';
-        ctx.beginPath();
-        ctx.arc(hcx, hcy, toPipLen(HOUSE.button * 2.5), 0, Math.PI * 2);
-        ctx.fill();
-
-        // Ring outlines
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-        ctx.lineWidth = 1;
-        for (const r of [HOUSE.twelveFoot, HOUSE.eightFoot, HOUSE.fourFoot]) {
-            ctx.beginPath();
-            ctx.arc(hcx, hcy, toPipLen(r), 0, Math.PI * 2);
-            ctx.stroke();
-        }
-
-        // Tee line
-        ctx.strokeStyle = 'rgba(192, 57, 43, 0.5)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(toPipX(-houseViewWidth / 2), hcy);
-        ctx.lineTo(toPipX(houseViewWidth / 2), hcy);
-        ctx.stroke();
-
-        // Center line
-        ctx.beginPath();
-        ctx.moveTo(hcx, pipY);
-        ctx.lineTo(hcx, pipY + pipH);
-        ctx.stroke();
-
-        // Hog line
-        const hogY = toPipY(P.farHogLine);
-        if (hogY < pipY + pipH && hogY > pipY) {
-            ctx.strokeStyle = 'rgba(192, 57, 43, 0.4)';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(toPipX(-houseViewWidth / 2), hogY);
-            ctx.lineTo(toPipX(houseViewWidth / 2), hogY);
-            ctx.stroke();
-        }
-
-        // Back line
-        const backY = toPipY(P.farBackLine);
-        if (backY < pipY + pipH && backY > pipY) {
-            ctx.strokeStyle = 'rgba(192, 57, 43, 0.4)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(toPipX(-houseViewWidth / 2), backY);
-            ctx.lineTo(toPipX(houseViewWidth / 2), backY);
-            ctx.stroke();
-        }
-
-        // Draw all existing stones (mini versions)
-        const stoneR = toPipLen(STONE_R);
-        for (const stone of gameState.stones) {
-            if (!stone.active) continue;
-            const sx = toPipX(stone.x);
-            const sy = toPipY(stone.y);
-            // Skip if off the PIP
-            if (sx < pipX - stoneR || sx > pipX + pipW + stoneR) continue;
-            if (sy < pipY - stoneR || sy > pipY + pipH + stoneR) continue;
-
-            ctx.fillStyle = stone.team === TEAMS.RED ? '#e53935' : '#fdd835';
-            ctx.beginPath();
-            ctx.arc(sx, sy, Math.max(stoneR, 4), 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = stone.team === TEAMS.RED ? '#b71c1c' : '#f9a825';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-        }
-
-        // Aim projection line (during aiming)
-        if (gameState.phase === 'aiming') {
-            const aimDeg = parseFloat(document.getElementById('aim-slider').value);
-            const aimRad = aimDeg * Math.PI / 180;
-
-            // Project a line from hack through the house
-            const startX = 0;
-            const startY = P.hack + 1.0;
-            const lineLen = 45;
-            const endX = startX + lineLen * Math.sin(aimRad);
-            const endY = startY + lineLen * Math.cos(aimRad);
-
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([6, 4]);
-            ctx.beginPath();
-            ctx.moveTo(toPipX(startX), toPipY(startY));
-            ctx.lineTo(toPipX(endX), toPipY(endY));
-            ctx.stroke();
-            ctx.setLineDash([]);
-
-            // Aim crosshair at the tee line intersection
-            const teeIntersectX = startX + (P.farTeeLine - startY) * Math.tan(aimRad);
-            const crossX = toPipX(teeIntersectX);
-            const crossY = hcy;
-            const crossSize = 6;
-
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([]);
-            ctx.beginPath();
-            ctx.moveTo(crossX - crossSize, crossY);
-            ctx.lineTo(crossX + crossSize, crossY);
-            ctx.moveTo(crossX, crossY - crossSize);
-            ctx.lineTo(crossX, crossY + crossSize);
-            ctx.stroke();
-        }
-
-        // Delivered stone during flight
-        if (gameState.deliveredStone && gameState.deliveredStone.active) {
-            const ds = gameState.deliveredStone;
-            const dsx = toPipX(ds.x);
-            const dsy = toPipY(ds.y);
-            if (dsx >= pipX && dsx <= pipX + pipW && dsy >= pipY && dsy <= pipY + pipH) {
-                ctx.fillStyle = ds.team === TEAMS.RED ? '#e53935' : '#fdd835';
-                ctx.beginPath();
-                ctx.arc(dsx, dsy, Math.max(stoneR, 5), 0, Math.PI * 2);
-                ctx.fill();
-                // Pulsing outline for the active stone
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-            }
-        }
-
-        ctx.restore();
-
-        // PIP border
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.roundRect(pipX, pipY, pipW, pipH, 6);
-        ctx.stroke();
-
-        // Label
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(pipX, pipY + pipH - 18, 68, 18);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-        ctx.font = '11px sans-serif';
-        ctx.fillText('Down Ice', pipX + 6, pipY + pipH - 5);
-    }
 
     function drawSweepEffect() {
         if (!gameState.isSweeping || !gameState.deliveredStone || !gameState.deliveredStone.moving) return;
@@ -1479,19 +1261,46 @@
         const startX = 0;
         const startY = P.hack + 1.0;
 
-        // Draw a faint line showing the aim direction
-        const lineLen = 35; // meters
+        // Draw a dark dashed line showing the aim direction
+        const lineLen = 45; // meters — extends past the house
         const endX = startX + lineLen * Math.sin(aimRad);
         const endY = startY + lineLen * Math.cos(aimRad);
 
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([6, 6]);
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([8, 6]);
         ctx.beginPath();
         ctx.moveTo(toCanvasX(startX), toCanvasY(startY));
         ctx.lineTo(toCanvasX(endX), toCanvasY(endY));
         ctx.stroke();
         ctx.setLineDash([]);
+
+        // Crosshair at the tee line intersection
+        // Find where the aim line crosses y = P.farTeeLine
+        const tToTee = (P.farTeeLine - startY) / Math.cos(aimRad);
+        const crossX = startX + tToTee * Math.sin(aimRad);
+        const crossY = P.farTeeLine;
+        const cx = toCanvasX(crossX);
+        const cy = toCanvasY(crossY);
+        const crossSize = toCanvasLen(0.25);
+
+        // Crosshair lines (+)
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(cx - crossSize, cy);
+        ctx.lineTo(cx + crossSize, cy);
+        ctx.moveTo(cx, cy - crossSize);
+        ctx.lineTo(cx, cy + crossSize);
+        ctx.stroke();
+
+        // Crosshair circle
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, crossSize * 1.5, 0, Math.PI * 2);
+        ctx.stroke();
 
         // Draw the stone at delivery position (preview)
         const previewStone = {
@@ -1665,6 +1474,19 @@
             }
         }
 
+        // Tick hog-line violation indicator
+        if (hogLineViolation) {
+            hogLineViolation.timer -= frameDeltaMs;
+            if (hogLineViolation.timer <= 0) hogLineViolation = null;
+        }
+
+        // Auto-stop sweeping when stone passes the far hog line
+        if (gameState.isSweeping && gameState.deliveredStone) {
+            if (gameState.deliveredStone.y > P.farHogLine) {
+                stopSweeping();
+            }
+        }
+
         // Render
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawSheet();
@@ -1680,10 +1502,44 @@
 
         drawSweepEffect();
         drawScoreOverlay();
+        drawHogLineViolation();
         drawVignette();
-        drawDownIceView();
 
         requestAnimationFrame(gameLoop);
+    }
+
+    // Hog-line violation text on the ice
+    function drawHogLineViolation() {
+        if (!hogLineViolation) return;
+        const alpha = Math.min(1, hogLineViolation.timer / 300); // fade out in last 300ms
+        const cx = toCanvasX(hogLineViolation.x);
+        const cy = toCanvasY(hogLineViolation.y);
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+
+        // Background pill
+        ctx.fillStyle = 'rgba(200, 30, 30, 0.85)';
+        const textW = 180;
+        const textH = 36;
+        ctx.beginPath();
+        ctx.moveTo(cx - textW / 2 + 8, cy - textH / 2);
+        ctx.lineTo(cx + textW / 2 - 8, cy - textH / 2);
+        ctx.arcTo(cx + textW / 2, cy - textH / 2, cx + textW / 2, cy, 8);
+        ctx.arcTo(cx + textW / 2, cy + textH / 2, cx - textW / 2, cy + textH / 2, 8);
+        ctx.arcTo(cx - textW / 2, cy + textH / 2, cx - textW / 2, cy, 8);
+        ctx.arcTo(cx - textW / 2, cy - textH / 2, cx + textW / 2, cy - textH / 2, 8);
+        ctx.closePath();
+        ctx.fill();
+
+        // Text
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 18px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('HOG LINE', cx, cy + 1);
+
+        ctx.restore();
     }
 
     // Vignette overlay — darkens edges for cinematic focus
@@ -1725,13 +1581,25 @@
                 deactivateStone(stone, true);
             }
 
-            // Off the sides
-            if (Math.abs(stone.x) > halfW + STONE_R) {
+            // Side-wall bounce (reflect off boards instead of vanishing)
+            if (stone.x > halfW - STONE_R) {
+                stone.x = halfW - STONE_R;
+                stone.vx = -Math.abs(stone.vx) * 0.5; // bounce with energy loss
+                stone.omega *= 0.7; // lose some spin on wall hit
+            } else if (stone.x < -halfW + STONE_R) {
+                stone.x = -halfW + STONE_R;
+                stone.vx = Math.abs(stone.vx) * 0.5;
+                stone.omega *= 0.7;
+            }
+
+            // Way off the sides (safety — shouldn't happen with bounce)
+            if (Math.abs(stone.x) > halfW + STONE_R * 2) {
                 deactivateStone(stone, true);
             }
 
             // Didn't reach the far hog line (only for delivered stone after it has stopped)
             if (stone === gameState.deliveredStone && !stone.moving && stone.y < P.farHogLine) {
+                hogLineViolation = { x: stone.x, y: stone.y, timer: 1500 }; // show text for 1.5s
                 deactivateStone(stone, true);
             }
         }
@@ -1820,6 +1688,10 @@
 
     function startSweeping() {
         if (gameState.phase === 'delivering' && gameState.deliveredStone?.moving) {
+            // Sweeping only allowed between the hog lines (real curling rule)
+            const stoneY = gameState.deliveredStone.y;
+            if (stoneY < P.nearHogLine || stoneY > P.farHogLine) return;
+
             gameState.isSweeping = true;
             if (gameState.sweepLevel === 'none') {
                 gameState.sweepLevel = 'hard';
