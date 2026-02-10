@@ -1,0 +1,1031 @@
+// ============================================================
+// CURLING GAME - Main game logic and rendering
+// ============================================================
+
+(function () {
+    const canvas = document.getElementById('curling-canvas');
+    const ctx = canvas.getContext('2d');
+
+    // --------------------------------------------------------
+    // SCALING & VIEWPORT
+    // --------------------------------------------------------
+    // We show from just before the far hog line to past the back line
+    // This gives the best view of the house and incoming stones
+    const VIEW = {
+        // Meters of sheet visible vertically
+        yMin: 28,       // show from ~28m (a bit before far hog)
+        yMax: 41.5,     // past the back line
+        xPadding: 0.5,  // extra meters on sides
+
+        // Full sheet view for delivery
+        yMinFull: -1,
+        yMaxFull: 42,
+
+        // Current view (interpolated during delivery)
+        currentYMin: 28,
+        currentYMax: 41.5,
+
+        // Camera tracking
+        followStone: false,
+        targetYMin: 28,
+        targetYMax: 41.5,
+    };
+
+    let scale = 1; // pixels per meter
+    let offsetX = 0;
+    let offsetY = 0;
+
+    function resizeCanvas() {
+        const uiWidth = 300;
+        canvas.width = window.innerWidth - uiWidth;
+        canvas.height = window.innerHeight;
+        pebblePattern = null; // invalidate cached pattern on canvas resize
+        updateScale();
+    }
+
+    function updateScale() {
+        const viewHeight = VIEW.currentYMax - VIEW.currentYMin;
+        const viewWidth = CurlingPhysics.SHEET.width + VIEW.xPadding * 2;
+
+        const scaleX = canvas.width / viewWidth;
+        const scaleY = canvas.height / viewHeight;
+        scale = Math.min(scaleX, scaleY);
+
+        offsetX = (canvas.width - viewWidth * scale) / 2 + VIEW.xPadding * scale;
+        offsetY = canvas.height; // y=0 at bottom, increases upward
+    }
+
+    // Convert real coordinates to canvas pixels
+    function toCanvasX(realX) {
+        return offsetX + (realX + CurlingPhysics.SHEET.width / 2) * scale;
+    }
+
+    function toCanvasY(realY) {
+        return offsetY - (realY - VIEW.currentYMin) * scale;
+    }
+
+    function toCanvasLen(meters) {
+        return meters * scale;
+    }
+
+    window.addEventListener('resize', () => {
+        resizeCanvas();
+    });
+
+    // --------------------------------------------------------
+    // GAME STATE
+    // --------------------------------------------------------
+    const P = CurlingPhysics.POSITIONS;
+    const HOUSE = CurlingPhysics.HOUSE;
+    const STONE_R = CurlingPhysics.STONE.radius;
+
+    const TEAMS = {
+        RED: 'red',
+        YELLOW: 'yellow'
+    };
+
+    let gameState = {
+        stones: [],
+        currentTeam: TEAMS.RED,
+        redThrown: 0,
+        yellowThrown: 0,
+        currentEnd: 1,
+        totalEnds: 10,
+        redScore: 0,
+        yellowScore: 0,
+        endScores: [],
+        phase: 'aiming',    // 'aiming', 'delivering', 'settling', 'scoring', 'gameover'
+        sweepLevel: 'none',
+        isSweeping: false,
+        deliveredStone: null,
+        simSpeed: 3.0,       // simulation speed multiplier for faster gameplay
+    };
+
+    // --------------------------------------------------------
+    // STONE CREATION
+    // --------------------------------------------------------
+    function createStone(team, x, y, vx, vy, omega) {
+        return {
+            team,
+            x,
+            y,
+            vx: vx || 0,
+            vy: vy || 0,
+            omega: omega || 0,
+            angle: 0,
+            active: true,
+            moving: false,
+        };
+    }
+
+    // --------------------------------------------------------
+    // DELIVERY
+    // --------------------------------------------------------
+    // Trail for showing curl path
+    let stoneTrail = [];
+
+    function deliverStone() {
+        const aimDeg = parseFloat(document.getElementById('aim-slider').value);
+        const weightPct = parseFloat(document.getElementById('weight-slider').value);
+        const spinAmount = parseFloat(document.getElementById('spin-amount-slider').value);
+        const spinDir = document.getElementById('spin-cw').classList.contains('active') ? 1 : -1;
+
+        const speed = CurlingPhysics.weightToSpeed(weightPct);
+        const aimRad = aimDeg * Math.PI / 180;
+
+        // Stone starts at hack, center line, moving toward far end
+        const startX = 0;
+        const startY = P.hack + 1.0; // just past the hack
+
+        const vx = speed * Math.sin(aimRad);
+        const vy = speed * Math.cos(aimRad);
+
+        const omega = CurlingPhysics.rotationsToAngularVelocity(spinAmount, speed) * spinDir;
+
+        const stone = createStone(gameState.currentTeam, startX, startY, vx, vy, omega);
+        stone.moving = true;
+        stoneTrail = [{ x: startX, y: startY }];
+        gameState.stones.push(stone);
+        gameState.deliveredStone = stone;
+
+        // Update throw count
+        if (gameState.currentTeam === TEAMS.RED) {
+            gameState.redThrown++;
+        } else {
+            gameState.yellowThrown++;
+        }
+
+        gameState.phase = 'delivering';
+        document.getElementById('throw-btn').disabled = true;
+        document.getElementById('sweep-toggle-btn').style.display = 'block';
+        document.getElementById('throw-btn').style.display = 'none';
+
+        // Camera follows stone
+        VIEW.followStone = true;
+    }
+
+    // --------------------------------------------------------
+    // SCORING
+    // --------------------------------------------------------
+    function calculateEndScore() {
+        // Find the stone closest to the button
+        const teeX = 0;
+        const teeY = P.farTeeLine;
+
+        const activeStones = gameState.stones.filter(s => s.active);
+
+        if (activeStones.length === 0) return { team: null, points: 0 };
+
+        // Sort all stones by distance to button
+        const scored = activeStones.map(s => ({
+            stone: s,
+            dist: Math.sqrt((s.x - teeX) ** 2 + (s.y - teeY) ** 2),
+        })).sort((a, b) => a.dist - b.dist);
+
+        // Only stones within the 12-foot house score
+        const inHouse = scored.filter(s => s.dist <= HOUSE.twelveFoot + STONE_R);
+
+        if (inHouse.length === 0) return { team: null, points: 0 };
+
+        const closestTeam = inHouse[0].stone.team;
+
+        // Count consecutive stones of the closest team
+        // that are closer than the nearest stone of the other team
+        let points = 0;
+        const otherTeamClosest = inHouse.find(s => s.stone.team !== closestTeam);
+        const otherDist = otherTeamClosest ? otherTeamClosest.dist : Infinity;
+
+        for (const s of inHouse) {
+            if (s.stone.team === closestTeam && s.dist < otherDist) {
+                points++;
+            }
+        }
+
+        return { team: closestTeam, points };
+    }
+
+    function endEnd() {
+        const result = calculateEndScore();
+
+        gameState.endScores.push(result);
+
+        if (result.team === TEAMS.RED) {
+            gameState.redScore += result.points;
+        } else if (result.team === TEAMS.YELLOW) {
+            gameState.yellowScore += result.points;
+        }
+
+        document.getElementById('red-total').textContent = gameState.redScore;
+        document.getElementById('yellow-total').textContent = gameState.yellowScore;
+
+        if (gameState.currentEnd >= gameState.totalEnds) {
+            gameState.phase = 'gameover';
+            showGameOver();
+            return;
+        }
+
+        // Start next end
+        // Team that scored goes first in next end (disadvantage)
+        // Team that didn't score gets hammer (last stone advantage)
+        gameState.currentEnd++;
+        document.getElementById('current-end').textContent = gameState.currentEnd;
+
+        if (result.team && result.points > 0) {
+            gameState.currentTeam = result.team; // scoring team goes first
+        }
+        // If blank end, same team keeps hammer (order stays)
+
+        gameState.redThrown = 0;
+        gameState.yellowThrown = 0;
+        gameState.stones = [];
+        gameState.phase = 'aiming';
+        gameState.deliveredStone = null;
+
+        updateUI();
+
+        // Delay briefly so player sees the score
+        setTimeout(() => {
+            document.getElementById('throw-btn').disabled = false;
+        }, 500);
+    }
+
+    function showGameOver() {
+        const screen = document.getElementById('game-over-screen');
+        const winnerText = document.getElementById('winner-text');
+        const finalScores = document.getElementById('final-scores');
+
+        let winner;
+        if (gameState.redScore > gameState.yellowScore) {
+            winner = 'Red Wins!';
+        } else if (gameState.yellowScore > gameState.redScore) {
+            winner = 'Yellow Wins!';
+        } else {
+            winner = "It's a Tie!";
+        }
+
+        winnerText.textContent = winner;
+        finalScores.innerHTML = `
+            <div style="color:#e53935">Red: ${gameState.redScore}</div>
+            <div style="color:#fdd835">Yellow: ${gameState.yellowScore}</div>
+            <br>
+            <div style="font-size:16px; color:#888">
+                ${gameState.endScores.map((s, i) =>
+            `End ${i + 1}: ${s.team ? (s.team === 'red' ? 'Red' : 'Yellow') + ' +' + s.points : 'Blank'}`
+        ).join('<br>')}
+            </div>
+        `;
+
+        screen.style.display = 'flex';
+    }
+
+    // --------------------------------------------------------
+    // UI
+    // --------------------------------------------------------
+    function updateUI() {
+        const teamLabel = document.getElementById('current-team-label');
+        const stonesLabel = document.getElementById('stones-remaining');
+
+        teamLabel.textContent = gameState.currentTeam === TEAMS.RED ? "Red's Turn" : "Yellow's Turn";
+        teamLabel.style.color = gameState.currentTeam === TEAMS.RED ? '#e53935' : '#fdd835';
+
+        const thrown = gameState.currentTeam === TEAMS.RED ? gameState.redThrown : gameState.yellowThrown;
+        stonesLabel.textContent = `Stone ${thrown + 1} of 8`;
+
+        document.getElementById('throw-btn').style.display = 'block';
+        document.getElementById('sweep-toggle-btn').style.display = 'none';
+    }
+
+    function nextTurn() {
+        // Switch teams (alternating throws)
+        if (gameState.currentTeam === TEAMS.RED) {
+            gameState.currentTeam = TEAMS.YELLOW;
+        } else {
+            gameState.currentTeam = TEAMS.RED;
+        }
+
+        // Check if all 16 stones have been thrown
+        if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
+            gameState.phase = 'scoring';
+            setTimeout(() => endEnd(), 1500);
+            return;
+        }
+
+        // If current team has thrown all 8, switch
+        if (gameState.currentTeam === TEAMS.RED && gameState.redThrown >= 8) {
+            gameState.currentTeam = TEAMS.YELLOW;
+        } else if (gameState.currentTeam === TEAMS.YELLOW && gameState.yellowThrown >= 8) {
+            gameState.currentTeam = TEAMS.RED;
+        }
+
+        gameState.phase = 'aiming';
+        gameState.deliveredStone = null;
+        updateUI();
+
+        document.getElementById('throw-btn').disabled = false;
+        document.getElementById('aim-slider').value = 0;
+        document.getElementById('aim-value').textContent = '0.0°';
+    }
+
+    // --------------------------------------------------------
+    // RENDERING
+    // --------------------------------------------------------
+
+    // Ice texture colors
+    const ICE_COLOR = '#e8eef5';
+    const ICE_LIGHT = '#edf2f8';
+    const LINE_COLOR = '#c0392b';
+    const CENTER_LINE = '#444';
+
+    function drawSheet() {
+        // Background
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Ice surface
+        const leftEdge = toCanvasX(-CurlingPhysics.SHEET.width / 2);
+        const rightEdge = toCanvasX(CurlingPhysics.SHEET.width / 2);
+        const topEdge = toCanvasY(VIEW.currentYMax);
+        const bottomEdge = toCanvasY(VIEW.currentYMin);
+
+        // Main ice
+        ctx.fillStyle = ICE_COLOR;
+        ctx.fillRect(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
+
+        // Pebble texture (subtle dots)
+        drawPebbleTexture(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
+
+        // Sheet boundary
+        ctx.strokeStyle = '#999';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
+
+        // Center line
+        ctx.strokeStyle = CENTER_LINE;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([8, 4]);
+        ctx.beginPath();
+        ctx.moveTo(toCanvasX(0), topEdge);
+        ctx.lineTo(toCanvasX(0), bottomEdge);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw house
+        drawHouse();
+
+        // Hog lines
+        drawLine(P.farHogLine, '#c0392b', 3, 'Hog Line');
+        drawLine(P.nearHogLine, '#c0392b', 3);
+
+        // Tee line
+        drawLine(P.farTeeLine, '#c0392b', 2);
+
+        // Back line
+        drawLine(P.farBackLine, '#c0392b', 2);
+
+        // Hack
+        drawHack();
+    }
+
+    // Pre-generate pebble texture as offscreen canvas
+    let pebblePattern = null;
+    function getPebblePattern() {
+        if (pebblePattern) return pebblePattern;
+        const patSize = 128;
+        const offscreen = document.createElement('canvas');
+        offscreen.width = patSize;
+        offscreen.height = patSize;
+        const octx = offscreen.getContext('2d');
+        octx.fillStyle = 'rgba(180, 195, 215, 0.12)';
+        for (let i = 0; i < 400; i++) {
+            const px = (i * 37 + i * i * 13) % patSize;
+            const py = (i * 53 + i * i * 7) % patSize;
+            octx.beginPath();
+            octx.arc(px, py, 0.8, 0, Math.PI * 2);
+            octx.fill();
+        }
+        pebblePattern = ctx.createPattern(offscreen, 'repeat');
+        return pebblePattern;
+    }
+
+    function drawPebbleTexture(x, y, w, h) {
+        const pat = getPebblePattern();
+        if (!pat) return;
+        ctx.save();
+        ctx.fillStyle = pat;
+        ctx.fillRect(x, y, w, h);
+        ctx.restore();
+    }
+
+    function drawHouse() {
+        const cx = toCanvasX(0);
+        const cy = toCanvasY(P.farTeeLine);
+
+        // Draw from outermost to innermost (painter's algorithm)
+        // 12-foot ring - BLUE
+        ctx.fillStyle = '#2a6cb6';
+        ctx.beginPath();
+        ctx.arc(cx, cy, toCanvasLen(HOUSE.twelveFoot), 0, Math.PI * 2);
+        ctx.fill();
+
+        // 8-foot ring - WHITE
+        ctx.fillStyle = '#eef1f5';
+        ctx.beginPath();
+        ctx.arc(cx, cy, toCanvasLen(HOUSE.eightFoot), 0, Math.PI * 2);
+        ctx.fill();
+
+        // 4-foot ring - RED
+        ctx.fillStyle = '#cc3333';
+        ctx.beginPath();
+        ctx.arc(cx, cy, toCanvasLen(HOUSE.fourFoot), 0, Math.PI * 2);
+        ctx.fill();
+
+        // Button area - WHITE
+        ctx.fillStyle = '#eef1f5';
+        ctx.beginPath();
+        ctx.arc(cx, cy, toCanvasLen(HOUSE.button * 2.5), 0, Math.PI * 2);
+        ctx.fill();
+
+        // Ring outlines
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        for (const r of [HOUSE.twelveFoot, HOUSE.eightFoot, HOUSE.fourFoot]) {
+            ctx.beginPath();
+            ctx.arc(cx, cy, toCanvasLen(r), 0, Math.PI * 2);
+            ctx.stroke();
+        }
+
+        // Tee line through house
+        const halfW = CurlingPhysics.SHEET.width / 2;
+        ctx.strokeStyle = LINE_COLOR;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(toCanvasX(-halfW), cy);
+        ctx.lineTo(toCanvasX(halfW), cy);
+        ctx.stroke();
+
+        // Center line through house
+        ctx.strokeStyle = LINE_COLOR;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, toCanvasY(P.farTeeLine - HOUSE.twelveFoot - 0.5));
+        ctx.lineTo(cx, toCanvasY(P.farTeeLine + HOUSE.twelveFoot + 0.5));
+        ctx.stroke();
+    }
+
+    function drawLine(yPos, color, width, label) {
+        const halfW = CurlingPhysics.SHEET.width / 2;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(toCanvasX(-halfW), toCanvasY(yPos));
+        ctx.lineTo(toCanvasX(halfW), toCanvasY(yPos));
+        ctx.stroke();
+
+        if (label) {
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.font = '11px sans-serif';
+            ctx.fillText(label, toCanvasX(halfW) + 5, toCanvasY(yPos) + 4);
+        }
+    }
+
+    function drawHack() {
+        const hackY = toCanvasY(P.hack);
+        const cx = toCanvasX(0);
+        const hackW = toCanvasLen(0.15);
+        const hackH = toCanvasLen(0.3);
+
+        ctx.fillStyle = '#333';
+        // Left hack
+        ctx.fillRect(cx - toCanvasLen(0.12) - hackW, hackY - hackH / 2, hackW, hackH);
+        // Right hack
+        ctx.fillRect(cx + toCanvasLen(0.12), hackY - hackH / 2, hackW, hackH);
+    }
+
+    function drawStone(stone) {
+        if (!stone.active) return;
+
+        const cx = toCanvasX(stone.x);
+        const cy = toCanvasY(stone.y);
+        const r = toCanvasLen(STONE_R);
+
+        // Don't draw if off screen
+        if (cy < -r * 2 || cy > canvas.height + r * 2) return;
+        if (cx < -r * 2 || cx > canvas.width + r * 2) return;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(-stone.angle); // negative because canvas y is inverted
+
+        // Stone body shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+        ctx.beginPath();
+        ctx.arc(2, 2, r, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Stone body
+        const bodyColor = stone.team === TEAMS.RED ? '#e53935' : '#fdd835';
+        const bodyDark = stone.team === TEAMS.RED ? '#b71c1c' : '#f9a825';
+        const bodyLight = stone.team === TEAMS.RED ? '#ef5350' : '#ffee58';
+
+        // Gradient for 3D effect
+        const grad = ctx.createRadialGradient(-r * 0.2, -r * 0.2, r * 0.1, 0, 0, r);
+        grad.addColorStop(0, bodyLight);
+        grad.addColorStop(0.6, bodyColor);
+        grad.addColorStop(1, bodyDark);
+
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Running band (darker ring)
+        ctx.strokeStyle = bodyDark;
+        ctx.lineWidth = Math.max(1, toCanvasLen(0.008));
+        ctx.beginPath();
+        ctx.arc(0, 0, r * 0.85, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Handle - curved goose-neck shape so rotation is clearly visible
+        const handleLen = r * 0.75;
+        const handleW = Math.max(2, r * 0.16);
+
+        // Handle bar
+        ctx.strokeStyle = '#555';
+        ctx.lineWidth = handleW;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(-handleLen * 0.5, 0);
+        ctx.lineTo(handleLen * 0.5, 0);
+        ctx.stroke();
+
+        // Handle highlight
+        ctx.strokeStyle = '#888';
+        ctx.lineWidth = handleW * 0.4;
+        ctx.beginPath();
+        ctx.moveTo(-handleLen * 0.4, 0);
+        ctx.lineTo(handleLen * 0.4, 0);
+        ctx.stroke();
+
+        // Grip dot on one side to show rotation clearly
+        ctx.fillStyle = '#333';
+        ctx.beginPath();
+        ctx.arc(handleLen * 0.4, 0, handleW * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Direction indicator line (like the stripe on a curling stone handle)
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+        ctx.lineWidth = Math.max(1, r * 0.04);
+        ctx.beginPath();
+        ctx.moveTo(0, -r * 0.3);
+        ctx.lineTo(0, -r * 0.6);
+        ctx.stroke();
+
+        // Stone edge highlight
+        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, r - 1, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.restore();
+
+        // Spin indicator (small arrow when moving)
+        if (stone.moving && Math.abs(stone.omega) > 0.1) {
+            const arrowR = r + 5;
+            const arrowAngle = stone.omega > 0 ? Math.PI * 0.25 : -Math.PI * 0.25;
+            ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(cx, cy, arrowR, arrowAngle - 0.8, arrowAngle + 0.8);
+            ctx.stroke();
+
+            // Arrow head
+            const endAngle = arrowAngle + (stone.omega > 0 ? 0.8 : -0.8);
+            const ax = cx + arrowR * Math.cos(endAngle);
+            const ay = cy + arrowR * Math.sin(endAngle);
+            const dir = stone.omega > 0 ? 1 : -1;
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(ax + dir * 5, ay - 5);
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(ax + dir * 5, ay + 5);
+            ctx.stroke();
+        }
+    }
+
+    function drawTrail() {
+        if (stoneTrail.length < 2) return;
+        if (!gameState.deliveredStone) return;
+
+        ctx.strokeStyle = gameState.deliveredStone.team === TEAMS.RED
+            ? 'rgba(229, 57, 53, 0.3)'
+            : 'rgba(253, 216, 53, 0.3)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(toCanvasX(stoneTrail[0].x), toCanvasY(stoneTrail[0].y));
+        for (let i = 1; i < stoneTrail.length; i++) {
+            ctx.lineTo(toCanvasX(stoneTrail[i].x), toCanvasY(stoneTrail[i].y));
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+
+    function drawSweepEffect() {
+        if (!gameState.isSweeping || !gameState.deliveredStone || !gameState.deliveredStone.moving) return;
+
+        const stone = gameState.deliveredStone;
+        const cx = toCanvasX(stone.x);
+        const cy = toCanvasY(stone.y);
+        const r = toCanvasLen(STONE_R);
+
+        // Draw sweep marks in front of stone
+        const speed = Math.sqrt(stone.vx ** 2 + stone.vy ** 2);
+        if (speed < 0.01) return;
+
+        const dirX = stone.vx / speed;
+        const dirY = stone.vy / speed;
+
+        ctx.strokeStyle = 'rgba(100, 180, 255, 0.4)';
+        ctx.lineWidth = 2;
+
+        for (let i = 0; i < 5; i++) {
+            const dist = r + 5 + i * 8;
+            const frontX = cx + dirX * dist * (scale > 10 ? 1 : scale / 10);
+            const frontY = cy - dirY * dist * (scale > 10 ? 1 : scale / 10);
+
+            ctx.beginPath();
+            ctx.moveTo(frontX - 8, frontY - 4);
+            ctx.lineTo(frontX + 8, frontY + 4);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(frontX + 8, frontY - 4);
+            ctx.lineTo(frontX - 8, frontY + 4);
+            ctx.stroke();
+        }
+    }
+
+    function drawAimLine() {
+        if (gameState.phase !== 'aiming') return;
+
+        const aimDeg = parseFloat(document.getElementById('aim-slider').value);
+        const aimRad = aimDeg * Math.PI / 180;
+
+        const startX = 0;
+        const startY = P.hack + 1.0;
+
+        // Draw a faint line showing the aim direction
+        const lineLen = 35; // meters
+        const endX = startX + lineLen * Math.sin(aimRad);
+        const endY = startY + lineLen * Math.cos(aimRad);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.moveTo(toCanvasX(startX), toCanvasY(startY));
+        ctx.lineTo(toCanvasX(endX), toCanvasY(endY));
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw the stone at delivery position (preview)
+        const previewStone = {
+            team: gameState.currentTeam,
+            x: startX,
+            y: startY,
+            angle: 0,
+            active: true,
+            moving: false,
+            omega: 0,
+        };
+        drawStone(previewStone);
+    }
+
+    function drawScoreOverlay() {
+        // Show which stones are scoring near the house
+        if (gameState.phase === 'scoring' || gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
+            const teeX = 0;
+            const teeY = P.farTeeLine;
+            const activeStones = gameState.stones.filter(s => s.active);
+
+            // Sort by distance
+            const scored = activeStones.map(s => ({
+                stone: s,
+                dist: Math.sqrt((s.x - teeX) ** 2 + (s.y - teeY) ** 2),
+            })).sort((a, b) => a.dist - b.dist);
+
+            const inHouse = scored.filter(s => s.dist <= HOUSE.twelveFoot + STONE_R);
+
+            if (inHouse.length > 0) {
+                const closestTeam = inHouse[0].stone.team;
+                const otherTeamClosest = inHouse.find(s => s.stone.team !== closestTeam);
+                const otherDist = otherTeamClosest ? otherTeamClosest.dist : Infinity;
+
+                // Highlight scoring stones
+                for (const s of inHouse) {
+                    if (s.stone.team === closestTeam && s.dist < otherDist) {
+                        const cx = toCanvasX(s.stone.x);
+                        const cy = toCanvasY(s.stone.y);
+                        const r = toCanvasLen(STONE_R) + 4;
+
+                        ctx.strokeStyle = s.stone.team === TEAMS.RED
+                            ? 'rgba(229, 57, 53, 0.7)'
+                            : 'rgba(253, 216, 53, 0.7)';
+                        ctx.lineWidth = 3;
+                        ctx.setLineDash([4, 3]);
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                    }
+                }
+
+                // Score indicator text
+                const pts = inHouse.filter(s => s.stone.team === closestTeam && s.dist < otherDist).length;
+                if (pts > 0 && !gameState.deliveredStone?.moving) {
+                    const teamName = closestTeam === TEAMS.RED ? 'Red' : 'Yellow';
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(10, 10, 160, 30);
+                    ctx.fillStyle = closestTeam === TEAMS.RED ? '#e53935' : '#fdd835';
+                    ctx.font = 'bold 16px sans-serif';
+                    ctx.fillText(`${teamName} scoring ${pts}`, 18, 30);
+                }
+            }
+        }
+    }
+
+    // --------------------------------------------------------
+    // CAMERA
+    // --------------------------------------------------------
+    function updateCamera() {
+        if (gameState.deliveredStone && gameState.deliveredStone.moving) {
+            const stoneY = gameState.deliveredStone.y;
+            // Smoothly follow the stone
+            const viewSpan = 13.5;
+            VIEW.targetYMin = stoneY - viewSpan * 0.3;
+            VIEW.targetYMax = stoneY + viewSpan * 0.7;
+
+            // Clamp to not go below hack or above end
+            VIEW.targetYMin = Math.max(-1, VIEW.targetYMin);
+            VIEW.targetYMax = Math.min(42, VIEW.targetYMax);
+        } else {
+            // Default: show the house area
+            VIEW.targetYMin = 28;
+            VIEW.targetYMax = 41.5;
+        }
+
+        // Smooth interpolation
+        const lerp = 0.06;
+        VIEW.currentYMin += (VIEW.targetYMin - VIEW.currentYMin) * lerp;
+        VIEW.currentYMax += (VIEW.targetYMax - VIEW.currentYMax) * lerp;
+
+        updateScale();
+    }
+
+    // --------------------------------------------------------
+    // MAIN LOOP
+    // --------------------------------------------------------
+    const PHYSICS_DT = 1 / 240; // 240 Hz physics (high precision for fast stones)
+
+    let lastTime = 0;
+    let physicsAccumulator = 0;
+
+    function gameLoop(timestamp) {
+        if (!lastTime) lastTime = timestamp;
+        let frameTime = (timestamp - lastTime) / 1000;
+        lastTime = timestamp;
+
+        // Clamp frame time to avoid spiral of death
+        if (frameTime > 0.1) frameTime = 0.1;
+
+        // Physics update
+        if (gameState.phase === 'delivering') {
+            physicsAccumulator += frameTime * gameState.simSpeed;
+
+            while (physicsAccumulator >= PHYSICS_DT) {
+                const sweep = gameState.isSweeping ? gameState.sweepLevel : 'none';
+                const anyMoving = CurlingPhysics.simulate(gameState.stones, PHYSICS_DT, sweep);
+
+                // Record trail for the delivered stone
+                if (gameState.deliveredStone && gameState.deliveredStone.moving) {
+                    const ds = gameState.deliveredStone;
+                    const last = stoneTrail[stoneTrail.length - 1];
+                    const dx = ds.x - last.x;
+                    const dy = ds.y - last.y;
+                    if (dx * dx + dy * dy > 0.04) { // record every ~0.2m
+                        stoneTrail.push({ x: ds.x, y: ds.y });
+                    }
+                }
+
+                // Check for stones out of bounds
+                checkOutOfBounds();
+
+                physicsAccumulator -= PHYSICS_DT;
+
+                if (!anyMoving) {
+                    physicsAccumulator = 0;
+                    if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                        gameState.phase = 'waitingNextTurn';
+                        gameState.isSweeping = false;
+                        document.getElementById('sweep-toggle-btn').style.display = 'none';
+                        setTimeout(() => {
+                            if (gameState.phase === 'waitingNextTurn') {
+                                nextTurn();
+                            }
+                        }, 800);
+                    }
+                    break;
+                }
+            }
+
+            // Once the delivered stone passes the far hog line, stop sweeping ability
+            // (sweeping is only allowed between hog lines in real curling)
+            if (gameState.deliveredStone && !gameState.deliveredStone.moving) {
+                gameState.isSweeping = false;
+            }
+        }
+
+        // Camera
+        updateCamera();
+
+        // Render
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawSheet();
+        drawAimLine();
+
+        // Draw trail
+        drawTrail();
+
+        // Draw all stones
+        for (const stone of gameState.stones) {
+            drawStone(stone);
+        }
+
+        drawSweepEffect();
+        drawScoreOverlay();
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    function checkOutOfBounds() {
+        const halfW = CurlingPhysics.SHEET.width / 2;
+
+        for (const stone of gameState.stones) {
+            if (!stone.active) continue;
+
+            // Past back line and moving away from play
+            if (stone.y > P.farBackLine + STONE_R && stone.vy > 0) {
+                stone.active = false;
+                stone.moving = false;
+            }
+
+            // Behind near back line (bounced way back)
+            if (stone.y < P.hack - 2) {
+                stone.active = false;
+                stone.moving = false;
+            }
+
+            // Off the sides
+            if (Math.abs(stone.x) > halfW + STONE_R) {
+                stone.active = false;
+                stone.moving = false;
+            }
+
+            // Didn't reach the far hog line (only for delivered stone after it has stopped)
+            if (stone === gameState.deliveredStone && !stone.moving && stone.y < P.farHogLine) {
+                stone.active = false;
+            }
+        }
+    }
+
+    // --------------------------------------------------------
+    // EVENT HANDLERS
+    // --------------------------------------------------------
+    document.getElementById('throw-btn').addEventListener('click', () => {
+        if (gameState.phase === 'aiming') {
+            deliverStone();
+        }
+    });
+
+    document.getElementById('aim-slider').addEventListener('input', (e) => {
+        document.getElementById('aim-value').textContent = parseFloat(e.target.value).toFixed(1) + '°';
+    });
+
+    document.getElementById('weight-slider').addEventListener('input', (e) => {
+        const pct = parseFloat(e.target.value);
+        document.getElementById('weight-value').textContent = CurlingPhysics.weightLabel(pct);
+    });
+
+    document.getElementById('spin-amount-slider').addEventListener('input', (e) => {
+        document.getElementById('spin-amount-value').textContent = parseFloat(e.target.value).toFixed(1);
+    });
+
+    document.getElementById('spin-cw').addEventListener('click', () => {
+        document.getElementById('spin-cw').classList.add('active');
+        document.getElementById('spin-ccw').classList.remove('active');
+        document.getElementById('spin-value').textContent = 'In-turn';
+    });
+
+    document.getElementById('spin-ccw').addEventListener('click', () => {
+        document.getElementById('spin-ccw').classList.add('active');
+        document.getElementById('spin-cw').classList.remove('active');
+        document.getElementById('spin-value').textContent = 'Out-turn';
+    });
+
+    // Sweep buttons
+    document.getElementById('sweep-none').addEventListener('click', () => {
+        setSweepLevel('none');
+    });
+    document.getElementById('sweep-light').addEventListener('click', () => {
+        setSweepLevel('light');
+    });
+    document.getElementById('sweep-hard').addEventListener('click', () => {
+        setSweepLevel('hard');
+    });
+
+    function setSweepLevel(level) {
+        gameState.sweepLevel = level;
+        document.querySelectorAll('.sweep-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById('sweep-' + level).classList.add('active');
+    }
+
+    // Keyboard controls
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+            e.preventDefault();
+            if (gameState.phase === 'delivering' && gameState.deliveredStone?.moving) {
+                gameState.isSweeping = true;
+                if (gameState.sweepLevel === 'none') {
+                    gameState.sweepLevel = 'hard';
+                    setSweepLevel('hard');
+                }
+                document.getElementById('sweep-toggle-btn').classList.add('sweeping');
+                document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
+            }
+        }
+
+        if (e.code === 'Enter' && gameState.phase === 'aiming') {
+            deliverStone();
+        }
+
+        // Arrow keys for fine aim adjustment
+        if (e.code === 'ArrowLeft') {
+            const slider = document.getElementById('aim-slider');
+            slider.value = Math.max(-5, parseFloat(slider.value) - 0.1);
+            slider.dispatchEvent(new Event('input'));
+        }
+        if (e.code === 'ArrowRight') {
+            const slider = document.getElementById('aim-slider');
+            slider.value = Math.min(5, parseFloat(slider.value) + 0.1);
+            slider.dispatchEvent(new Event('input'));
+        }
+    });
+
+    document.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') {
+            gameState.isSweeping = false;
+            document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
+            document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING (Hold Space)';
+        }
+    });
+
+    // New game button
+    document.getElementById('new-game-btn').addEventListener('click', () => {
+        document.getElementById('game-over-screen').style.display = 'none';
+        resetGame();
+    });
+
+    function resetGame() {
+        gameState = {
+            stones: [],
+            currentTeam: TEAMS.RED,
+            redThrown: 0,
+            yellowThrown: 0,
+            currentEnd: 1,
+            totalEnds: 10,
+            redScore: 0,
+            yellowScore: 0,
+            endScores: [],
+            phase: 'aiming',
+            sweepLevel: 'none',
+            isSweeping: false,
+            deliveredStone: null,
+            simSpeed: 3.0,
+        };
+
+        document.getElementById('red-total').textContent = '0';
+        document.getElementById('yellow-total').textContent = '0';
+        document.getElementById('current-end').textContent = '1';
+        document.getElementById('throw-btn').disabled = false;
+
+        updateUI();
+    }
+
+    // --------------------------------------------------------
+    // INIT
+    // --------------------------------------------------------
+    resizeCanvas();
+    updateUI();
+    requestAnimationFrame(gameLoop);
+
+})();

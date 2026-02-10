@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realistic Curling</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="curling-canvas"></canvas>
+        <div id="ui-overlay">
+            <div id="scoreboard">
+                <div class="team-score" id="team-red-score">
+                    <div class="team-dot red-dot"></div>
+                    <span class="team-name">Red</span>
+                    <span class="score-value" id="red-total">0</span>
+                </div>
+                <div id="end-display">
+                    <span>End</span>
+                    <span id="current-end">1</span>
+                    <span>/ 10</span>
+                </div>
+                <div class="team-score" id="team-yellow-score">
+                    <div class="team-dot yellow-dot"></div>
+                    <span class="team-name">Yellow</span>
+                    <span class="score-value" id="yellow-total">0</span>
+                </div>
+            </div>
+            <div id="shot-info">
+                <span id="current-team-label">Red's Turn</span>
+                <span id="stones-remaining">Stone 1 of 8</span>
+            </div>
+            <div id="controls-panel">
+                <div id="aim-control">
+                    <label>Aim: <span id="aim-value">0.0°</span></label>
+                    <input type="range" id="aim-slider" min="-5" max="5" step="0.05" value="0">
+                </div>
+                <div id="spin-control">
+                    <label>Spin: <span id="spin-value">In-turn</span></label>
+                    <div id="spin-buttons">
+                        <button id="spin-cw" class="spin-btn active" title="In-turn (clockwise)">↻ In</button>
+                        <button id="spin-ccw" class="spin-btn" title="Out-turn (counter-clockwise)">↺ Out</button>
+                    </div>
+                </div>
+                <div id="spin-amount-control">
+                    <label>Rotations: <span id="spin-amount-value">2.5</span></label>
+                    <input type="range" id="spin-amount-slider" min="1" max="5" step="0.1" value="2.5">
+                </div>
+                <div id="weight-control">
+                    <label>Weight: <span id="weight-value">Draw</span></label>
+                    <input type="range" id="weight-slider" min="0" max="100" step="1" value="35">
+                </div>
+                <div id="sweep-control">
+                    <label>Sweep Intensity:</label>
+                    <div id="sweep-buttons">
+                        <button id="sweep-none" class="sweep-btn active">None</button>
+                        <button id="sweep-light" class="sweep-btn">Light</button>
+                        <button id="sweep-hard" class="sweep-btn">Hard</button>
+                    </div>
+                </div>
+                <button id="throw-btn">THROW</button>
+                <button id="sweep-toggle-btn" style="display:none;">SWEEPING (Hold Space)</button>
+            </div>
+            <div id="instructions">
+                <p><strong>Controls:</strong> Adjust aim, spin, rotation &amp; weight. Click THROW to deliver.</p>
+                <p>Hold <kbd>SPACE</kbd> during stone travel to sweep. Sweeping reduces curl and extends distance.</p>
+            </div>
+        </div>
+        <div id="game-over-screen" style="display:none;">
+            <h1 id="winner-text">Game Over</h1>
+            <div id="final-scores"></div>
+            <button id="new-game-btn">New Game</button>
+        </div>
+    </div>
+    <script src="physics.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
