@@ -176,6 +176,10 @@ const CurlingPhysics = (() => {
             const speed = Math.sqrt(stone.vx * stone.vx + stone.vy * stone.vy);
 
             if (speed < 0.005) {
+                // Trigger settle animation if stone was previously moving
+                if (stone.moving && !stone.settleTime) {
+                    stone.settleTime = 150; // ms for settle bounce
+                }
                 stone.vx = 0;
                 stone.vy = 0;
                 stone.omega = 0;

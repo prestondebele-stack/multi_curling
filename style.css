@@ -12,6 +12,11 @@ html, body {
     height: 100%;
     width: 100%;
     touch-action: manipulation;
+    /* Safe area for notched/rounded phones */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
 }
 
 /* ================================================
@@ -129,6 +134,17 @@ html, body {
     font-weight: 700;
     color: #e53935;
     margin-bottom: 1px;
+    transition: color 0.3s ease, transform 0.3s ease;
+}
+
+#current-team-label.team-change-pulse {
+    animation: teamPulse 0.4s ease-out;
+}
+
+@keyframes teamPulse {
+    0% { transform: scale(1.0); }
+    30% { transform: scale(1.15); }
+    100% { transform: scale(1.0); }
 }
 
 #stones-remaining {
@@ -186,6 +202,10 @@ input[type="range"] {
     border-radius: 4px;
     outline: none;
     margin: 2px 0;
+}
+
+#weight-slider {
+    background: linear-gradient(to right, #4caf50, #8bc34a, #fdd835, #ff9800, #e53935);
 }
 
 input[type="range"]::-webkit-slider-thumb {

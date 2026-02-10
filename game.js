@@ -316,6 +316,11 @@
         teamLabel.textContent = gameState.currentTeam === TEAMS.RED ? "Red's Turn" : "Yellow's Turn";
         teamLabel.style.color = gameState.currentTeam === TEAMS.RED ? '#e53935' : '#fdd835';
 
+        // Trigger turn change pulse animation
+        teamLabel.classList.remove('team-change-pulse');
+        void teamLabel.offsetWidth; // force reflow to restart animation
+        teamLabel.classList.add('team-change-pulse');
+
         const thrown = gameState.currentTeam === TEAMS.RED ? gameState.redThrown : gameState.yellowThrown;
         stonesLabel.textContent = `Stone ${thrown + 1} of 8`;
 
@@ -388,15 +393,60 @@
         const topEdge = toCanvasY(VIEW.currentYMax);
         const bottomEdge = toCanvasY(VIEW.currentYMin);
 
-        // Main ice
-        ctx.fillStyle = ICE_COLOR;
+        // Main ice with subtle gradient (cooler edges, warmer center)
+        const iceGrad = ctx.createRadialGradient(
+            toCanvasX(0), toCanvasY(P.farTeeLine), 0,
+            toCanvasX(0), toCanvasY(P.farTeeLine), Math.max(rightEdge - leftEdge, bottomEdge - topEdge) * 0.7
+        );
+        iceGrad.addColorStop(0, '#eef3fa');  // slightly brighter center
+        iceGrad.addColorStop(0.6, ICE_COLOR);
+        iceGrad.addColorStop(1, '#dde3ec');  // cooler edges
+        ctx.fillStyle = iceGrad;
+        ctx.fillRect(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
+
+        // Specular highlight — overhead arena light simulation
+        const specGrad = ctx.createRadialGradient(
+            toCanvasX(0), toCanvasY(P.farTeeLine), 0,
+            toCanvasX(0), toCanvasY(P.farTeeLine), toCanvasLen(4)
+        );
+        specGrad.addColorStop(0, 'rgba(255, 255, 255, 0.06)');
+        specGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = specGrad;
         ctx.fillRect(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
 
         // Pebble texture (subtle dots)
         drawPebbleTexture(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
 
+        // Side boards (dark strips along left and right edges)
+        const boardWidth = toCanvasLen(0.15);
+        const boardGradL = ctx.createLinearGradient(leftEdge - boardWidth, 0, leftEdge, 0);
+        boardGradL.addColorStop(0, '#2a2a3e');
+        boardGradL.addColorStop(0.7, '#3a3a50');
+        boardGradL.addColorStop(1, '#555');
+        ctx.fillStyle = boardGradL;
+        ctx.fillRect(leftEdge - boardWidth, topEdge, boardWidth, bottomEdge - topEdge);
+
+        const boardGradR = ctx.createLinearGradient(rightEdge, 0, rightEdge + boardWidth, 0);
+        boardGradR.addColorStop(0, '#555');
+        boardGradR.addColorStop(0.3, '#3a3a50');
+        boardGradR.addColorStop(1, '#2a2a3e');
+        ctx.fillStyle = boardGradR;
+        ctx.fillRect(rightEdge, topEdge, boardWidth, bottomEdge - topEdge);
+
+        // Board top edge highlights
+        ctx.strokeStyle = '#777';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(leftEdge - boardWidth, topEdge);
+        ctx.lineTo(leftEdge - boardWidth, bottomEdge);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(rightEdge + boardWidth, topEdge);
+        ctx.lineTo(rightEdge + boardWidth, bottomEdge);
+        ctx.stroke();
+
         // Sheet boundary
-        ctx.strokeStyle = '#999';
+        ctx.strokeStyle = '#bbb';
         ctx.lineWidth = 2;
         ctx.strokeRect(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
 
@@ -925,6 +975,16 @@
         const cx = toCanvasX(0);
         const cy = toCanvasY(P.farTeeLine);
 
+        // Spotlight glow behind the house (arena overhead lights)
+        const spotGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, toCanvasLen(HOUSE.twelveFoot * 1.5));
+        spotGrad.addColorStop(0, 'rgba(255, 255, 255, 0.05)');
+        spotGrad.addColorStop(0.6, 'rgba(255, 255, 255, 0.025)');
+        spotGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = spotGrad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, toCanvasLen(HOUSE.twelveFoot * 1.5), 0, Math.PI * 2);
+        ctx.fill();
+
         // Draw from outermost to innermost (painter's algorithm)
         // 12-foot ring - BLUE
         ctx.fillStyle = '#2a6cb6';
@@ -1007,7 +1067,8 @@
     }
 
     function drawStone(stone) {
-        if (!stone.active) return;
+        // Support fade-out: draw while fading, skip when fully gone
+        if (!stone.active && !(stone.fadeOut > 0)) return;
 
         const cx = toCanvasX(stone.x);
         const cy = toCanvasY(stone.y);
@@ -1018,13 +1079,29 @@
         if (cx < -r * 2 || cx > canvas.width + r * 2) return;
 
         ctx.save();
+
+        // Fade-out effect
+        if (stone.fadeOut > 0) {
+            ctx.globalAlpha = stone.fadeOut;
+        }
+
+        // Settle micro-bounce
+        let settleScale = 1.0;
+        if (stone.settleTime > 0) {
+            // Bounce from 1.06 down to 1.0 over 150ms
+            const t = stone.settleTime / 150;
+            settleScale = 1.0 + 0.06 * t * Math.cos(t * Math.PI);
+        }
+
         ctx.translate(cx, cy);
+        if (settleScale !== 1.0) ctx.scale(settleScale, settleScale);
         ctx.rotate(-stone.angle); // negative because canvas y is inverted
 
-        // Stone body shadow
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+        // Stone body shadow (scaled with stone size)
+        const shadowOff = Math.max(2, r * 0.12);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
         ctx.beginPath();
-        ctx.arc(2, 2, r, 0, Math.PI * 2);
+        ctx.arc(shadowOff, shadowOff, r + 1, 0, Math.PI * 2);
         ctx.fill();
 
         // Stone body
@@ -1576,6 +1653,18 @@
         // Camera
         updateCamera();
 
+        // Tick stone animations (settle bounce + fade-out)
+        const frameDeltaMs = frameTime * 1000;
+        for (const stone of gameState.stones) {
+            if (stone.settleTime > 0) {
+                stone.settleTime = Math.max(0, stone.settleTime - frameDeltaMs);
+            }
+            if (stone.fadeOut !== undefined && stone.fadeOut > 0 && !stone.active) {
+                stone.fadeOut -= frameDeltaMs / 300; // fade over 300ms
+                if (stone.fadeOut <= 0) stone.fadeOut = 0;
+            }
+        }
+
         // Render
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawSheet();
@@ -1591,9 +1680,33 @@
 
         drawSweepEffect();
         drawScoreOverlay();
+        drawVignette();
         drawDownIceView();
 
         requestAnimationFrame(gameLoop);
+    }
+
+    // Vignette overlay — darkens edges for cinematic focus
+    function drawVignette() {
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+        const r = Math.max(canvas.width, canvas.height) * 0.7;
+        const grad = ctx.createRadialGradient(cx, cy, r * 0.4, cx, cy, r);
+        grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0.35)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function deactivateStone(stone, fade) {
+        stone.moving = false;
+        if (fade) {
+            // Start fade-out instead of instant removal
+            stone.active = false;
+            stone.fadeOut = 1.0; // will tick down in game loop
+        } else {
+            stone.active = false;
+        }
     }
 
     function checkOutOfBounds() {
@@ -1604,25 +1717,22 @@
 
             // Past back line and moving away from play
             if (stone.y > P.farBackLine + STONE_R && stone.vy > 0) {
-                stone.active = false;
-                stone.moving = false;
+                deactivateStone(stone, true);
             }
 
             // Behind near back line (bounced way back)
             if (stone.y < P.hack - 2) {
-                stone.active = false;
-                stone.moving = false;
+                deactivateStone(stone, true);
             }
 
             // Off the sides
             if (Math.abs(stone.x) > halfW + STONE_R) {
-                stone.active = false;
-                stone.moving = false;
+                deactivateStone(stone, true);
             }
 
             // Didn't reach the far hog line (only for delivered stone after it has stopped)
             if (stone === gameState.deliveredStone && !stone.moving && stone.y < P.farHogLine) {
-                stone.active = false;
+                deactivateStone(stone, true);
             }
         }
     }
