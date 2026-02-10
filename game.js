@@ -937,33 +937,6 @@
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Crosshair at the tee line intersection
-        // Find where the aim line crosses y = P.farTeeLine
-        const tToTee = (P.farTeeLine - startY) / Math.cos(aimRad);
-        const crossX = startX + tToTee * Math.sin(aimRad);
-        const crossY = P.farTeeLine;
-        const cx = toCanvasX(crossX);
-        const cy = toCanvasY(crossY);
-        const crossSize = toCanvasLen(0.25);
-
-        // Crosshair lines (+)
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([]);
-        ctx.beginPath();
-        ctx.moveTo(cx - crossSize, cy);
-        ctx.lineTo(cx + crossSize, cy);
-        ctx.moveTo(cx, cy - crossSize);
-        ctx.lineTo(cx, cy + crossSize);
-        ctx.stroke();
-
-        // Crosshair circle
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(cx, cy, crossSize * 1.5, 0, Math.PI * 2);
-        ctx.stroke();
-
         // Draw the stone at delivery position (preview)
         const previewStone = {
             team: gameState.currentTeam,
