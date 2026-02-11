@@ -1297,12 +1297,13 @@
 // Stone staging display — shows each team's 8 stones on the ice
 // Red stones: top-left corner, Yellow stones: top-right corner
 // 2 columns × 4 rows, ordered by throw number
+// Stones appear on the grid only when out of play; in-play spots are empty
 function drawStagedStones() {
     const halfW = CurlingPhysics.SHEET.width / 2;
     const stoneSize = STONE_R * 0.7; // slightly smaller than real stones
 
     // World-space layout: place stones just past the far back line
-    const startY = P.farBackLine + STONE_R * 2.5; // just above back line in view
+    const startY = P.farBackLine + STONE_R * 2.5;
     const gapX = STONE_R * 2.8;
     const gapY = STONE_R * 2.8;
 
@@ -1338,64 +1339,35 @@ function drawStagedStones() {
             const stoneObj = teamStones[i];
             const isActive = stoneObj ? stoneObj.active : false;
 
+            // Skip if not thrown yet or still in play — leave spot empty
+            if (!hasBeenThrown || isActive) continue;
+
+            // Stone is out of play — draw it on the grid
             ctx.save();
+            ctx.globalAlpha = 0.85;
 
-            if (!hasBeenThrown) {
-                // Unthrown: dim outline only
-                ctx.globalAlpha = 0.3;
-                ctx.strokeStyle = baseColor;
-                ctx.lineWidth = Math.max(1, r * 0.12);
-                ctx.beginPath();
-                ctx.arc(cx, cy, r, 0, Math.PI * 2);
-                ctx.stroke();
+            // Shadow
+            ctx.fillStyle = 'rgba(0,0,0,0.15)';
+            ctx.beginPath();
+            ctx.arc(cx + 1, cy + 1, r, 0, Math.PI * 2);
+            ctx.fill();
 
-                // Throw number
-                ctx.fillStyle = baseColor;
-                ctx.font = `bold ${Math.max(8, r * 0.8)}px sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(i + 1, cx, cy + 0.5);
-            } else {
-                // Thrown stone
-                ctx.globalAlpha = isActive ? 0.85 : 0.4;
+            // Body gradient
+            const grad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.2, r * 0.1, cx, cy, r);
+            grad.addColorStop(0, lightColor);
+            grad.addColorStop(0.6, baseColor);
+            grad.addColorStop(1, darkColor);
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.fill();
 
-                // Shadow
-                ctx.fillStyle = 'rgba(0,0,0,0.15)';
-                ctx.beginPath();
-                ctx.arc(cx + 1, cy + 1, r, 0, Math.PI * 2);
-                ctx.fill();
-
-                // Body gradient
-                const grad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.2, r * 0.1, cx, cy, r);
-                grad.addColorStop(0, lightColor);
-                grad.addColorStop(0.6, baseColor);
-                grad.addColorStop(1, darkColor);
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(cx, cy, r, 0, Math.PI * 2);
-                ctx.fill();
-
-                // Edge highlight
-                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-                ctx.lineWidth = Math.max(0.5, r * 0.06);
-                ctx.beginPath();
-                ctx.arc(cx, cy, r - 0.5, 0, Math.PI * 2);
-                ctx.stroke();
-
-                // X marker if stone is out of play
-                if (!isActive) {
-                    ctx.globalAlpha = 0.7;
-                    ctx.strokeStyle = '#fff';
-                    ctx.lineWidth = Math.max(1.5, r * 0.15);
-                    const xSize = r * 0.55;
-                    ctx.beginPath();
-                    ctx.moveTo(cx - xSize, cy - xSize);
-                    ctx.lineTo(cx + xSize, cy + xSize);
-                    ctx.moveTo(cx + xSize, cy - xSize);
-                    ctx.lineTo(cx - xSize, cy + xSize);
-                    ctx.stroke();
-                }
-            }
+            // Edge highlight
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.lineWidth = Math.max(0.5, r * 0.06);
+            ctx.beginPath();
+            ctx.arc(cx, cy, r - 0.5, 0, Math.PI * 2);
+            ctx.stroke();
 
             ctx.restore();
         }
