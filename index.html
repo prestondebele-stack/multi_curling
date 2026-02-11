@@ -20,6 +20,15 @@
     <div id="game-container">
         <canvas id="curling-canvas"></canvas>
         <div id="ui-overlay">
+            <div id="mode-selector">
+                <button id="mode-1p" class="mode-btn active">1 Player</button>
+                <button id="mode-2p" class="mode-btn">2 Player</button>
+            </div>
+            <div id="difficulty-selector">
+                <button id="diff-easy" class="diff-btn">Easy</button>
+                <button id="diff-medium" class="diff-btn active">Medium</button>
+                <button id="diff-hard" class="diff-btn">Hard</button>
+            </div>
             <div id="scoreboard">
                 <div class="team-score" id="team-red-score">
                     <div class="team-dot red-dot"></div>
@@ -84,6 +93,9 @@
                 <p>Hold <kbd>SPACE</kbd> or tap &amp; hold <strong>SWEEP</strong> during stone travel.</p>
             </div>
         </div>
+        <div id="bot-thinking" style="display:none;">
+            <span class="thinking-text">Bot is thinking<span class="dots">...</span></span>
+        </div>
         <div id="game-over-screen" style="display:none;">
             <h1 id="winner-text">Game Over</h1>
             <div id="final-scores"></div>
@@ -91,6 +103,7 @@
         </div>
     </div>
     <script src="physics.js"></script>
+    <script src="bot.js"></script>
     <script src="game.js"></script>
     <script>
         // Register service worker for PWA

@@ -51,6 +51,104 @@ html, body {
 }
 
 /* ================================================
+   MODE & DIFFICULTY SELECTORS
+   ================================================ */
+#mode-selector {
+    display: flex;
+    gap: 6px;
+}
+
+.mode-btn {
+    flex: 1;
+    padding: 8px 6px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid #444;
+    background: #222;
+    color: #aaa;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+}
+
+.mode-btn:hover { background: #333; color: #ddd; }
+.mode-btn.active { background: #2a4a7a; color: #fff; border-color: #5c9ae6; }
+
+#difficulty-selector {
+    display: flex;
+    gap: 6px;
+}
+
+.diff-btn {
+    flex: 1;
+    padding: 6px 4px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid #444;
+    background: #222;
+    color: #aaa;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+}
+
+.diff-btn:hover { background: #333; color: #ddd; }
+
+#diff-easy.active { background: #2e7d32; color: #fff; border-color: #4caf50; }
+#diff-medium.active { background: #e65100; color: #fff; border-color: #fb8c00; }
+#diff-hard.active { background: #b71c1c; color: #fff; border-color: #e53935; }
+
+#difficulty-selector.hidden { display: none; }
+
+/* ================================================
+   BOT THINKING INDICATOR
+   ================================================ */
+#bot-thinking {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 300px;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    pointer-events: none;
+}
+
+.thinking-text {
+    background: rgba(0, 0, 0, 0.75);
+    color: #fdd835;
+    font-size: 20px;
+    font-weight: 700;
+    padding: 12px 24px;
+    border-radius: 12px;
+    letter-spacing: 1px;
+}
+
+.thinking-text .dots {
+    animation: thinkDots 1.4s infinite;
+}
+
+@keyframes thinkDots {
+    0%, 20% { opacity: 0.2; }
+    50% { opacity: 1; }
+    80%, 100% { opacity: 0.2; }
+}
+
+/* Disabled controls during bot turn */
+#controls-panel.bot-disabled {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+#controls-panel.bot-disabled input[type="range"] {
+    cursor: not-allowed;
+}
+
+/* ================================================
    SCOREBOARD
    ================================================ */
 #scoreboard {
@@ -443,6 +541,19 @@ input[type="range"]::-moz-range-thumb {
         -webkit-overflow-scrolling: touch;
     }
 
+    /* Compact mode/difficulty selectors */
+    #mode-selector { gap: 4px; }
+    .mode-btn { padding: 6px 4px; font-size: 12px; min-height: 36px; }
+    #difficulty-selector { gap: 4px; }
+    .diff-btn { padding: 5px 3px; font-size: 11px; min-height: 32px; }
+
+    #bot-thinking {
+        right: 0;
+        top: 30%;
+    }
+
+    .thinking-text { font-size: 16px; padding: 8px 16px; }
+
     /* Compact scoreboard */
     #scoreboard {
         padding: 6px 10px;
@@ -584,6 +695,13 @@ input[type="range"]::-moz-range-thumb {
         padding: 6px 8px;
         gap: 4px;
     }
+
+    #mode-selector { gap: 3px; }
+    .mode-btn { padding: 4px 3px; font-size: 11px; min-height: 28px; }
+    #difficulty-selector { gap: 3px; }
+    .diff-btn { padding: 3px 2px; font-size: 10px; min-height: 24px; }
+
+    #bot-thinking { right: 260px; }
 
     #scoreboard {
         padding: 4px 8px;

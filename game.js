@@ -125,7 +125,42 @@
         deliveredStone: null,
         simSpeed: 3.0,       // simulation speed multiplier for faster gameplay
         houseZoom: false,    // toggled by zoom button for close-up house view
+        botMode: true,       // 1-player mode (bot plays Yellow)
     };
+
+    // --------------------------------------------------------
+    // GAME STATE BRIDGE (read-only access for bot)
+    // --------------------------------------------------------
+    window._curlingBridge = {
+        get gameState() { return gameState; },
+        TEAMS,
+    };
+
+    // --------------------------------------------------------
+    // BOT HELPERS
+    // --------------------------------------------------------
+    function isBotTurn() {
+        return gameState.botMode && gameState.currentTeam === TEAMS.YELLOW;
+    }
+
+    function disableControlsForBot() {
+        document.getElementById('controls-panel').classList.add('bot-disabled');
+    }
+
+    function enableControlsForHuman() {
+        document.getElementById('controls-panel').classList.remove('bot-disabled');
+    }
+
+    function triggerBotTurn() {
+        if (!isBotTurn()) return;
+        disableControlsForBot();
+        document.getElementById('throw-btn').disabled = true;
+        setTimeout(() => {
+            if (gameState.phase === 'aiming' && isBotTurn()) {
+                CurlingBot.takeTurn(window._curlingBridge);
+            }
+        }, 600);
+    }
 
     // --------------------------------------------------------
     // STONE CREATION
@@ -356,9 +391,14 @@
 
         updateUI();
 
-        // Delay briefly so player sees the score
+        // Delay briefly so player sees the score, then enable controls or trigger bot
         setTimeout(() => {
-            document.getElementById('throw-btn').disabled = false;
+            if (isBotTurn()) {
+                triggerBotTurn();
+            } else {
+                enableControlsForHuman();
+                document.getElementById('throw-btn').disabled = false;
+            }
         }, 500);
     }
 
@@ -369,9 +409,9 @@
 
         let winner;
         if (gameState.redScore > gameState.yellowScore) {
-            winner = 'Red Wins!';
+            winner = gameState.botMode ? 'You Win!' : 'Red Wins!';
         } else if (gameState.yellowScore > gameState.redScore) {
-            winner = 'Yellow Wins!';
+            winner = gameState.botMode ? 'Bot Wins!' : 'Yellow Wins!';
         } else {
             winner = "It's a Tie!";
         }
@@ -398,7 +438,11 @@
         const teamLabel = document.getElementById('current-team-label');
         const stonesLabel = document.getElementById('stones-remaining');
 
-        teamLabel.textContent = gameState.currentTeam === TEAMS.RED ? "Red's Turn" : "Yellow's Turn";
+        if (gameState.botMode) {
+            teamLabel.textContent = gameState.currentTeam === TEAMS.RED ? "Your Turn" : "Bot's Turn";
+        } else {
+            teamLabel.textContent = gameState.currentTeam === TEAMS.RED ? "Red's Turn" : "Yellow's Turn";
+        }
         teamLabel.style.color = gameState.currentTeam === TEAMS.RED ? '#e53935' : '#fdd835';
 
         // Trigger turn change pulse animation
@@ -452,9 +496,15 @@
         gameState.deliveredStone = null;
         updateUI();
 
-        document.getElementById('throw-btn').disabled = false;
         document.getElementById('aim-slider').value = 0;
         document.getElementById('aim-value').textContent = '0.0Â°';
+
+        if (isBotTurn()) {
+            triggerBotTurn();
+        } else {
+            enableControlsForHuman();
+            document.getElementById('throw-btn').disabled = false;
+        }
     }
 
     // --------------------------------------------------------
@@ -1063,6 +1113,19 @@
 
         // Physics update
         if (gameState.phase === 'delivering') {
+            // Bot sweep decision (runs each frame for bot's stones)
+            if (gameState.botMode && gameState.deliveredStone &&
+                gameState.deliveredStone.moving && gameState.deliveredStone.team === TEAMS.YELLOW) {
+                const botSweep = CurlingBot.decideSweep(window._curlingBridge);
+                if (botSweep !== 'none') {
+                    gameState.isSweeping = true;
+                    gameState.sweepLevel = botSweep;
+                    setSweepLevel(botSweep);
+                } else {
+                    gameState.isSweeping = false;
+                }
+            }
+
             physicsAccumulator += frameTime * gameState.simSpeed;
 
             while (physicsAccumulator >= PHYSICS_DT) {
@@ -1434,6 +1497,7 @@
     });
 
     function resetGame() {
+        const preserveBotMode = gameState.botMode;
         gameState = {
             stones: [],
             currentTeam: TEAMS.RED,
@@ -1451,6 +1515,7 @@
             deliveredStone: null,
             simSpeed: 3.0,
             houseZoom: false,
+            botMode: preserveBotMode,
         };
 
         fgzSnapshots = [];
@@ -1462,9 +1527,44 @@
         document.getElementById('yellow-total').textContent = '0';
         document.getElementById('current-end').textContent = '1';
         document.getElementById('throw-btn').disabled = false;
+        enableControlsForHuman();
 
         updateUI();
     }
+
+    // --------------------------------------------------------
+    // MODE & DIFFICULTY BUTTONS
+    // --------------------------------------------------------
+    document.getElementById('mode-1p').addEventListener('click', () => {
+        gameState.botMode = true;
+        document.getElementById('mode-1p').classList.add('active');
+        document.getElementById('mode-2p').classList.remove('active');
+        document.getElementById('difficulty-selector').classList.remove('hidden');
+        // If it's now the bot's turn, trigger it
+        if (isBotTurn() && gameState.phase === 'aiming') {
+            triggerBotTurn();
+        }
+    });
+
+    document.getElementById('mode-2p').addEventListener('click', () => {
+        gameState.botMode = false;
+        document.getElementById('mode-2p').classList.add('active');
+        document.getElementById('mode-1p').classList.remove('active');
+        document.getElementById('difficulty-selector').classList.add('hidden');
+        enableControlsForHuman();
+        if (gameState.phase === 'aiming') {
+            document.getElementById('throw-btn').disabled = false;
+        }
+    });
+
+    document.querySelectorAll('.diff-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const level = btn.id.replace('diff-', '');
+            CurlingBot.setDifficulty(level);
+        });
+    });
 
     // --------------------------------------------------------
     // INIT

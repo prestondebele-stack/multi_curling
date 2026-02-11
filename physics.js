@@ -73,10 +73,10 @@ const CurlingPhysics = (() => {
         // Direction: IN the direction of rotation (the key curling anomaly)
         // - Clockwise spin -> curls right
         // - Counter-clockwise spin -> curls left
-        // Tuned to produce ~1.5-2.0m lateral displacement over full draw-weight travel.
-        // The curl is modeled as a lateral acceleration that increases as speed drops,
-        // matching the real observation that most curling happens in the last third of travel.
-        curlCoefficient: 0.70,
+        // Tuned to produce ~1.0-1.5m lateral displacement over full draw-weight travel.
+        // A stone aimed at the edge of the house should curl to the tee line or just past,
+        // never all the way across the house (~3.6m).
+        curlCoefficient: 0.38,
 
         // Curl is stronger at lower speeds (stone curls more near the house)
         // and with fewer rotations (less spin = more curl per revolution)
@@ -90,7 +90,7 @@ const CurlingPhysics = (() => {
             // At high speeds (peel/takeout), v² makes curl negligible.
             // At low speeds, clamped so it doesn't spike near stopping.
             const rawFactor = 1.0 / (0.15 + linearSpeed * linearSpeed);
-            const speedFactor = Math.min(rawFactor, 2.0);
+            const speedFactor = Math.min(rawFactor, 1.5);
 
             // Spin efficiency: ~2.5-4 rotations is optimal
             // Less spin = less curl, more spin = diminishing returns
@@ -133,9 +133,9 @@ const CurlingPhysics = (() => {
     };
 
     // Delivery speed mapping (weight slider 0-100 -> m/s)
-    // Guard: ~1.8 m/s, Draw: ~2.5 m/s, Takeout: ~3.5 m/s, Peel: ~4.5 m/s
+    // Guard: ~2.0 m/s, Draw: ~2.7 m/s, Takeout: ~3.5 m/s, Peel: ~3.8 m/s
     function weightToSpeed(weightPercent) {
-        const minSpeed = 1.8;  // guard weight
+        const minSpeed = 2.0;  // guard weight (must reach past hog line)
         const maxSpeed = 3.8;  // hard peel
         // Non-linear: more precision at draw weight range
         const t = weightPercent / 100;
