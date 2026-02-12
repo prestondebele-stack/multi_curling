@@ -8,6 +8,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const db = require('./db');
+const auth = require('./auth');
 
 const PORT = process.env.PORT || 3000;
 
@@ -69,9 +71,10 @@ const wss = new WebSocket.Server({ server: httpServer });
 // --------------------------------------------------------
 // ROOM MANAGEMENT
 // --------------------------------------------------------
-const rooms = new Map();       // code -> Room
-const playerRooms = new Map(); // ws -> roomCode
-const matchmakingQueue = [];   // [ws, ...]
+const rooms = new Map();          // code -> Room
+const playerRooms = new Map();    // ws -> roomCode
+const playerSessions = new Map(); // ws -> { userId, username }
+const matchmakingQueue = [];      // [ws, ...]
 
 // Characters for room codes (excluding ambiguous: 0/O, 1/I/L)
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -96,6 +99,8 @@ function createRoom(hostWs) {
             currentTeam: 'red',
             phase: 'waiting', // waiting | playing | finished
         },
+        gameSnapshot: null,      // stored game state for reconnection resync
+        resultRecorded: false,   // prevent duplicate game result recording
         createdAt: Date.now(),
         disconnectTimers: [null, null],
     };
@@ -117,6 +122,8 @@ function joinRoom(code, joinerWs) {
 function startGame(room) {
     room.state.phase = 'playing';
     room.state.currentTeam = 'red';
+    room.gameSnapshot = null;
+    room.resultRecorded = false;
 
     send(room.players[0], {
         type: 'game_start',
@@ -152,6 +159,7 @@ function removeFromQueue(ws) {
 
 function cleanupPlayer(ws) {
     removeFromQueue(ws);
+    playerSessions.delete(ws);
 
     const code = playerRooms.get(ws);
     if (!code) return;
@@ -174,7 +182,7 @@ function cleanupPlayer(ws) {
         send(opponent, { type: 'opponent_disconnected' });
     }
 
-    // Start disconnect timer - keep room for 30 seconds
+    // Start disconnect timer - keep room for 5 minutes
     room.players[playerIdx] = null;
     room.disconnectTimers[playerIdx] = setTimeout(() => {
         // Player didn't reconnect - destroy room
@@ -183,7 +191,7 @@ function cleanupPlayer(ws) {
             playerRooms.delete(opponent);
         }
         rooms.delete(code);
-    }, 30000);
+    }, 300000); // 5 minutes
 
     playerRooms.delete(ws);
 }
@@ -208,7 +216,7 @@ function send(ws, data) {
     }
 }
 
-function handleMessage(ws, message) {
+async function handleMessage(ws, message) {
     let data;
     try {
         data = JSON.parse(message);
@@ -221,6 +229,52 @@ function handleMessage(ws, message) {
             send(ws, { type: 'pong' });
             break;
 
+        // ---- AUTH ----
+        case 'register': {
+            const result = await auth.register(data.username, data.password, data.country);
+            if (result.error) {
+                send(ws, { type: 'auth_error', error: result.error });
+            } else {
+                playerSessions.set(ws, { userId: result.userId, username: result.username });
+                send(ws, { type: 'auth_success', token: result.token, username: result.username });
+            }
+            break;
+        }
+
+        case 'login': {
+            const result = await auth.login(data.username, data.password);
+            if (result.error) {
+                send(ws, { type: 'auth_error', error: result.error });
+            } else {
+                playerSessions.set(ws, { userId: result.userId, username: result.username });
+                send(ws, { type: 'auth_success', token: result.token, username: result.username });
+            }
+            break;
+        }
+
+        case 'token_login': {
+            const session = auth.getSession(data.token);
+            if (!session) {
+                send(ws, { type: 'auth_error', error: 'Session expired' });
+            } else {
+                playerSessions.set(ws, session);
+                send(ws, { type: 'auth_success', token: data.token, username: session.username });
+            }
+            break;
+        }
+
+        case 'get_profile': {
+            const session = playerSessions.get(ws);
+            if (!session) {
+                send(ws, { type: 'profile_data', profile: null });
+                break;
+            }
+            const profile = await auth.getProfile(session.userId);
+            send(ws, { type: 'profile_data', profile });
+            break;
+        }
+
+        // ---- LOBBY ----
         case 'create_room': {
             const room = createRoom(ws);
             send(ws, { type: 'room_created', code: room.code });
@@ -274,6 +328,7 @@ function handleMessage(ws, message) {
             break;
         }
 
+        // ---- GAMEPLAY ----
         case 'throw': {
             const code = playerRooms.get(ws);
             if (!code) return;
@@ -304,9 +359,7 @@ function handleMessage(ws, message) {
             const room = rooms.get(code);
             if (!room) return;
 
-            const team = getPlayerTeam(room, ws);
-            if (team !== room.state.currentTeam) return;
-
+            // Allow sweep from either player (current thrower's turn already switched)
             const opponent = getOpponent(room, ws);
             send(opponent, { type: 'opponent_sweep_change', level: data.level });
             break;
@@ -317,9 +370,6 @@ function handleMessage(ws, message) {
             if (!code) return;
             const room = rooms.get(code);
             if (!room) return;
-
-            const team = getPlayerTeam(room, ws);
-            if (team !== room.state.currentTeam) return;
 
             const opponent = getOpponent(room, ws);
             send(opponent, { type: 'opponent_sweep_start' });
@@ -332,9 +382,6 @@ function handleMessage(ws, message) {
             const room = rooms.get(code);
             if (!room) return;
 
-            const team = getPlayerTeam(room, ws);
-            if (team !== room.state.currentTeam) return;
-
             const opponent = getOpponent(room, ws);
             send(opponent, { type: 'opponent_sweep_stop' });
             break;
@@ -346,6 +393,45 @@ function handleMessage(ws, message) {
             break;
         }
 
+        // ---- GAME STATE SYNC (for reconnection) ----
+        case 'game_state_sync': {
+            const code = playerRooms.get(ws);
+            if (!code) return;
+            const room = rooms.get(code);
+            if (!room) return;
+            // Store the latest game state snapshot
+            room.gameSnapshot = data.snapshot;
+            break;
+        }
+
+        // ---- GAME OVER (record result) ----
+        case 'game_over': {
+            const code = playerRooms.get(ws);
+            if (!code) return;
+            const room = rooms.get(code);
+            if (!room) return;
+
+            // Only record once per game
+            if (room.resultRecorded) break;
+            room.resultRecorded = true;
+
+            const redSession = room.players[0] ? playerSessions.get(room.players[0]) : null;
+            const yellowSession = room.players[1] ? playerSessions.get(room.players[1]) : null;
+
+            // Only record if both players are logged in
+            if (redSession && yellowSession) {
+                await auth.recordGameResult(
+                    redSession.userId,
+                    yellowSession.userId,
+                    data.redScore,
+                    data.yellowScore,
+                    data.endCount
+                );
+            }
+            break;
+        }
+
+        // ---- REMATCH ----
         case 'rematch': {
             const code = playerRooms.get(ws);
             if (!code) return;
@@ -361,6 +447,8 @@ function handleMessage(ws, message) {
                 room._rematchRequested = null;
                 room.state.currentTeam = 'red';
                 room.state.phase = 'playing';
+                room.gameSnapshot = null;
+                room.resultRecorded = false;
                 send(room.players[0], { type: 'rematch_accepted', yourTeam: 'red' });
                 send(room.players[1], { type: 'rematch_accepted', yourTeam: 'yellow' });
             }
@@ -408,7 +496,11 @@ function handleMessage(ws, message) {
             playerRooms.set(ws, code);
 
             const team = emptySlot === 0 ? 'red' : 'yellow';
-            send(ws, { type: 'reconnected', yourTeam: team });
+            send(ws, {
+                type: 'reconnected',
+                yourTeam: team,
+                gameSnapshot: room.gameSnapshot || null,
+            });
 
             const opponent = getOpponent(room, ws);
             if (opponent) {
@@ -440,7 +532,7 @@ wss.on('connection', (ws) => {
 });
 
 // --------------------------------------------------------
-// HEARTBEAT - detect dead connections
+// HEARTBEAT - detect dead connections (60s tolerance for backgrounded tabs)
 // --------------------------------------------------------
 const heartbeatInterval = setInterval(() => {
     wss.clients.forEach((ws) => {
@@ -450,7 +542,7 @@ const heartbeatInterval = setInterval(() => {
         }
         ws.isAlive = false;
     });
-}, 15000);
+}, 60000); // 60 seconds — tolerant of backgrounded mobile tabs
 
 // --------------------------------------------------------
 // STALE ROOM CLEANUP
@@ -458,8 +550,8 @@ const heartbeatInterval = setInterval(() => {
 const cleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const [code, room] of rooms) {
-        // Remove rooms older than 5 minutes with no second player
-        if (room.players[1] === null && now - room.createdAt > 5 * 60 * 1000) {
+        // Remove rooms older than 10 minutes with no second player
+        if (room.players[1] === null && room.state.phase === 'waiting' && now - room.createdAt > 10 * 60 * 1000) {
             if (room.players[0] && room.players[0].readyState === WebSocket.OPEN) {
                 send(room.players[0], { type: 'room_expired' });
             }
@@ -476,6 +568,19 @@ wss.on('close', () => {
 // --------------------------------------------------------
 // START
 // --------------------------------------------------------
-httpServer.listen(PORT, () => {
-    console.log(`Curling server running on port ${PORT}`);
+db.init();
+db.initSchema().then(() => {
+    httpServer.listen(PORT, () => {
+        console.log(`Curling server running on port ${PORT}`);
+        if (db.isAvailable()) {
+            console.log('Database connected — accounts enabled');
+        } else {
+            console.log('No database — guest mode only');
+        }
+    });
+}).catch(() => {
+    // Start even if DB fails
+    httpServer.listen(PORT, () => {
+        console.log(`Curling server running on port ${PORT} (no database)`);
+    });
 });

@@ -49,7 +49,7 @@
                 <div id="end-display">
                     <span>End</span>
                     <span id="current-end">1</span>
-                    <span>/ 10</span>
+                    <span id="total-ends-display">/ 6</span>
                 </div>
                 <div class="team-score" id="team-yellow-score">
                     <span class="hammer-icon" id="yellow-hammer" title="Hammer (last stone)"></span>
@@ -93,7 +93,7 @@
                     </div>
                 </div>
                 <div class="control-row action-row">
-                    <button id="zoom-btn" title="Zoom to house">🔍</button>
+                    <button id="zoom-btn" title="Zoom to house">&#128269;</button>
                     <button id="throw-btn">THROW</button>
                     <button id="sweep-toggle-btn" style="display:none;">SWEEP</button>
                 </div>
@@ -116,6 +116,60 @@
         <div id="lobby-screen" style="display:none;">
             <div id="lobby-content">
                 <h2>Online Multiplayer</h2>
+
+                <!-- Auth panel -->
+                <div id="auth-panel" style="display:none;">
+                    <div id="auth-tabs">
+                        <button id="auth-login-tab" class="auth-tab active">Login</button>
+                        <button id="auth-register-tab" class="auth-tab">Register</button>
+                    </div>
+                    <div id="auth-login-form">
+                        <input type="text" id="auth-username" placeholder="Username" maxlength="20" autocomplete="username">
+                        <input type="password" id="auth-password" placeholder="Password" maxlength="32" autocomplete="current-password">
+                        <button id="auth-login-btn" class="lobby-btn">Login</button>
+                    </div>
+                    <div id="auth-register-form" style="display:none;">
+                        <input type="text" id="reg-username" placeholder="Username" maxlength="20" autocomplete="off">
+                        <input type="password" id="reg-password" placeholder="Password (4+ chars)" maxlength="32" autocomplete="new-password">
+                        <select id="reg-country">
+                            <option value="">Country (optional)</option>
+                            <option value="US">United States</option>
+                            <option value="CA">Canada</option>
+                            <option value="GB">United Kingdom</option>
+                            <option value="SE">Sweden</option>
+                            <option value="NO">Norway</option>
+                            <option value="CH">Switzerland</option>
+                            <option value="JP">Japan</option>
+                            <option value="KR">South Korea</option>
+                            <option value="CN">China</option>
+                            <option value="DE">Germany</option>
+                            <option value="IT">Italy</option>
+                            <option value="DK">Denmark</option>
+                            <option value="FI">Finland</option>
+                            <option value="RU">Russia</option>
+                            <option value="AU">Australia</option>
+                            <option value="NZ">New Zealand</option>
+                            <option value="BR">Brazil</option>
+                            <option value="MX">Mexico</option>
+                            <option value="FR">France</option>
+                            <option value="ES">Spain</option>
+                            <option value="NL">Netherlands</option>
+                            <option value="CZ">Czech Republic</option>
+                            <option value="SC">Scotland</option>
+                        </select>
+                        <button id="auth-register-btn" class="lobby-btn">Register</button>
+                    </div>
+                    <p id="auth-error" class="lobby-error" style="display:none;"></p>
+                    <button id="auth-skip" class="lobby-btn secondary">Play as Guest</button>
+                </div>
+
+                <!-- User info bar (shown when logged in) -->
+                <div id="user-info-bar" style="display:none;">
+                    <span id="logged-in-as"></span>
+                    <span id="user-record"></span>
+                    <button id="auth-logout" class="auth-logout-btn">Logout</button>
+                </div>
+
                 <div id="lobby-menu">
                     <button id="lobby-create" class="lobby-btn">Create Game</button>
                     <button id="lobby-join" class="lobby-btn">Join Game</button>

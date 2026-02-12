@@ -1113,6 +1113,137 @@ input[type="range"]::-moz-range-thumb {
     color: #ddd;
 }
 
+/* ================================================
+   AUTH PANEL
+   ================================================ */
+#auth-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    width: 100%;
+}
+
+#auth-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+.auth-tab {
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid #444;
+    background: #222;
+    color: #aaa;
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.auth-tab:hover {
+    background: #333;
+    color: #ddd;
+}
+
+.auth-tab.active {
+    background: #2a4a7a;
+    color: #fff;
+    border-color: #5c9ae6;
+}
+
+#auth-login-form,
+#auth-register-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+#auth-panel input[type="text"],
+#auth-panel input[type="password"] {
+    width: 220px;
+    padding: 10px 14px;
+    font-size: 14px;
+    background: rgba(42, 74, 122, 0.3);
+    border: 1px solid #5c9ae6;
+    border-radius: 6px;
+    color: #fff;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#auth-panel input[type="text"]:focus,
+#auth-panel input[type="password"]:focus {
+    border-color: #90caf9;
+    box-shadow: 0 0 12px rgba(92, 154, 230, 0.3);
+}
+
+#auth-panel input::placeholder {
+    color: #667;
+}
+
+#auth-panel select {
+    width: 220px;
+    padding: 10px 14px;
+    font-size: 14px;
+    background: rgba(42, 74, 122, 0.3);
+    border: 1px solid #5c9ae6;
+    border-radius: 6px;
+    color: #fff;
+    outline: none;
+    cursor: pointer;
+}
+
+#auth-panel select option {
+    background: #1a1a2e;
+    color: #fff;
+}
+
+#user-info-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background: rgba(42, 74, 122, 0.2);
+    border: 1px solid rgba(92, 154, 230, 0.3);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+#logged-in-as {
+    color: #5c9ae6;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#user-record {
+    color: #888;
+    font-size: 12px;
+}
+
+.auth-logout-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #333;
+    color: #aaa;
+    border: 1px solid #555;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.auth-logout-btn:hover {
+    background: #444;
+    color: #ddd;
+}
+
 /* Landscape mobile */
 @media (max-height: 500px) and (max-width: 900px) {
     #game-container {

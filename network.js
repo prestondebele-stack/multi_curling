@@ -32,6 +32,9 @@ const CurlingNetwork = (() => {
         onDisconnect: null,
         onReconnected: null,
         onReconnectFailed: null,
+        onAuthSuccess: null,
+        onAuthError: null,
+        onProfileData: null,
     };
 
     function send(data) {
@@ -141,7 +144,10 @@ const CurlingNetwork = (() => {
             case 'reconnected':
                 myTeam = data.yourTeam;
                 reconnectAttempts = 0;
-                if (callbacks.onReconnected) callbacks.onReconnected({ yourTeam: data.yourTeam });
+                if (callbacks.onReconnected) callbacks.onReconnected({
+                    yourTeam: data.yourTeam,
+                    gameSnapshot: data.gameSnapshot || null,
+                });
                 break;
 
             case 'reconnect_failed':
@@ -151,11 +157,27 @@ const CurlingNetwork = (() => {
             case 'room_expired':
                 if (callbacks.onRoomExpired) callbacks.onRoomExpired();
                 break;
+
+            // Auth
+            case 'auth_success':
+                if (callbacks.onAuthSuccess) callbacks.onAuthSuccess({
+                    token: data.token,
+                    username: data.username,
+                });
+                break;
+
+            case 'auth_error':
+                if (callbacks.onAuthError) callbacks.onAuthError({ error: data.error });
+                break;
+
+            case 'profile_data':
+                if (callbacks.onProfileData) callbacks.onProfileData({ profile: data.profile });
+                break;
         }
     }
 
     function attemptReconnect() {
-        if (reconnectAttempts >= 5 || !roomCode) {
+        if (reconnectAttempts >= 30 || !roomCode) {
             if (callbacks.onReconnectFailed) callbacks.onReconnectFailed();
             return;
         }
@@ -176,6 +198,11 @@ const CurlingNetwork = (() => {
                 startHeartbeat();
                 // Try to rejoin room
                 send({ type: 'reconnect', code: roomCode });
+                // Re-auth with saved token if available
+                const savedToken = localStorage.getItem('curling_token');
+                if (savedToken) {
+                    send({ type: 'token_login', token: savedToken });
+                }
             };
 
             newWs.onerror = () => {
@@ -183,7 +210,7 @@ const CurlingNetwork = (() => {
             };
 
             newWs.onclose = () => {
-                if (reconnectAttempts < 5) {
+                if (reconnectAttempts < 30) {
                     attemptReconnect();
                 }
             };
@@ -197,6 +224,41 @@ const CurlingNetwork = (() => {
             attemptReconnect();
         }
     }
+
+    // --- Tab visibility handling ---
+    // When the tab is backgrounded (e.g., switching to text messenger),
+    // browsers throttle/suspend timers. We stop heartbeat when hidden
+    // and immediately reconnect when the tab becomes visible again.
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            // Tab hidden — stop heartbeat (timers get throttled anyway)
+            stopHeartbeat();
+        } else {
+            // Tab visible again — check connection and resume
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // Connection still alive — send immediate ping and restart heartbeat
+                send({ type: 'ping' });
+                startHeartbeat();
+            } else if (ws && ws.readyState === WebSocket.CONNECTING) {
+                // Connection in progress, just restart heartbeat
+                startHeartbeat();
+            } else if (roomCode && !intentionalClose) {
+                // Connection was lost while tab was hidden — reconnect
+                if (callbacks.onDisconnect) callbacks.onDisconnect();
+                attemptReconnect();
+            }
+        }
+    });
+
+    // Distinguish actual page close from tab switch
+    window.addEventListener('beforeunload', () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            // Only send leave if actually closing the page
+            // (beforeunload fires on close/refresh, not on tab switch)
+            intentionalClose = true;
+            send({ type: 'leave' });
+        }
+    });
 
     // Public API
     return {
@@ -263,6 +325,20 @@ const CurlingNetwork = (() => {
         sendRematch() { send({ type: 'rematch' }); },
         sendLeave() { send({ type: 'leave' }); },
 
+        // Game state sync (for reconnection)
+        sendGameStateSync(snapshot) { send({ type: 'game_state_sync', snapshot }); },
+
+        // Game over (record result)
+        sendGameOver(redScore, yellowScore, endCount) {
+            send({ type: 'game_over', redScore, yellowScore, endCount });
+        },
+
+        // Auth
+        sendLogin(username, password) { send({ type: 'login', username, password }); },
+        sendRegister(username, password, country) { send({ type: 'register', username, password, country }); },
+        sendTokenLogin(token) { send({ type: 'token_login', token }); },
+        sendGetProfile() { send({ type: 'get_profile' }); },
+
         // Event registration
         onGameStart(cb) { callbacks.onGameStart = cb; },
         onOpponentThrow(cb) { callbacks.onOpponentThrow = cb; },
@@ -282,6 +358,9 @@ const CurlingNetwork = (() => {
         onDisconnect(cb) { callbacks.onDisconnect = cb; },
         onReconnected(cb) { callbacks.onReconnected = cb; },
         onReconnectFailed(cb) { callbacks.onReconnectFailed = cb; },
+        onAuthSuccess(cb) { callbacks.onAuthSuccess = cb; },
+        onAuthError(cb) { callbacks.onAuthError = cb; },
+        onProfileData(cb) { callbacks.onProfileData = cb; },
 
         // State
         getMyTeam() { return myTeam; },

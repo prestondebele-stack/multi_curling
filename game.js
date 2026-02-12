@@ -115,7 +115,7 @@
         redThrown: 0,
         yellowThrown: 0,
         currentEnd: 1,
-        totalEnds: 10,
+        totalEnds: 6,
         redScore: 0,
         yellowScore: 0,
         endScores: [],
@@ -477,7 +477,11 @@
         if (gameState.onlineMode) {
             newGameBtn.style.display = 'none';
             rematchBtn.style.display = 'inline-block';
+            rematchBtn.textContent = 'Rematch';
+            rematchBtn.disabled = false;
             leaveBtn.style.display = 'inline-block';
+            // Record game result for win/loss tracking
+            CurlingNetwork.sendGameOver(gameState.redScore, gameState.yellowScore, gameState.currentEnd);
         } else {
             newGameBtn.style.display = 'inline-block';
             rematchBtn.style.display = 'none';
@@ -561,6 +565,20 @@
             if (isMyTurn()) {
                 enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
+                // Send a game state snapshot so server can resync reconnecting players
+                CurlingNetwork.sendGameStateSync({
+                    currentTeam: gameState.currentTeam,
+                    redScore: gameState.redScore,
+                    yellowScore: gameState.yellowScore,
+                    currentEnd: gameState.currentEnd,
+                    redThrown: gameState.redThrown,
+                    yellowThrown: gameState.yellowThrown,
+                    hammer: gameState.hammer,
+                    endScores: gameState.endScores,
+                    stones: gameState.stones.filter(s => s.active).map(s => ({
+                        team: s.team, x: s.x, y: s.y,
+                    })),
+                });
             } else {
                 disableControlsForBot();
                 document.getElementById('throw-btn').disabled = true;
@@ -1170,6 +1188,13 @@
     let physicsAccumulator = 0;
 
     function gameLoop(timestamp) {
+        // Skip updates when tab is hidden (saves battery, prevents drift)
+        if (document.hidden) {
+            lastTime = 0;
+            requestAnimationFrame(gameLoop);
+            return;
+        }
+
         if (!lastTime) lastTime = timestamp;
         let frameTime = (timestamp - lastTime) / 1000;
         lastTime = timestamp;
@@ -1661,7 +1686,7 @@ function drawStagedStones() {
             redThrown: 0,
             yellowThrown: 0,
             currentEnd: 1,
-            totalEnds: 10,
+            totalEnds: 6,
             redScore: 0,
             yellowScore: 0,
             endScores: [],
@@ -1782,7 +1807,7 @@ function drawStagedStones() {
     })();
 
     function showLobbyPanel(panelId) {
-        const panels = ['lobby-menu', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel'];
+        const panels = ['lobby-menu', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel'];
         panels.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = id === panelId ? 'flex' : 'none';
@@ -1798,11 +1823,39 @@ function drawStagedStones() {
         document.getElementById('lobby-screen').style.display = 'none';
     }
 
+    let disconnectCountdown = null;
+
     function showDisconnectOverlay() {
         document.getElementById('disconnect-overlay').style.display = 'flex';
+        const sub = document.querySelector('.disconnect-sub');
+        let remaining = 300; // 5 minutes in seconds
+
+        function formatTime(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return `${m}:${s.toString().padStart(2, '0')}`;
+        }
+
+        sub.textContent = `Waiting for reconnection... (${formatTime(remaining)})`;
+
+        if (disconnectCountdown) clearInterval(disconnectCountdown);
+        disconnectCountdown = setInterval(() => {
+            remaining--;
+            if (remaining <= 0) {
+                clearInterval(disconnectCountdown);
+                disconnectCountdown = null;
+                sub.textContent = 'Opponent did not reconnect.';
+            } else {
+                sub.textContent = `Waiting for reconnection... (${formatTime(remaining)})`;
+            }
+        }, 1000);
     }
 
     function hideDisconnectOverlay() {
+        if (disconnectCountdown) {
+            clearInterval(disconnectCountdown);
+            disconnectCountdown = null;
+        }
         document.getElementById('disconnect-overlay').style.display = 'none';
     }
 
@@ -1973,6 +2026,51 @@ function drawStagedStones() {
             showLobbyPanel('lobby-menu');
         });
 
+        CurlingNetwork.onReconnected(({ yourTeam, gameSnapshot }) => {
+            gameState.myTeam = yourTeam;
+            gameState.onlineMode = true;
+            gameState.opponentConnected = true;
+            hideDisconnectOverlay();
+            showOnlineTeamBadge();
+
+            if (gameSnapshot) {
+                // Resync from server snapshot
+                gameState.redScore = gameSnapshot.redScore || 0;
+                gameState.yellowScore = gameSnapshot.yellowScore || 0;
+                gameState.currentEnd = gameSnapshot.currentEnd || 1;
+                gameState.redThrown = gameSnapshot.redThrown || 0;
+                gameState.yellowThrown = gameSnapshot.yellowThrown || 0;
+                gameState.hammer = gameSnapshot.hammer || TEAMS.YELLOW;
+                gameState.endScores = gameSnapshot.endScores || [];
+                gameState.currentTeam = gameSnapshot.currentTeam || TEAMS.RED;
+                gameState.phase = 'aiming';
+
+                // Rebuild stones from snapshot positions
+                if (gameSnapshot.stones && gameSnapshot.stones.length > 0) {
+                    gameState.stones = gameSnapshot.stones.map(s => {
+                        const stone = CurlingPhysics.createStone(s.team, s.x, s.y, 0, 0, 0);
+                        stone.active = true;
+                        stone.moving = false;
+                        return stone;
+                    });
+                }
+
+                // Update UI
+                document.getElementById('red-total').textContent = gameState.redScore;
+                document.getElementById('yellow-total').textContent = gameState.yellowScore;
+                document.getElementById('current-end').textContent = gameState.currentEnd;
+                updateUI();
+            }
+
+            if (isMyTurn()) {
+                enableControlsForHuman();
+                document.getElementById('throw-btn').disabled = false;
+            } else {
+                disableControlsForBot();
+                document.getElementById('throw-btn').disabled = true;
+            }
+        });
+
         CurlingNetwork.onDisconnect(() => {
             // Network disconnected - reconnection is handled by network.js
         });
@@ -1982,6 +2080,30 @@ function drawStagedStones() {
             resetGame();
             hideLobbyScreen();
             hideDisconnectOverlay();
+        });
+
+        // ---- AUTH HANDLERS ----
+        CurlingNetwork.onAuthSuccess(({ token, username }) => {
+            localStorage.setItem('curling_token', token);
+            localStorage.setItem('curling_username', username);
+            document.getElementById('auth-panel').style.display = 'none';
+            document.getElementById('user-info-bar').style.display = 'flex';
+            document.getElementById('logged-in-as').textContent = username;
+            showLobbyPanel('lobby-menu');
+            CurlingNetwork.sendGetProfile();
+        });
+
+        CurlingNetwork.onAuthError(({ error }) => {
+            const errEl = document.getElementById('auth-error');
+            errEl.textContent = error;
+            errEl.style.display = 'block';
+        });
+
+        CurlingNetwork.onProfileData(({ profile }) => {
+            if (profile) {
+                document.getElementById('user-record').textContent =
+                    `${profile.wins}W / ${profile.losses}L / ${profile.draws}D`;
+            }
         });
     }
 
@@ -1997,6 +2119,25 @@ function drawStagedStones() {
         // Connect and show lobby
         CurlingNetwork.connect(SERVER_URL).then(() => {
             showLobbyScreen();
+
+            // Check for saved auth token
+            const savedToken = localStorage.getItem('curling_token');
+            const savedUsername = localStorage.getItem('curling_username');
+            if (savedToken) {
+                CurlingNetwork.sendTokenLogin(savedToken);
+                // Show user info bar optimistically
+                if (savedUsername) {
+                    document.getElementById('auth-panel').style.display = 'none';
+                    document.getElementById('user-info-bar').style.display = 'flex';
+                    document.getElementById('logged-in-as').textContent = savedUsername;
+                    showLobbyPanel('lobby-menu');
+                }
+            } else {
+                // Show auth panel
+                document.getElementById('auth-panel').style.display = 'flex';
+                document.getElementById('user-info-bar').style.display = 'none';
+                document.getElementById('lobby-menu').style.display = 'none';
+            }
         }).catch(() => {
             document.getElementById('mode-online').classList.remove('active');
             document.getElementById('mode-1p').classList.add('active');
@@ -2044,6 +2185,8 @@ function drawStagedStones() {
         document.getElementById('mode-online').classList.remove('active');
         document.getElementById('mode-1p').classList.add('active');
         document.getElementById('difficulty-selector').classList.remove('hidden');
+        document.getElementById('user-info-bar').style.display = 'none';
+        document.getElementById('auth-panel').style.display = 'none';
     });
 
     document.getElementById('lobby-cancel-create').addEventListener('click', () => {
@@ -2077,6 +2220,72 @@ function drawStagedStones() {
         document.getElementById('game-over-screen').style.display = 'none';
         clearOnlineMode();
         resetGame();
+    });
+
+    // --------------------------------------------------------
+    // AUTH BUTTON HANDLERS
+    // --------------------------------------------------------
+    document.getElementById('auth-login-tab').addEventListener('click', () => {
+        document.getElementById('auth-login-tab').classList.add('active');
+        document.getElementById('auth-register-tab').classList.remove('active');
+        document.getElementById('auth-login-form').style.display = 'flex';
+        document.getElementById('auth-register-form').style.display = 'none';
+        document.getElementById('auth-error').style.display = 'none';
+    });
+
+    document.getElementById('auth-register-tab').addEventListener('click', () => {
+        document.getElementById('auth-register-tab').classList.add('active');
+        document.getElementById('auth-login-tab').classList.remove('active');
+        document.getElementById('auth-register-form').style.display = 'flex';
+        document.getElementById('auth-login-form').style.display = 'none';
+        document.getElementById('auth-error').style.display = 'none';
+    });
+
+    document.getElementById('auth-login-btn').addEventListener('click', () => {
+        const username = document.getElementById('auth-username').value.trim();
+        const password = document.getElementById('auth-password').value;
+        if (!username || !password) {
+            document.getElementById('auth-error').textContent = 'Enter username and password';
+            document.getElementById('auth-error').style.display = 'block';
+            return;
+        }
+        document.getElementById('auth-error').style.display = 'none';
+        CurlingNetwork.sendLogin(username, password);
+    });
+
+    document.getElementById('auth-password').addEventListener('keydown', (e) => {
+        if (e.code === 'Enter') document.getElementById('auth-login-btn').click();
+    });
+
+    document.getElementById('auth-register-btn').addEventListener('click', () => {
+        const username = document.getElementById('reg-username').value.trim();
+        const password = document.getElementById('reg-password').value;
+        const country = document.getElementById('reg-country').value;
+        if (!username || !password) {
+            document.getElementById('auth-error').textContent = 'Enter username and password';
+            document.getElementById('auth-error').style.display = 'block';
+            return;
+        }
+        document.getElementById('auth-error').style.display = 'none';
+        CurlingNetwork.sendRegister(username, password, country);
+    });
+
+    document.getElementById('reg-password').addEventListener('keydown', (e) => {
+        if (e.code === 'Enter') document.getElementById('auth-register-btn').click();
+    });
+
+    document.getElementById('auth-skip').addEventListener('click', () => {
+        document.getElementById('auth-panel').style.display = 'none';
+        showLobbyPanel('lobby-menu');
+    });
+
+    document.getElementById('auth-logout').addEventListener('click', () => {
+        localStorage.removeItem('curling_token');
+        localStorage.removeItem('curling_username');
+        document.getElementById('user-info-bar').style.display = 'none';
+        document.getElementById('auth-panel').style.display = 'flex';
+        document.getElementById('lobby-menu').style.display = 'none';
+        document.getElementById('user-record').textContent = '';
     });
 
     // Register online handlers immediately
