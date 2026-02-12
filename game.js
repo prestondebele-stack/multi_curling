@@ -1190,6 +1190,46 @@
     let lastTime = 0;
     let physicsAccumulator = 0;
 
+    // Fast-forward physics to settle all moving stones (used after tab becomes visible)
+    function fastForwardPhysics() {
+        const MAX_ITERATIONS = 5000; // safety limit
+        let iterations = 0;
+        while (iterations < MAX_ITERATIONS) {
+            let anyMoving = false;
+            for (const stone of gameState.stones) {
+                if (stone.active && stone.moving) {
+                    anyMoving = true;
+                    break;
+                }
+            }
+            if (!anyMoving) break;
+
+            CurlingPhysics.stepAll(gameState.stones, PHYSICS_DT, gameState.sweepLevel, gameState.isSweeping);
+            checkOutOfBounds();
+            iterations++;
+        }
+    }
+
+    // When tab becomes visible again in online mode, fast-forward any in-flight stones
+    // so the game catches up (requestAnimationFrame is throttled/paused in background tabs)
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && gameState.onlineMode) {
+            if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                fastForwardPhysics();
+                // Check FGZ violation and advance turn
+                checkFGZViolation();
+                gameState.phase = 'waitingNextTurn';
+                gameState.isSweeping = false;
+                document.getElementById('sweep-toggle-btn').style.display = 'none';
+                setTimeout(() => {
+                    if (gameState.phase === 'waitingNextTurn') {
+                        nextTurn();
+                    }
+                }, 300);
+            }
+        }
+    });
+
     function gameLoop(timestamp) {
         // Skip updates when tab is hidden (saves battery, prevents drift)
         if (document.hidden) {

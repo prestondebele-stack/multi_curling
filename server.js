@@ -362,20 +362,29 @@ async function handleMessage(ws, message) {
             if (!room) return;
 
             const team = getPlayerTeam(room, ws);
-            if (team !== room.state.currentTeam) return; // not your turn
+            if (team !== room.state.currentTeam) {
+                console.log(`[THROW REJECTED] ${team} tried to throw but currentTeam is ${room.state.currentTeam} (room ${code})`);
+                return; // not your turn
+            }
 
+            const prevTeam = room.state.currentTeam;
             // Switch turns immediately when relaying the throw
             // (prevents race condition with separate turn_complete message)
             room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
+            console.log(`[THROW OK] ${team} threw, turn switched ${prevTeam} -> ${room.state.currentTeam} (room ${code})`);
 
             const opponent = getOpponent(room, ws);
-            send(opponent, {
-                type: 'opponent_throw',
-                aim: data.aim,
-                weight: data.weight,
-                spinDir: data.spinDir,
-                spinAmount: data.spinAmount,
-            });
+            if (opponent && opponent.readyState === WebSocket.OPEN) {
+                send(opponent, {
+                    type: 'opponent_throw',
+                    aim: data.aim,
+                    weight: data.weight,
+                    spinDir: data.spinDir,
+                    spinAmount: data.spinAmount,
+                });
+            } else {
+                console.log(`[THROW WARN] opponent not connected for relay (room ${code})`);
+            }
             break;
         }
 
