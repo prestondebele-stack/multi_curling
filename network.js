@@ -38,6 +38,7 @@ const CurlingNetwork = (() => {
         onRatingUpdate: null,
         onSecurityQuestion: null,
         onPasswordResetSuccess: null,
+        onVapidKey: null,
     };
 
     function send(data) {
@@ -188,6 +189,10 @@ const CurlingNetwork = (() => {
 
             case 'password_reset_success':
                 if (callbacks.onPasswordResetSuccess) callbacks.onPasswordResetSuccess();
+                break;
+
+            case 'vapid_key':
+                if (callbacks.onVapidKey) callbacks.onVapidKey({ key: data.key });
                 break;
         }
     }
@@ -356,6 +361,9 @@ const CurlingNetwork = (() => {
         sendGetProfile() { send({ type: 'get_profile' }); },
         sendGetSecurityQuestion(username) { send({ type: 'get_security_question', username }); },
         sendResetPassword(username, answer, newPassword) { send({ type: 'reset_password', username, answer, newPassword }); },
+        sendGetVapidKey() { send({ type: 'get_vapid_key' }); },
+        sendPushSubscribe(subscription) { send({ type: 'push_subscribe', subscription }); },
+        sendPushUnsubscribe(endpoint) { send({ type: 'push_unsubscribe', endpoint }); },
 
         // Event registration
         onGameStart(cb) { callbacks.onGameStart = cb; },
@@ -382,6 +390,7 @@ const CurlingNetwork = (() => {
         onRatingUpdate(cb) { callbacks.onRatingUpdate = cb; },
         onSecurityQuestion(cb) { callbacks.onSecurityQuestion = cb; },
         onPasswordResetSuccess(cb) { callbacks.onPasswordResetSuccess = cb; },
+        onVapidKey(cb) { callbacks.onVapidKey = cb; },
 
         // State
         getMyTeam() { return myTeam; },

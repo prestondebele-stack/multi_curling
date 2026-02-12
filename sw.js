@@ -1,5 +1,5 @@
 // Service Worker for Capital Curling Club PWA
-const CACHE_NAME = 'curling-v13';
+const CACHE_NAME = 'curling-v14';
 const ASSETS = [
     './',
     './index.html',
@@ -78,6 +78,48 @@ self.addEventListener('fetch', (event) => {
                 });
                 return response;
             });
+        })
+    );
+});
+
+// Push notification: only show if no focused game tab exists
+self.addEventListener('push', (event) => {
+    const data = event.data ? event.data.json() : {};
+    const title = data.title || "It's your turn!";
+    const body = data.body || 'Your opponent has thrown. Time to deliver your stone!';
+
+    event.waitUntil(
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+            // If any game tab is focused, skip the notification
+            const hasFocused = clients.some((c) => c.focused);
+            if (hasFocused) return;
+
+            return self.registration.showNotification(title, {
+                body,
+                icon: './ccc-final-png_orig.png',
+                badge: './ccc-final-png_orig.png',
+                tag: 'turn-notification',
+                renotify: true,
+                vibrate: [200, 100, 200],
+            });
+        })
+    );
+});
+
+// Notification click: focus existing game tab or open a new one
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+
+    event.waitUntil(
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+            // Try to focus an existing game tab
+            for (const client of clients) {
+                if (client.url && client.focus) {
+                    return client.focus();
+                }
+            }
+            // No existing tab — open the game
+            return self.clients.openWindow('./');
         })
     );
 });

@@ -68,6 +68,19 @@ async function initSchema() {
             ALTER TABLE users ADD COLUMN IF NOT EXISTS security_answer_hash VARCHAR(72) DEFAULT '';
         `);
 
+        // Push notification subscriptions
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                endpoint TEXT NOT NULL,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(endpoint)
+            );
+        `);
+
         dbAvailable = true;
         console.log('Database schema initialized');
     } catch (err) {

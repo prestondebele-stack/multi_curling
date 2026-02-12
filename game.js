@@ -141,6 +141,120 @@
     };
 
     // --------------------------------------------------------
+    // TAB NOTIFICATION (title flash + sound when it's your turn)
+    // --------------------------------------------------------
+    const TabNotify = (() => {
+        const ORIG_TITLE = document.title;
+        let flashTimer = null;
+        let audioCtx = null;
+
+        function getCtx() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            return audioCtx;
+        }
+
+        // Unlock audio on first user gesture (iOS Safari requirement)
+        document.addEventListener('click', function unlock() {
+            const ctx = getCtx();
+            if (ctx.state === 'suspended') ctx.resume();
+            document.removeEventListener('click', unlock);
+        }, { once: true });
+
+        function playTone() {
+            try {
+                const ctx = getCtx();
+                if (ctx.state === 'suspended') return;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                gain.gain.setValueAtTime(0.3, ctx.currentTime);
+                osc.frequency.setValueAtTime(523, ctx.currentTime);        // C5
+                osc.frequency.setValueAtTime(659, ctx.currentTime + 0.15); // E5
+                gain.gain.setValueAtTime(0, ctx.currentTime + 0.3);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.3);
+            } catch (_) { /* ignore audio errors */ }
+        }
+
+        function startFlash() {
+            if (flashTimer) return;
+            let on = false;
+            flashTimer = setInterval(() => {
+                document.title = on ? ORIG_TITLE : '\u{1F534} Your Turn!';
+                on = !on;
+            }, 1000);
+        }
+
+        function stopFlash() {
+            if (flashTimer) { clearInterval(flashTimer); flashTimer = null; }
+            document.title = ORIG_TITLE;
+        }
+
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) stopFlash(); });
+
+        return {
+            notify() { if (!document.hidden) return; playTone(); startFlash(); },
+            stop() { stopFlash(); },
+        };
+    })();
+
+    // --------------------------------------------------------
+    // PUSH NOTIFICATION SETUP
+    // --------------------------------------------------------
+    const PushSetup = (() => {
+        let vapidKey = null;
+
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const rawData = atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; i++) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
+        }
+
+        async function subscribe() {
+            if (!vapidKey) return;
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+            try {
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') return;
+
+                const registration = await navigator.serviceWorker.ready;
+                const existing = await registration.pushManager.getSubscription();
+                if (existing) {
+                    // Already subscribed — send to server in case it's new
+                    CurlingNetwork.sendPushSubscribe(existing.toJSON());
+                    return;
+                }
+
+                const subscription = await registration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(vapidKey),
+                });
+                CurlingNetwork.sendPushSubscribe(subscription.toJSON());
+            } catch (err) {
+                console.warn('Push subscription failed:', err);
+            }
+        }
+
+        return {
+            setup() {
+                // Request VAPID key from server — subscription happens in onVapidKey callback
+                CurlingNetwork.sendGetVapidKey();
+            },
+            onVapidKey(key) {
+                vapidKey = key;
+                subscribe();
+            },
+        };
+    })();
+
+    // --------------------------------------------------------
     // BOT HELPERS
     // --------------------------------------------------------
     function isBotTurn() {
@@ -421,6 +535,7 @@
                 if (isMyTurn()) {
                     enableControlsForHuman();
                     document.getElementById('throw-btn').disabled = false;
+                    TabNotify.notify();
                 } else {
                     disableControlsForBot();
                     document.getElementById('throw-btn').disabled = true;
@@ -568,6 +683,7 @@
             if (isMyTurn()) {
                 enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
+                TabNotify.notify();
                 // Send a game state snapshot so server can resync reconnecting players
                 CurlingNetwork.sendGameStateSync({
                     currentTeam: gameState.currentTeam,
@@ -1986,6 +2102,7 @@ function drawStagedStones() {
                 if (isMyTurn()) {
                     enableControlsForHuman();
                     document.getElementById('throw-btn').disabled = false;
+                    TabNotify.notify();
                 } else {
                     disableControlsForBot();
                     document.getElementById('throw-btn').disabled = true;
@@ -2054,6 +2171,7 @@ function drawStagedStones() {
             if (isMyTurn()) {
                 enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
+                TabNotify.notify();
             } else {
                 disableControlsForBot();
                 document.getElementById('throw-btn').disabled = true;
@@ -2122,6 +2240,7 @@ function drawStagedStones() {
             if (isMyTurn()) {
                 enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
+                TabNotify.notify();
             } else {
                 disableControlsForBot();
                 document.getElementById('throw-btn').disabled = true;
@@ -2152,6 +2271,12 @@ function drawStagedStones() {
             }
             showLobbyPanel('lobby-menu');
             CurlingNetwork.sendGetProfile();
+            // Set up push notifications for logged-in users
+            PushSetup.setup();
+        });
+
+        CurlingNetwork.onVapidKey(({ key }) => {
+            PushSetup.onVapidKey(key);
         });
 
         CurlingNetwork.onAuthError(({ error }) => {

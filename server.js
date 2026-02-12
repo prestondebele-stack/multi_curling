@@ -10,8 +10,49 @@ const path = require('path');
 const WebSocket = require('ws');
 const db = require('./db');
 const auth = require('./auth');
+const webpush = require('web-push');
 
 const PORT = process.env.PORT || 3000;
+
+// --------------------------------------------------------
+// PUSH NOTIFICATION CONFIG
+// --------------------------------------------------------
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    webpush.setVapidDetails(
+        process.env.VAPID_EMAIL || 'mailto:admin@example.com',
+        process.env.VAPID_PUBLIC_KEY,
+        process.env.VAPID_PRIVATE_KEY
+    );
+    console.log('Web push configured');
+} else {
+    console.log('No VAPID keys — push notifications disabled');
+}
+
+async function sendPushNotification(userId, title, body) {
+    if (!db.isAvailable() || !process.env.VAPID_PUBLIC_KEY) return;
+    try {
+        const result = await db.query(
+            'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1',
+            [userId]
+        );
+        const payload = JSON.stringify({ title, body, url: '/' });
+        for (const row of result.rows) {
+            const subscription = {
+                endpoint: row.endpoint,
+                keys: { p256dh: row.p256dh, auth: row.auth }
+            };
+            try {
+                await webpush.sendNotification(subscription, payload);
+            } catch (err) {
+                if (err.statusCode === 404 || err.statusCode === 410) {
+                    await db.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [row.endpoint]);
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Push notification error:', e.message);
+    }
+}
 
 // --------------------------------------------------------
 // MIME types for static file serving
@@ -300,6 +341,43 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        // ---- PUSH NOTIFICATIONS ----
+        case 'get_vapid_key': {
+            send(ws, { type: 'vapid_key', key: process.env.VAPID_PUBLIC_KEY || null });
+            break;
+        }
+
+        case 'push_subscribe': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable() || !data.subscription) break;
+            const { endpoint, keys } = data.subscription;
+            try {
+                await db.query(
+                    `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, p256dh = $3, auth = $4`,
+                    [session.userId, endpoint, keys.p256dh, keys.auth]
+                );
+            } catch (e) {
+                console.error('Push subscribe error:', e.message);
+            }
+            break;
+        }
+
+        case 'push_unsubscribe': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) break;
+            try {
+                await db.query(
+                    'DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2',
+                    [session.userId, data.endpoint]
+                );
+            } catch (e) {
+                console.error('Push unsubscribe error:', e.message);
+            }
+            break;
+        }
+
         // ---- LOBBY ----
         case 'create_room': {
             const room = createRoom(ws);
@@ -384,6 +462,14 @@ async function handleMessage(ws, message) {
                 });
             } else {
                 console.log(`[THROW WARN] opponent not connected for relay (room ${code})`);
+            }
+
+            // Send push notification to the player whose turn it now is
+            const nextIdx = room.state.currentTeam === 'red' ? 0 : 1;
+            const nextWs = room.players[nextIdx];
+            const nextSession = nextWs ? playerSessions.get(nextWs) : null;
+            if (nextSession?.userId && process.env.VAPID_PUBLIC_KEY) {
+                sendPushNotification(nextSession.userId, "It's your turn!", 'Your opponent has thrown. Time to deliver your stone!');
             }
             break;
         }
