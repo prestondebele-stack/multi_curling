@@ -130,7 +130,6 @@
         myTeam: null,        // 'red' or 'yellow' (assigned by server)
         roomCode: null,
         opponentConnected: true,
-        lastThrowWasMine: false,  // tracks if I was the thrower (for turn_complete)
     };
 
     // --------------------------------------------------------
@@ -330,7 +329,6 @@
         // If online mode, send to server
         if (gameState.onlineMode) {
             CurlingNetwork.sendThrow({ aim: aimDeg, weight: weightPct, spinDir, spinAmount });
-            gameState.lastThrowWasMine = true;
         }
 
         deliverStoneWithParams(aimDeg, weightPct, spinDir, spinAmount);
@@ -558,11 +556,8 @@
         document.getElementById('aim-value').textContent = '0.0°';
 
         if (gameState.onlineMode) {
-            // Only the throwing player notifies server of turn change
-            // (both clients run physics, but only one should toggle server state)
-            if (gameState.lastThrowWasMine) {
-                CurlingNetwork.sendTurnComplete();
-            }
+            // Server switches turns atomically when relaying the throw,
+            // so no turn_complete message needed here.
             if (isMyTurn()) {
                 enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
@@ -1681,7 +1676,6 @@ function drawStagedStones() {
             myTeam: preserveMyTeam,
             roomCode: preserveRoomCode,
             opponentConnected: true,
-            lastThrowWasMine: false,
         };
 
         fgzSnapshots = [];
@@ -1890,7 +1884,6 @@ function drawStagedStones() {
         });
 
         CurlingNetwork.onOpponentThrow(({ aim, weight, spinDir, spinAmount }) => {
-            gameState.lastThrowWasMine = false;
             animateOpponentSliders(aim, weight, spinDir, spinAmount, () => {
                 deliverStoneWithParams(aim, weight, spinDir, spinAmount);
             });

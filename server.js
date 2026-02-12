@@ -283,6 +283,10 @@ function handleMessage(ws, message) {
             const team = getPlayerTeam(room, ws);
             if (team !== room.state.currentTeam) return; // not your turn
 
+            // Switch turns immediately when relaying the throw
+            // (prevents race condition with separate turn_complete message)
+            room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
+
             const opponent = getOpponent(room, ws);
             send(opponent, {
                 type: 'opponent_throw',
@@ -337,13 +341,8 @@ function handleMessage(ws, message) {
         }
 
         case 'turn_complete': {
-            const code = playerRooms.get(ws);
-            if (!code) return;
-            const room = rooms.get(code);
-            if (!room) return;
-
-            // Switch turns on the server
-            room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
+            // Turn switching now happens atomically when the throw is relayed.
+            // This message is kept for backward compatibility but is a no-op.
             break;
         }
 
