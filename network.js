@@ -98,7 +98,7 @@ const CurlingNetwork = (() => {
             case 'game_start':
                 myTeam = data.yourTeam;
                 reconnectAttempts = 0;
-                if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam });
+                if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null });
                 break;
 
             case 'opponent_throw':
@@ -142,7 +142,7 @@ const CurlingNetwork = (() => {
 
             case 'rematch_accepted':
                 myTeam = data.yourTeam;
-                if (callbacks.onRematchAccepted) callbacks.onRematchAccepted({ yourTeam: data.yourTeam });
+                if (callbacks.onRematchAccepted) callbacks.onRematchAccepted({ yourTeam: data.yourTeam, opponent: data.opponent || null });
                 break;
 
             case 'reconnected':
@@ -151,6 +151,7 @@ const CurlingNetwork = (() => {
                 if (callbacks.onReconnected) callbacks.onReconnected({
                     yourTeam: data.yourTeam,
                     gameSnapshot: data.gameSnapshot || null,
+                    opponent: data.opponent || null,
                 });
                 break;
 

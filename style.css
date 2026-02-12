@@ -411,10 +411,25 @@ body {
     }
 }
 
+.team-info {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+}
+
 .team-name {
     color: #ccc;
     font-size: 13px;
     font-weight: 600;
+}
+
+.player-name {
+    font-size: 10px;
+    color: #999;
+    max-width: 70px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .score-value {
@@ -724,6 +739,22 @@ input[type="range"]::-moz-range-thumb {
     justify-content: center;
     z-index: 1000;
     padding: 20px;
+}
+
+#matchup-info {
+    font-size: 14px;
+    color: #aaa;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+#matchup-info .rank-badge {
+    font-size: 11px;
+    padding: 2px 6px;
 }
 
 #game-over-screen h1 {
@@ -1104,6 +1135,20 @@ input[type="range"]::-moz-range-thumb {
     flex-direction: column;
     align-items: center;
     gap: 8px;
+}
+
+#opponent-info-bar {
+    font-size: 16px;
+    color: #ccc;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+#opponent-name-label {
+    font-weight: 700;
+    color: #fff;
 }
 
 /* ================================================

@@ -160,19 +160,25 @@ function joinRoom(code, joinerWs) {
     return { room };
 }
 
-function startGame(room) {
+async function startGame(room) {
     room.state.phase = 'playing';
     room.state.currentTeam = 'red';
     room.gameSnapshot = null;
     room.resultRecorded = false;
 
+    // Fetch player info for opponent display
+    const redInfo = await getPlayerInfo(room.players[0]);
+    const yellowInfo = await getPlayerInfo(room.players[1]);
+
     send(room.players[0], {
         type: 'game_start',
         yourTeam: 'red',
+        opponent: yellowInfo,
     });
     send(room.players[1], {
         type: 'game_start',
         yourTeam: 'yellow',
+        opponent: redInfo,
     });
 }
 
@@ -191,6 +197,16 @@ function getOpponent(room, ws) {
     const idx = getPlayerIndex(room, ws);
     if (idx === -1) return null;
     return room.players[1 - idx];
+}
+
+async function getPlayerInfo(ws) {
+    const session = playerSessions.get(ws);
+    if (!session || !session.userId) return null;
+    const profile = await auth.getProfile(session.userId);
+    return {
+        username: session.username,
+        rank: profile ? profile.rank : auth.getRank(1200),
+    };
 }
 
 function removeFromQueue(ws) {
@@ -580,8 +596,10 @@ async function handleMessage(ws, message) {
                 room.state.phase = 'playing';
                 room.gameSnapshot = null;
                 room.resultRecorded = false;
-                send(room.players[0], { type: 'rematch_accepted', yourTeam: 'red' });
-                send(room.players[1], { type: 'rematch_accepted', yourTeam: 'yellow' });
+                const redInfo = await getPlayerInfo(room.players[0]);
+                const yellowInfo = await getPlayerInfo(room.players[1]);
+                send(room.players[0], { type: 'rematch_accepted', yourTeam: 'red', opponent: yellowInfo });
+                send(room.players[1], { type: 'rematch_accepted', yourTeam: 'yellow', opponent: redInfo });
             }
             break;
         }
@@ -627,13 +645,16 @@ async function handleMessage(ws, message) {
             playerRooms.set(ws, code);
 
             const team = emptySlot === 0 ? 'red' : 'yellow';
+            const opponentWs = getOpponent(room, ws);
+            const opponentInfo = opponentWs ? await getPlayerInfo(opponentWs) : null;
             send(ws, {
                 type: 'reconnected',
                 yourTeam: team,
                 gameSnapshot: room.gameSnapshot || null,
+                opponent: opponentInfo,
             });
 
-            const opponent = getOpponent(room, ws);
+            const opponent = opponentWs;
             if (opponent) {
                 send(opponent, { type: 'opponent_reconnected' });
             }

@@ -130,6 +130,7 @@
         myTeam: null,        // 'red' or 'yellow' (assigned by server)
         roomCode: null,
         opponentConnected: true,
+        opponentInfo: null, // { username, rank: { name, color, rating } }
     };
 
     // --------------------------------------------------------
@@ -572,17 +573,34 @@
         }
 
         winnerText.textContent = winner;
+
+        // Build score labels — show player names in online mode
+        let redLabel = 'Red';
+        let yellowLabel = 'Yellow';
+        if (gameState.onlineMode) {
+            const myName = localStorage.getItem('curling_username') || 'You';
+            const oppName = gameState.opponentInfo ? gameState.opponentInfo.username : 'Guest';
+            if (gameState.myTeam === TEAMS.RED) {
+                redLabel = myName;
+                yellowLabel = oppName;
+            } else {
+                redLabel = oppName;
+                yellowLabel = myName;
+            }
+        }
+
         finalScores.innerHTML = `
-            <div style="color:#e53935">Red: ${gameState.redScore}</div>
-            <div style="color:#fdd835">Yellow: ${gameState.yellowScore}</div>
+            <div style="color:#e53935">${redLabel}: ${gameState.redScore}</div>
+            <div style="color:#fdd835">${yellowLabel}: ${gameState.yellowScore}</div>
             <br>
             <div style="font-size:16px; color:#888">
                 ${gameState.endScores.map((s, i) =>
-            `End ${i + 1}: ${s.team ? (s.team === 'red' ? 'Red' : 'Yellow') + ' +' + s.points : 'Blank'}`
+            `End ${i + 1}: ${s.team ? (s.team === 'red' ? redLabel : yellowLabel) + ' +' + s.points : 'Blank'}`
         ).join('<br>')}
             </div>
         `;
 
+        showMatchupOnGameOver();
         screen.style.display = 'flex';
 
         // Show rematch/leave buttons in online mode, hide new-game
@@ -1907,7 +1925,11 @@ function drawStagedStones() {
         gameState.onlineMode = false;
         gameState.myTeam = null;
         gameState.roomCode = null;
+        gameState.opponentInfo = null;
         document.getElementById('online-team-badge').style.display = 'none';
+        // Clear player names from scoreboard
+        document.getElementById('red-player-name').textContent = '';
+        document.getElementById('yellow-player-name').textContent = '';
     }
 
     document.getElementById('mode-1p').addEventListener('click', () => {
@@ -2039,6 +2061,72 @@ function drawStagedStones() {
         badge.style.display = 'block';
     }
 
+    function updateScoreboardNames() {
+        const myName = localStorage.getItem('curling_username') || null;
+        const oppInfo = gameState.opponentInfo;
+        const myTeam = gameState.myTeam;
+
+        const redNameEl = document.getElementById('red-player-name');
+        const yellowNameEl = document.getElementById('yellow-player-name');
+
+        if (!gameState.onlineMode) {
+            // Clear names for local play
+            redNameEl.textContent = '';
+            yellowNameEl.textContent = '';
+            return;
+        }
+
+        if (myTeam === TEAMS.RED) {
+            redNameEl.textContent = myName ? myName + ' (you)' : 'You';
+            yellowNameEl.textContent = oppInfo ? oppInfo.username : 'Guest';
+        } else {
+            yellowNameEl.textContent = myName ? myName + ' (you)' : 'You';
+            redNameEl.textContent = oppInfo ? oppInfo.username : 'Guest';
+        }
+    }
+
+    function showOpponentStartInfo(opponent) {
+        const nameLabel = document.getElementById('opponent-name-label');
+        const rankBadge = document.getElementById('opponent-rank-badge');
+        const bar = document.getElementById('opponent-info-bar');
+
+        if (!opponent) {
+            nameLabel.textContent = 'Guest';
+            rankBadge.style.display = 'none';
+            bar.style.display = 'flex';
+            return;
+        }
+
+        nameLabel.textContent = opponent.username;
+        if (opponent.rank) {
+            rankBadge.textContent = opponent.rank.name;
+            rankBadge.style.background = opponent.rank.color;
+            rankBadge.style.display = 'inline-block';
+        } else {
+            rankBadge.style.display = 'none';
+        }
+        bar.style.display = 'flex';
+    }
+
+    function showMatchupOnGameOver() {
+        const info = document.getElementById('matchup-info');
+        if (!gameState.onlineMode) {
+            info.style.display = 'none';
+            return;
+        }
+
+        const myName = localStorage.getItem('curling_username') || 'You';
+        const oppInfo = gameState.opponentInfo;
+        const oppName = oppInfo ? oppInfo.username : 'Guest';
+
+        let html = `<span style="color:#fff">${myName}</span> <span>vs</span> <span style="color:#fff">${oppName}</span>`;
+        if (oppInfo && oppInfo.rank) {
+            html += ` <span class="rank-badge" style="background:${oppInfo.rank.color}">${oppInfo.rank.name}</span>`;
+        }
+        info.innerHTML = html;
+        info.style.display = 'flex';
+    }
+
     function animateOpponentSliders(aim, weight, spinDir, spinAmount, callback) {
         if (spinDir >= 0) {
             document.getElementById('spin-cw').classList.add('active');
@@ -2082,14 +2170,16 @@ function drawStagedStones() {
     }
 
     function setupOnlineHandlers() {
-        CurlingNetwork.onGameStart(({ yourTeam }) => {
+        CurlingNetwork.onGameStart(({ yourTeam, opponent }) => {
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.botMode = false;
             gameState.roomCode = CurlingNetwork.getRoomCode();
+            gameState.opponentInfo = opponent;
 
             // Brief "starting" panel
             showLobbyPanel('lobby-starting-panel');
+            showOpponentStartInfo(opponent);
             const teamLabel = document.getElementById('your-team-label');
             teamLabel.textContent = yourTeam === 'red' ? 'Red' : 'Yellow';
             teamLabel.style.color = yourTeam === 'red' ? '#e53935' : '#fdd835';
@@ -2098,6 +2188,7 @@ function drawStagedStones() {
                 hideLobbyScreen();
                 resetGame();
                 showOnlineTeamBadge();
+                updateScoreboardNames();
                 updateUI();
                 if (isMyTurn()) {
                     enableControlsForHuman();
@@ -2162,11 +2253,13 @@ function drawStagedStones() {
             rematchBtn.textContent = 'Opponent wants rematch!';
         });
 
-        CurlingNetwork.onRematchAccepted(({ yourTeam }) => {
+        CurlingNetwork.onRematchAccepted(({ yourTeam, opponent }) => {
             gameState.myTeam = yourTeam;
+            gameState.opponentInfo = opponent;
             document.getElementById('game-over-screen').style.display = 'none';
             resetGame();
             showOnlineTeamBadge();
+            updateScoreboardNames();
             updateUI();
             if (isMyTurn()) {
                 enableControlsForHuman();
@@ -2201,12 +2294,14 @@ function drawStagedStones() {
             showLobbyPanel('lobby-menu');
         });
 
-        CurlingNetwork.onReconnected(({ yourTeam, gameSnapshot }) => {
+        CurlingNetwork.onReconnected(({ yourTeam, gameSnapshot, opponent }) => {
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.opponentConnected = true;
+            gameState.opponentInfo = opponent;
             hideDisconnectOverlay();
             showOnlineTeamBadge();
+            updateScoreboardNames();
 
             if (gameSnapshot) {
                 // Resync from server snapshot

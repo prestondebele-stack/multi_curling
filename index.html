@@ -68,7 +68,10 @@
             <div id="scoreboard">
                 <div class="team-score" id="team-red-score">
                     <div class="team-dot red-dot"></div>
-                    <span class="team-name">Red</span>
+                    <div class="team-info">
+                        <span class="team-name">Red</span>
+                        <span class="player-name" id="red-player-name"></span>
+                    </div>
                     <span class="score-value" id="red-total">0</span>
                     <span class="hammer-icon" id="red-hammer" style="display:none" title="Hammer (last stone)"></span>
                 </div>
@@ -80,7 +83,10 @@
                 <div class="team-score" id="team-yellow-score">
                     <span class="hammer-icon" id="yellow-hammer" title="Hammer (last stone)"></span>
                     <div class="team-dot yellow-dot"></div>
-                    <span class="team-name">Yellow</span>
+                    <div class="team-info">
+                        <span class="team-name">Yellow</span>
+                        <span class="player-name" id="yellow-player-name"></span>
+                    </div>
                     <span class="score-value" id="yellow-total">0</span>
                 </div>
             </div>
@@ -133,6 +139,7 @@
             <span class="thinking-text">Bot is thinking<span class="dots">...</span></span>
         </div>
         <div id="game-over-screen" style="display:none;">
+            <div id="matchup-info" style="display:none;"></div>
             <h1 id="winner-text">Game Over</h1>
             <div id="final-scores"></div>
             <div id="rating-update-info" style="display:none;"></div>
@@ -250,6 +257,11 @@
                 </div>
                 <div id="lobby-starting-panel" style="display:none;">
                     <h3>Opponent Found!</h3>
+                    <div id="opponent-info-bar" style="display:none;">
+                        <span>vs </span>
+                        <span id="opponent-name-label"></span>
+                        <span id="opponent-rank-badge" class="rank-badge" style="display:none;"></span>
+                    </div>
                     <p id="team-assignment">You are <span id="your-team-label">Red</span></p>
                     <p class="lobby-status">Game starting...</p>
                 </div>
