@@ -9,6 +9,47 @@ const db = require('./db');
 // In-memory session store: token -> { userId, username }
 const sessions = new Map();
 
+// ---- RANKING SYSTEM ----
+// Curling-themed Elo tiers
+const RANK_TIERS = [
+    { name: 'Novice',         minRating: 0,    color: '#9e9e9e' },  // grey
+    { name: 'Lead',           minRating: 900,  color: '#8d6e63' },  // brown
+    { name: 'Second',         minRating: 1100, color: '#66bb6a' },  // green
+    { name: 'Third',          minRating: 1300, color: '#42a5f5' },  // blue
+    { name: 'Skip',           minRating: 1500, color: '#ab47bc' },  // purple
+    { name: 'Club Champion',  minRating: 1700, color: '#ffa726' },  // orange
+    { name: 'Provincial',     minRating: 1900, color: '#ef5350' },  // red
+    { name: 'National',       minRating: 2100, color: '#e0e0e0' },  // silver
+    { name: 'World Class',    minRating: 2300, color: '#ffd54f' },  // gold
+];
+
+function getRank(rating) {
+    let tier = RANK_TIERS[0];
+    for (const t of RANK_TIERS) {
+        if (rating >= t.minRating) tier = t;
+    }
+    return { name: tier.name, color: tier.color, rating };
+}
+
+// Elo calculation: K=32
+function calculateElo(winnerRating, loserRating) {
+    const K = 32;
+    const expectedWinner = 1 / (1 + Math.pow(10, (loserRating - winnerRating) / 400));
+    const expectedLoser = 1 - expectedWinner;
+    const newWinner = Math.round(winnerRating + K * (1 - expectedWinner));
+    const newLoser = Math.max(0, Math.round(loserRating + K * (0 - expectedLoser)));
+    return { newWinner, newLoser };
+}
+
+function calculateDrawElo(rating1, rating2) {
+    const K = 32;
+    const expected1 = 1 / (1 + Math.pow(10, (rating2 - rating1) / 400));
+    const expected2 = 1 - expected1;
+    const new1 = Math.max(0, Math.round(rating1 + K * (0.5 - expected1)));
+    const new2 = Math.max(0, Math.round(rating2 + K * (0.5 - expected2)));
+    return { new1, new2 };
+}
+
 async function register(username, password, country) {
     if (!db.isAvailable()) return { error: 'Accounts not available' };
 
@@ -97,7 +138,10 @@ async function getProfile(userId) {
             'SELECT username, country, wins, losses, draws, rating, created_at FROM users WHERE id = $1',
             [userId]
         );
-        return result.rows[0] || null;
+        if (!result.rows[0]) return null;
+        const profile = result.rows[0];
+        profile.rank = getRank(profile.rating);
+        return profile;
     } catch (e) {
         console.error('Profile fetch error:', e.message);
         return null;
@@ -105,12 +149,33 @@ async function getProfile(userId) {
 }
 
 async function recordGameResult(redUserId, yellowUserId, redScore, yellowScore, endCount) {
-    if (!db.isAvailable()) return;
+    if (!db.isAvailable()) return null;
 
     try {
+        // Fetch current ratings for both players
+        const redResult = await db.query('SELECT rating FROM users WHERE id = $1', [redUserId]);
+        const yellowResult = await db.query('SELECT rating FROM users WHERE id = $1', [yellowUserId]);
+        const redRating = redResult.rows[0]?.rating || 1200;
+        const yellowRating = yellowResult.rows[0]?.rating || 1200;
+
         let winnerId = null;
-        if (redScore > yellowScore) winnerId = redUserId;
-        else if (yellowScore > redScore) winnerId = yellowUserId;
+        let newRedRating, newYellowRating;
+
+        if (redScore > yellowScore) {
+            winnerId = redUserId;
+            const elo = calculateElo(redRating, yellowRating);
+            newRedRating = elo.newWinner;
+            newYellowRating = elo.newLoser;
+        } else if (yellowScore > redScore) {
+            winnerId = yellowUserId;
+            const elo = calculateElo(yellowRating, redRating);
+            newYellowRating = elo.newWinner;
+            newRedRating = elo.newLoser;
+        } else {
+            const elo = calculateDrawElo(redRating, yellowRating);
+            newRedRating = elo.new1;
+            newYellowRating = elo.new2;
+        }
 
         // Record game history
         await db.query(
@@ -119,20 +184,27 @@ async function recordGameResult(redUserId, yellowUserId, redScore, yellowScore, 
             [redUserId, yellowUserId, redScore, yellowScore, winnerId, endCount]
         );
 
-        // Update win/loss/draw counts
+        // Update win/loss/draw counts AND rating
         if (winnerId === redUserId) {
-            await db.query('UPDATE users SET wins = wins + 1 WHERE id = $1', [redUserId]);
-            await db.query('UPDATE users SET losses = losses + 1 WHERE id = $1', [yellowUserId]);
+            await db.query('UPDATE users SET wins = wins + 1, rating = $2 WHERE id = $1', [redUserId, newRedRating]);
+            await db.query('UPDATE users SET losses = losses + 1, rating = $2 WHERE id = $1', [yellowUserId, newYellowRating]);
         } else if (winnerId === yellowUserId) {
-            await db.query('UPDATE users SET wins = wins + 1 WHERE id = $1', [yellowUserId]);
-            await db.query('UPDATE users SET losses = losses + 1 WHERE id = $1', [redUserId]);
+            await db.query('UPDATE users SET wins = wins + 1, rating = $2 WHERE id = $1', [yellowUserId, newYellowRating]);
+            await db.query('UPDATE users SET losses = losses + 1, rating = $2 WHERE id = $1', [redUserId, newRedRating]);
         } else {
-            await db.query('UPDATE users SET draws = draws + 1 WHERE id = $1', [redUserId]);
-            await db.query('UPDATE users SET draws = draws + 1 WHERE id = $1', [yellowUserId]);
+            await db.query('UPDATE users SET draws = draws + 1, rating = $2 WHERE id = $1', [redUserId, newRedRating]);
+            await db.query('UPDATE users SET draws = draws + 1, rating = $2 WHERE id = $1', [yellowUserId, newYellowRating]);
         }
+
+        // Return updated ratings for both players
+        return {
+            red: { rating: newRedRating, rank: getRank(newRedRating) },
+            yellow: { rating: newYellowRating, rank: getRank(newYellowRating) },
+        };
     } catch (e) {
         console.error('Record game result error:', e.message);
+        return null;
     }
 }
 
-module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult };
+module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult, getRank };

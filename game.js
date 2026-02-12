@@ -482,6 +482,9 @@
             leaveBtn.style.display = 'inline-block';
             // Record game result for win/loss tracking
             CurlingNetwork.sendGameOver(gameState.redScore, gameState.yellowScore, gameState.currentEnd);
+            // Reset rating update display (will be populated by rating_update message)
+            const ratingInfo = document.getElementById('rating-update-info');
+            if (ratingInfo) ratingInfo.style.display = 'none';
         } else {
             newGameBtn.style.display = 'inline-block';
             rematchBtn.style.display = 'none';
@@ -1806,6 +1809,20 @@ function drawStagedStones() {
         return `${wsProtocol}//${loc.host}`;
     })();
 
+    function updateRankBadge(rank) {
+        const badge = document.getElementById('user-rank-badge');
+        if (badge && rank) {
+            badge.textContent = rank.name;
+            badge.style.background = rank.color;
+            badge.style.display = 'inline-block';
+            // Show rating number next to badge
+            const ratingEl = document.getElementById('user-rating');
+            if (ratingEl) {
+                ratingEl.textContent = rank.rating + ' ELO';
+            }
+        }
+    }
+
     function showLobbyPanel(panelId) {
         const panels = ['lobby-menu', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel'];
         panels.forEach(id => {
@@ -2083,12 +2100,16 @@ function drawStagedStones() {
         });
 
         // ---- AUTH HANDLERS ----
-        CurlingNetwork.onAuthSuccess(({ token, username }) => {
+        CurlingNetwork.onAuthSuccess(({ token, username, rank }) => {
             localStorage.setItem('curling_token', token);
             localStorage.setItem('curling_username', username);
             document.getElementById('auth-panel').style.display = 'none';
             document.getElementById('user-info-bar').style.display = 'flex';
             document.getElementById('logged-in-as').textContent = username;
+            // Show rank badge
+            if (rank) {
+                updateRankBadge(rank);
+            }
             showLobbyPanel('lobby-menu');
             CurlingNetwork.sendGetProfile();
         });
@@ -2103,6 +2124,23 @@ function drawStagedStones() {
             if (profile) {
                 document.getElementById('user-record').textContent =
                     `${profile.wins}W / ${profile.losses}L / ${profile.draws}D`;
+                if (profile.rank) {
+                    updateRankBadge(profile.rank);
+                }
+            }
+        });
+
+        CurlingNetwork.onRatingUpdate(({ rank }) => {
+            if (rank) {
+                updateRankBadge(rank);
+                // Show rating change on game over screen
+                const ratingInfo = document.getElementById('rating-update-info');
+                if (ratingInfo) {
+                    ratingInfo.innerHTML = `<span class="rank-badge" style="background:${rank.color}">${rank.name}</span> <span style="color:#aaa">${rank.rating} ELO</span>`;
+                    ratingInfo.style.display = 'block';
+                }
+                // Refresh profile to update W/L
+                CurlingNetwork.sendGetProfile();
             }
         });
     }
@@ -2286,6 +2324,8 @@ function drawStagedStones() {
         document.getElementById('auth-panel').style.display = 'flex';
         document.getElementById('lobby-menu').style.display = 'none';
         document.getElementById('user-record').textContent = '';
+        document.getElementById('user-rank-badge').style.display = 'none';
+        document.getElementById('user-rating').textContent = '';
     });
 
     // Register online handlers immediately

@@ -35,6 +35,7 @@ const CurlingNetwork = (() => {
         onAuthSuccess: null,
         onAuthError: null,
         onProfileData: null,
+        onRatingUpdate: null,
     };
 
     function send(data) {
@@ -163,6 +164,7 @@ const CurlingNetwork = (() => {
                 if (callbacks.onAuthSuccess) callbacks.onAuthSuccess({
                     token: data.token,
                     username: data.username,
+                    rank: data.rank || null,
                 });
                 break;
 
@@ -172,6 +174,10 @@ const CurlingNetwork = (() => {
 
             case 'profile_data':
                 if (callbacks.onProfileData) callbacks.onProfileData({ profile: data.profile });
+                break;
+
+            case 'rating_update':
+                if (callbacks.onRatingUpdate) callbacks.onRatingUpdate({ rank: data.rank });
                 break;
         }
     }
@@ -361,6 +367,7 @@ const CurlingNetwork = (() => {
         onAuthSuccess(cb) { callbacks.onAuthSuccess = cb; },
         onAuthError(cb) { callbacks.onAuthError = cb; },
         onProfileData(cb) { callbacks.onProfileData = cb; },
+        onRatingUpdate(cb) { callbacks.onRatingUpdate = cb; },
 
         // State
         getMyTeam() { return myTeam; },

@@ -236,7 +236,9 @@ async function handleMessage(ws, message) {
                 send(ws, { type: 'auth_error', error: result.error });
             } else {
                 playerSessions.set(ws, { userId: result.userId, username: result.username });
-                send(ws, { type: 'auth_success', token: result.token, username: result.username });
+                const profile = await auth.getProfile(result.userId);
+                const rank = profile ? profile.rank : auth.getRank(1200);
+                send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
             }
             break;
         }
@@ -247,7 +249,9 @@ async function handleMessage(ws, message) {
                 send(ws, { type: 'auth_error', error: result.error });
             } else {
                 playerSessions.set(ws, { userId: result.userId, username: result.username });
-                send(ws, { type: 'auth_success', token: result.token, username: result.username });
+                const profile = await auth.getProfile(result.userId);
+                const rank = profile ? profile.rank : auth.getRank(1200);
+                send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
             }
             break;
         }
@@ -258,7 +262,9 @@ async function handleMessage(ws, message) {
                 send(ws, { type: 'auth_error', error: 'Session expired' });
             } else {
                 playerSessions.set(ws, session);
-                send(ws, { type: 'auth_success', token: data.token, username: session.username });
+                const profile = await auth.getProfile(session.userId);
+                const rank = profile ? profile.rank : auth.getRank(1200);
+                send(ws, { type: 'auth_success', token: data.token, username: session.username, rank });
             }
             break;
         }
@@ -420,13 +426,23 @@ async function handleMessage(ws, message) {
 
             // Only record if both players are logged in
             if (redSession && yellowSession) {
-                await auth.recordGameResult(
+                const ratingResult = await auth.recordGameResult(
                     redSession.userId,
                     yellowSession.userId,
                     data.redScore,
                     data.yellowScore,
                     data.endCount
                 );
+
+                // Send updated rating/rank to both players
+                if (ratingResult) {
+                    if (room.players[0] && room.players[0].readyState === WebSocket.OPEN) {
+                        send(room.players[0], { type: 'rating_update', rank: ratingResult.red.rank });
+                    }
+                    if (room.players[1] && room.players[1].readyState === WebSocket.OPEN) {
+                        send(room.players[1], { type: 'rating_update', rank: ratingResult.yellow.rank });
+                    }
+                }
             }
             break;
         }

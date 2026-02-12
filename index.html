@@ -109,6 +109,7 @@
         <div id="game-over-screen" style="display:none;">
             <h1 id="winner-text">Game Over</h1>
             <div id="final-scores"></div>
+            <div id="rating-update-info" style="display:none;"></div>
             <button id="new-game-btn">New Game</button>
             <button id="rematch-btn" style="display:none;">Rematch</button>
             <button id="leave-btn" style="display:none;">Leave</button>
@@ -166,6 +167,8 @@
                 <!-- User info bar (shown when logged in) -->
                 <div id="user-info-bar" style="display:none;">
                     <span id="logged-in-as"></span>
+                    <span id="user-rank-badge" class="rank-badge" style="display:none;"></span>
+                    <span id="user-rating" class="user-rating-text"></span>
                     <span id="user-record"></span>
                     <button id="auth-logout" class="auth-logout-btn">Logout</button>
                 </div>
