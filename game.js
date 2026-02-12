@@ -2002,7 +2002,7 @@ function drawStagedStones() {
     }
 
     function showLobbyPanel(panelId) {
-        const panels = ['lobby-menu', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel'];
+        const panels = ['lobby-menu', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel'];
         panels.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = id === panelId ? 'flex' : 'none';
@@ -2125,6 +2125,131 @@ function drawStagedStones() {
         }
         info.innerHTML = html;
         info.style.display = 'flex';
+    }
+
+    // --------------------------------------------------------
+    // FRIENDS SYSTEM
+    // --------------------------------------------------------
+    let friendsList = [];
+    let pendingRequests = { incoming: [], outgoing: [] };
+
+    function renderFriendsList(friends) {
+        friendsList = friends;
+        const container = document.getElementById('friends-list');
+        const emptyMsg = document.getElementById('friends-list-empty');
+
+        if (friends.length === 0) {
+            container.innerHTML = '';
+            emptyMsg.style.display = 'block';
+            return;
+        }
+        emptyMsg.style.display = 'none';
+
+        const statusOrder = { online: 0, in_game: 1, offline: 2 };
+        friends.sort((a, b) => (statusOrder[a.status] || 2) - (statusOrder[b.status] || 2));
+
+        container.innerHTML = friends.map(f => {
+            const statusLabel = f.status === 'in_game' ? 'In Game' : f.status === 'online' ? 'Online' : 'Offline';
+            const canInvite = f.status === 'online';
+            const rankHtml = f.rank ? `<span class="rank-badge friend-rank" style="background:${f.rank.color}">${f.rank.name}</span>` : '';
+            return `<div class="friend-item" data-user-id="${f.userId}">
+                <div class="friend-status-dot ${f.status}"></div>
+                <span class="friend-name">${f.username}</span>
+                ${rankHtml}
+                <span class="friend-status-text">${statusLabel}</span>
+                <button class="friend-invite-btn" data-user-id="${f.userId}" ${canInvite ? '' : 'disabled'}>${canInvite ? 'Invite' : statusLabel}</button>
+                <button class="friend-remove-btn" data-user-id="${f.userId}" title="Remove friend">\u2715</button>
+            </div>`;
+        }).join('');
+
+        container.querySelectorAll('.friend-invite-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const userId = parseInt(btn.dataset.userId);
+                CurlingNetwork.sendGameInvite(userId);
+                btn.textContent = 'Sent';
+                btn.disabled = true;
+            });
+        });
+
+        container.querySelectorAll('.friend-remove-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const userId = parseInt(btn.dataset.userId);
+                CurlingNetwork.removeFriend(userId);
+            });
+        });
+    }
+
+    function renderPendingRequests(incoming, outgoing) {
+        pendingRequests = { incoming, outgoing };
+        const section = document.getElementById('friend-requests-section');
+        const container = document.getElementById('friend-requests-list');
+
+        if (incoming.length === 0 && outgoing.length === 0) {
+            section.style.display = 'none';
+            updateFriendsBadge(0);
+            return;
+        }
+        section.style.display = 'block';
+
+        let html = '';
+        incoming.forEach(req => {
+            html += `<div class="friend-request-item">
+                <span class="request-name">${req.username}</span>
+                <button class="request-accept-btn" data-user-id="${req.id}">Accept</button>
+                <button class="request-deny-btn" data-user-id="${req.id}">Deny</button>
+            </div>`;
+        });
+        outgoing.forEach(req => {
+            html += `<div class="friend-request-item">
+                <span class="request-name">${req.username}</span>
+                <span style="color:#888;font-size:11px;">Pending</span>
+            </div>`;
+        });
+        container.innerHTML = html;
+
+        container.querySelectorAll('.request-accept-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                CurlingNetwork.acceptFriendRequest(parseInt(btn.dataset.userId));
+            });
+        });
+        container.querySelectorAll('.request-deny-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                CurlingNetwork.denyFriendRequest(parseInt(btn.dataset.userId));
+            });
+        });
+
+        updateFriendsBadge(incoming.length);
+    }
+
+    function updateFriendsBadge(count) {
+        const btn = document.getElementById('lobby-friends');
+        let badge = btn.querySelector('.friend-notification-badge');
+        if (count > 0) {
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'friend-notification-badge';
+                btn.appendChild(badge);
+            }
+            badge.textContent = count;
+        } else if (badge) {
+            badge.remove();
+        }
+    }
+
+    function showGameInvite(inviteId, fromUsername, fromRank) {
+        const overlay = document.getElementById('game-invite-overlay');
+        let text = fromUsername + ' wants to play!';
+        if (fromRank) {
+            text = `<span class="rank-badge" style="background:${fromRank.color}">${fromRank.name}</span> ${fromUsername} wants to play!`;
+        }
+        document.getElementById('invite-from-text').innerHTML = text;
+        document.getElementById('invite-accept-btn').dataset.inviteId = inviteId;
+        document.getElementById('invite-deny-btn').dataset.inviteId = inviteId;
+        overlay.style.display = 'block';
+    }
+
+    function hideGameInvite() {
+        document.getElementById('game-invite-overlay').style.display = 'none';
     }
 
     function animateOpponentSliders(aim, weight, spinDir, spinAmount, callback) {
@@ -2353,6 +2478,86 @@ function drawStagedStones() {
             hideDisconnectOverlay();
         });
 
+        // ---- FRIENDS & INVITE HANDLERS ----
+        CurlingNetwork.onFriendsList(({ friends }) => {
+            friendsList = friends || [];
+            renderFriendsList(friendsList);
+        });
+
+        CurlingNetwork.onPendingRequests(({ incoming, outgoing }) => {
+            pendingRequests = { incoming: incoming || [], outgoing: outgoing || [] };
+            renderPendingRequests(pendingRequests.incoming, pendingRequests.outgoing);
+        });
+
+        CurlingNetwork.onFriendRequestSent(() => {
+            const successEl = document.getElementById('friend-add-success');
+            successEl.textContent = 'Friend request sent!';
+            successEl.style.display = 'block';
+            document.getElementById('friend-add-error').style.display = 'none';
+            document.getElementById('friend-username-input').value = '';
+            setTimeout(() => { successEl.style.display = 'none'; }, 3000);
+            CurlingNetwork.getPendingRequests();
+        });
+
+        CurlingNetwork.onFriendRequestReceived(({ fromUsername }) => {
+            // Refresh pending requests to update badge and list
+            CurlingNetwork.getPendingRequests();
+        });
+
+        CurlingNetwork.onFriendRequestAccepted(({ friendId, friendUsername }) => {
+            // Refresh both lists
+            CurlingNetwork.getFriendsList();
+            CurlingNetwork.getPendingRequests();
+        });
+
+        CurlingNetwork.onFriendRequestDenied(() => {
+            CurlingNetwork.getPendingRequests();
+        });
+
+        CurlingNetwork.onFriendRequestError(({ error }) => {
+            const errEl = document.getElementById('friend-add-error');
+            errEl.textContent = error;
+            errEl.style.display = 'block';
+            document.getElementById('friend-add-success').style.display = 'none';
+            setTimeout(() => { errEl.style.display = 'none'; }, 4000);
+        });
+
+        CurlingNetwork.onFriendRemoved(({ friendId }) => {
+            friendsList = friendsList.filter(f => f.userId !== friendId);
+            renderFriendsList(friendsList);
+        });
+
+        CurlingNetwork.onFriendPresence(({ friendId, status }) => {
+            const friend = friendsList.find(f => f.userId === friendId);
+            if (friend) {
+                friend.status = status;
+                renderFriendsList(friendsList);
+            }
+        });
+
+        CurlingNetwork.onGameInviteSent(() => {
+            // Invite sent successfully — could show "Invite sent" feedback
+        });
+
+        CurlingNetwork.onGameInviteReceived(({ inviteId, fromUsername, fromRank }) => {
+            showGameInvite(inviteId, fromUsername, fromRank);
+        });
+
+        CurlingNetwork.onGameInviteError(({ error }) => {
+            const errEl = document.getElementById('friend-add-error');
+            errEl.textContent = error;
+            errEl.style.display = 'block';
+            setTimeout(() => { errEl.style.display = 'none'; }, 4000);
+        });
+
+        CurlingNetwork.onGameInviteDenied(({ toUsername }) => {
+            // Opponent denied invite — could notify
+        });
+
+        CurlingNetwork.onGameInviteCancelled(() => {
+            hideGameInvite();
+        });
+
         // ---- AUTH HANDLERS ----
         CurlingNetwork.onAuthSuccess(({ token, username, rank }) => {
             localStorage.setItem('curling_token', token);
@@ -2368,6 +2573,8 @@ function drawStagedStones() {
             CurlingNetwork.sendGetProfile();
             // Set up push notifications for logged-in users
             PushSetup.setup();
+            // Show friends button for logged-in users
+            document.getElementById('lobby-friends').style.display = '';
         });
 
         CurlingNetwork.onVapidKey(({ key }) => {
@@ -2537,6 +2744,47 @@ function drawStagedStones() {
     });
 
     // --------------------------------------------------------
+    // FRIENDS & INVITE BUTTON HANDLERS
+    // --------------------------------------------------------
+    document.getElementById('lobby-friends').addEventListener('click', () => {
+        showLobbyPanel('lobby-friends-panel');
+        CurlingNetwork.getFriendsList();
+        CurlingNetwork.getPendingRequests();
+    });
+
+    document.getElementById('lobby-friends-back').addEventListener('click', () => {
+        showLobbyPanel('lobby-menu');
+    });
+
+    document.getElementById('friend-add-btn').addEventListener('click', () => {
+        const username = document.getElementById('friend-username-input').value.trim();
+        if (!username) return;
+        document.getElementById('friend-add-error').style.display = 'none';
+        document.getElementById('friend-add-success').style.display = 'none';
+        CurlingNetwork.sendFriendRequest(username);
+    });
+
+    document.getElementById('friend-username-input').addEventListener('keydown', (e) => {
+        if (e.code === 'Enter') document.getElementById('friend-add-btn').click();
+    });
+
+    document.getElementById('invite-accept-btn').addEventListener('click', () => {
+        const inviteId = document.getElementById('invite-accept-btn').dataset.inviteId;
+        if (inviteId) {
+            CurlingNetwork.acceptGameInvite(inviteId);
+        }
+        hideGameInvite();
+    });
+
+    document.getElementById('invite-deny-btn').addEventListener('click', () => {
+        const inviteId = document.getElementById('invite-deny-btn').dataset.inviteId;
+        if (inviteId) {
+            CurlingNetwork.denyGameInvite(inviteId);
+        }
+        hideGameInvite();
+    });
+
+    // --------------------------------------------------------
     // AUTH BUTTON HANDLERS
     // --------------------------------------------------------
     document.getElementById('auth-login-tab').addEventListener('click', () => {
@@ -2597,6 +2845,7 @@ function drawStagedStones() {
 
     document.getElementById('auth-skip').addEventListener('click', () => {
         document.getElementById('auth-panel').style.display = 'none';
+        document.getElementById('lobby-friends').style.display = 'none';
         showLobbyPanel('lobby-menu');
     });
 
@@ -2673,6 +2922,9 @@ function drawStagedStones() {
         document.getElementById('user-record').textContent = '';
         document.getElementById('user-rank-badge').style.display = 'none';
         document.getElementById('user-rating').textContent = '';
+        document.getElementById('lobby-friends').style.display = 'none';
+        friendsList = [];
+        pendingRequests = { incoming: [], outgoing: [] };
     });
 
     // Register online handlers immediately

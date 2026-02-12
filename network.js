@@ -39,6 +39,22 @@ const CurlingNetwork = (() => {
         onSecurityQuestion: null,
         onPasswordResetSuccess: null,
         onVapidKey: null,
+        // Friends
+        onFriendsList: null,
+        onPendingRequests: null,
+        onFriendRequestSent: null,
+        onFriendRequestReceived: null,
+        onFriendRequestAccepted: null,
+        onFriendRequestDenied: null,
+        onFriendRequestError: null,
+        onFriendRemoved: null,
+        onFriendPresence: null,
+        // Game invites
+        onGameInviteSent: null,
+        onGameInviteReceived: null,
+        onGameInviteError: null,
+        onGameInviteDenied: null,
+        onGameInviteCancelled: null,
     };
 
     function send(data) {
@@ -194,6 +210,51 @@ const CurlingNetwork = (() => {
 
             case 'vapid_key':
                 if (callbacks.onVapidKey) callbacks.onVapidKey({ key: data.key });
+                break;
+
+            // Friends
+            case 'friends_list':
+                if (callbacks.onFriendsList) callbacks.onFriendsList({ friends: data.friends });
+                break;
+            case 'pending_requests':
+                if (callbacks.onPendingRequests) callbacks.onPendingRequests({ incoming: data.incoming, outgoing: data.outgoing });
+                break;
+            case 'friend_request_sent':
+                if (callbacks.onFriendRequestSent) callbacks.onFriendRequestSent({ username: data.username });
+                break;
+            case 'friend_request_received':
+                if (callbacks.onFriendRequestReceived) callbacks.onFriendRequestReceived({ fromUserId: data.fromUserId, fromUsername: data.fromUsername });
+                break;
+            case 'friend_request_accepted':
+                if (callbacks.onFriendRequestAccepted) callbacks.onFriendRequestAccepted({ userId: data.userId, username: data.username });
+                break;
+            case 'friend_request_denied':
+                if (callbacks.onFriendRequestDenied) callbacks.onFriendRequestDenied({ userId: data.userId });
+                break;
+            case 'friend_request_error':
+                if (callbacks.onFriendRequestError) callbacks.onFriendRequestError({ error: data.error });
+                break;
+            case 'friend_removed':
+                if (callbacks.onFriendRemoved) callbacks.onFriendRemoved({ userId: data.userId });
+                break;
+            case 'friend_presence':
+                if (callbacks.onFriendPresence) callbacks.onFriendPresence({ userId: data.userId, username: data.username, status: data.status });
+                break;
+            // Game invites
+            case 'game_invite_sent':
+                if (callbacks.onGameInviteSent) callbacks.onGameInviteSent({ inviteId: data.inviteId, toUsername: data.toUsername });
+                break;
+            case 'game_invite_received':
+                if (callbacks.onGameInviteReceived) callbacks.onGameInviteReceived({ inviteId: data.inviteId, fromUserId: data.fromUserId, fromUsername: data.fromUsername, fromRank: data.fromRank });
+                break;
+            case 'game_invite_error':
+                if (callbacks.onGameInviteError) callbacks.onGameInviteError({ error: data.error });
+                break;
+            case 'game_invite_denied':
+                if (callbacks.onGameInviteDenied) callbacks.onGameInviteDenied({ inviteId: data.inviteId, byUsername: data.byUsername });
+                break;
+            case 'game_invite_cancelled':
+                if (callbacks.onGameInviteCancelled) callbacks.onGameInviteCancelled({ inviteId: data.inviteId });
                 break;
         }
     }
@@ -366,6 +427,18 @@ const CurlingNetwork = (() => {
         sendPushSubscribe(subscription) { send({ type: 'push_subscribe', subscription }); },
         sendPushUnsubscribe(endpoint) { send({ type: 'push_unsubscribe', endpoint }); },
 
+        // Friends
+        sendFriendRequest(username) { send({ type: 'send_friend_request', username }); },
+        acceptFriendRequest(fromUserId) { send({ type: 'accept_friend_request', fromUserId }); },
+        denyFriendRequest(fromUserId) { send({ type: 'deny_friend_request', fromUserId }); },
+        removeFriend(friendId) { send({ type: 'remove_friend', friendId }); },
+        getFriendsList() { send({ type: 'get_friends_list' }); },
+        getPendingRequests() { send({ type: 'get_pending_requests' }); },
+        sendGameInvite(toUserId) { send({ type: 'send_game_invite', toUserId }); },
+        acceptGameInvite(inviteId) { send({ type: 'accept_game_invite', inviteId }); },
+        denyGameInvite(inviteId) { send({ type: 'deny_game_invite', inviteId }); },
+        cancelGameInvite(inviteId) { send({ type: 'cancel_game_invite', inviteId }); },
+
         // Event registration
         onGameStart(cb) { callbacks.onGameStart = cb; },
         onOpponentThrow(cb) { callbacks.onOpponentThrow = cb; },
@@ -392,6 +465,22 @@ const CurlingNetwork = (() => {
         onSecurityQuestion(cb) { callbacks.onSecurityQuestion = cb; },
         onPasswordResetSuccess(cb) { callbacks.onPasswordResetSuccess = cb; },
         onVapidKey(cb) { callbacks.onVapidKey = cb; },
+        // Friends
+        onFriendsList(cb) { callbacks.onFriendsList = cb; },
+        onPendingRequests(cb) { callbacks.onPendingRequests = cb; },
+        onFriendRequestSent(cb) { callbacks.onFriendRequestSent = cb; },
+        onFriendRequestReceived(cb) { callbacks.onFriendRequestReceived = cb; },
+        onFriendRequestAccepted(cb) { callbacks.onFriendRequestAccepted = cb; },
+        onFriendRequestDenied(cb) { callbacks.onFriendRequestDenied = cb; },
+        onFriendRequestError(cb) { callbacks.onFriendRequestError = cb; },
+        onFriendRemoved(cb) { callbacks.onFriendRemoved = cb; },
+        onFriendPresence(cb) { callbacks.onFriendPresence = cb; },
+        // Game invites
+        onGameInviteSent(cb) { callbacks.onGameInviteSent = cb; },
+        onGameInviteReceived(cb) { callbacks.onGameInviteReceived = cb; },
+        onGameInviteError(cb) { callbacks.onGameInviteError = cb; },
+        onGameInviteDenied(cb) { callbacks.onGameInviteDenied = cb; },
+        onGameInviteCancelled(cb) { callbacks.onGameInviteCancelled = cb; },
 
         // State
         getMyTeam() { return myTeam; },

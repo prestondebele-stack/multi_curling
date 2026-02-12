@@ -8,6 +8,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
 const auth = require('./auth');
 const webpush = require('web-push');
@@ -116,6 +117,8 @@ const rooms = new Map();          // code -> Room
 const playerRooms = new Map();    // ws -> roomCode
 const playerSessions = new Map(); // ws -> { userId, username }
 const matchmakingQueue = [];      // [ws, ...]
+const onlineUsers = new Map();    // userId -> ws (for presence tracking)
+const pendingInvites = new Map(); // inviteId -> { fromUserId, fromUsername, toUserId, toUsername, fromWs, createdAt }
 
 // Characters for room codes (excluding ambiguous: 0/O, 1/I/L)
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -180,6 +183,12 @@ async function startGame(room) {
         yourTeam: 'yellow',
         opponent: redInfo,
     });
+
+    // Broadcast in_game presence to friends
+    const redSess = playerSessions.get(room.players[0]);
+    const yellowSess = playerSessions.get(room.players[1]);
+    if (redSess?.userId) broadcastPresenceToFriends(redSess.userId, 'in_game');
+    if (yellowSess?.userId) broadcastPresenceToFriends(yellowSess.userId, 'in_game');
 }
 
 function getPlayerIndex(room, ws) {
@@ -209,6 +218,53 @@ async function getPlayerInfo(ws) {
     };
 }
 
+// --------------------------------------------------------
+// FRIENDS & PRESENCE HELPERS
+// --------------------------------------------------------
+function getUserStatus(userId) {
+    const ws = onlineUsers.get(userId);
+    if (!ws || ws.readyState !== WebSocket.OPEN) return 'offline';
+    if (playerRooms.has(ws)) return 'in_game';
+    return 'online';
+}
+
+async function broadcastPresenceToFriends(userId, status) {
+    if (!db.isAvailable()) return;
+    try {
+        const result = await db.query(
+            `SELECT CASE WHEN user_id = $1 THEN friend_id ELSE user_id END AS friend_id
+             FROM friendships
+             WHERE (user_id = $1 OR friend_id = $1) AND status = 'accepted'`,
+            [userId]
+        );
+        const session = [...playerSessions.entries()].find(([, s]) => s.userId === userId);
+        const username = session ? session[1].username : '';
+        for (const row of result.rows) {
+            const friendWs = onlineUsers.get(row.friend_id);
+            if (friendWs && friendWs.readyState === WebSocket.OPEN) {
+                send(friendWs, { type: 'friend_presence', userId, username, status });
+            }
+        }
+    } catch (e) {
+        console.error('Presence broadcast error:', e.message);
+    }
+}
+
+function cleanupInvitesForUser(userId) {
+    for (const [inviteId, invite] of pendingInvites) {
+        if (invite.fromUserId === userId) {
+            pendingInvites.delete(inviteId);
+            const toWs = onlineUsers.get(invite.toUserId);
+            if (toWs) send(toWs, { type: 'game_invite_cancelled', inviteId });
+        }
+        if (invite.toUserId === userId) {
+            pendingInvites.delete(inviteId);
+            const fromWs = onlineUsers.get(invite.fromUserId);
+            if (fromWs) send(fromWs, { type: 'game_invite_denied', inviteId, byUsername: invite.toUsername });
+        }
+    }
+}
+
 function removeFromQueue(ws) {
     const idx = matchmakingQueue.indexOf(ws);
     if (idx !== -1) matchmakingQueue.splice(idx, 1);
@@ -216,6 +272,14 @@ function removeFromQueue(ws) {
 
 function cleanupPlayer(ws) {
     removeFromQueue(ws);
+
+    // Track presence before removing session
+    const session = playerSessions.get(ws);
+    if (session && session.userId) {
+        onlineUsers.delete(session.userId);
+        cleanupInvitesForUser(session.userId);
+        broadcastPresenceToFriends(session.userId, 'offline');
+    }
     playerSessions.delete(ws);
 
     const code = playerRooms.get(ws);
@@ -293,6 +357,8 @@ async function handleMessage(ws, message) {
                 send(ws, { type: 'auth_error', error: result.error });
             } else {
                 playerSessions.set(ws, { userId: result.userId, username: result.username });
+                onlineUsers.set(result.userId, ws);
+                broadcastPresenceToFriends(result.userId, 'online');
                 const profile = await auth.getProfile(result.userId);
                 const rank = profile ? profile.rank : auth.getRank(1200);
                 send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
@@ -306,6 +372,8 @@ async function handleMessage(ws, message) {
                 send(ws, { type: 'auth_error', error: result.error });
             } else {
                 playerSessions.set(ws, { userId: result.userId, username: result.username });
+                onlineUsers.set(result.userId, ws);
+                broadcastPresenceToFriends(result.userId, 'online');
                 const profile = await auth.getProfile(result.userId);
                 const rank = profile ? profile.rank : auth.getRank(1200);
                 send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
@@ -319,6 +387,8 @@ async function handleMessage(ws, message) {
                 send(ws, { type: 'auth_error', error: 'Session expired' });
             } else {
                 playerSessions.set(ws, session);
+                onlineUsers.set(session.userId, ws);
+                broadcastPresenceToFriends(session.userId, 'online');
                 const profile = await auth.getProfile(session.userId);
                 const rank = profile ? profile.rank : auth.getRank(1200);
                 send(ws, { type: 'auth_success', token: data.token, username: session.username, rank });
@@ -391,6 +461,273 @@ async function handleMessage(ws, message) {
             } catch (e) {
                 console.error('Push unsubscribe error:', e.message);
             }
+            break;
+        }
+
+        // ---- FRIENDS ----
+        case 'send_friend_request': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'friend_request_error', error: 'Must be logged in' }); break; }
+            const targetName = (data.username || '').trim().toLowerCase();
+            if (!targetName) { send(ws, { type: 'friend_request_error', error: 'Username required' }); break; }
+            if (targetName === session.username) { send(ws, { type: 'friend_request_error', error: 'Cannot add yourself' }); break; }
+            try {
+                const userResult = await db.query('SELECT id, username FROM users WHERE username = $1', [targetName]);
+                if (userResult.rows.length === 0) { send(ws, { type: 'friend_request_error', error: 'User not found' }); break; }
+                const target = userResult.rows[0];
+                // Check existing friendship
+                const existing = await db.query(
+                    'SELECT * FROM friendships WHERE (user_id = $1 AND friend_id = $2) OR (user_id = $2 AND friend_id = $1)',
+                    [session.userId, target.id]
+                );
+                if (existing.rows.length > 0) {
+                    const row = existing.rows[0];
+                    if (row.status === 'accepted') { send(ws, { type: 'friend_request_error', error: 'Already friends' }); break; }
+                    // Check if this is a mutual request (they sent to us)
+                    if (row.user_id === target.id && row.friend_id === session.userId && row.status === 'pending') {
+                        // Auto-accept
+                        await db.query('UPDATE friendships SET status = $1 WHERE id = $2', ['accepted', row.id]);
+                        send(ws, { type: 'friend_request_accepted', userId: target.id, username: target.username });
+                        const targetWs = onlineUsers.get(target.id);
+                        if (targetWs) send(targetWs, { type: 'friend_request_accepted', userId: session.userId, username: session.username });
+                        break;
+                    }
+                    send(ws, { type: 'friend_request_error', error: 'Request already pending' }); break;
+                }
+                await db.query('INSERT INTO friendships (user_id, friend_id, status) VALUES ($1, $2, $3)', [session.userId, target.id, 'pending']);
+                send(ws, { type: 'friend_request_sent', username: target.username });
+                const targetWs = onlineUsers.get(target.id);
+                if (targetWs) send(targetWs, { type: 'friend_request_received', fromUserId: session.userId, fromUsername: session.username });
+            } catch (e) {
+                console.error('Friend request error:', e.message);
+                send(ws, { type: 'friend_request_error', error: 'Failed to send request' });
+            }
+            break;
+        }
+
+        case 'accept_friend_request': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) break;
+            try {
+                const result = await db.query(
+                    'UPDATE friendships SET status = $1 WHERE user_id = $2 AND friend_id = $3 AND status = $4 RETURNING user_id',
+                    ['accepted', data.fromUserId, session.userId, 'pending']
+                );
+                if (result.rows.length === 0) break;
+                // Get the requester's username
+                const reqResult = await db.query('SELECT username FROM users WHERE id = $1', [data.fromUserId]);
+                const fromUsername = reqResult.rows[0]?.username || '';
+                send(ws, { type: 'friend_request_accepted', userId: data.fromUserId, username: fromUsername });
+                const fromWs = onlineUsers.get(data.fromUserId);
+                if (fromWs) send(fromWs, { type: 'friend_request_accepted', userId: session.userId, username: session.username });
+            } catch (e) {
+                console.error('Accept friend request error:', e.message);
+            }
+            break;
+        }
+
+        case 'deny_friend_request': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) break;
+            try {
+                await db.query(
+                    'DELETE FROM friendships WHERE user_id = $1 AND friend_id = $2 AND status = $3',
+                    [data.fromUserId, session.userId, 'pending']
+                );
+                send(ws, { type: 'friend_request_denied', userId: data.fromUserId });
+            } catch (e) {
+                console.error('Deny friend request error:', e.message);
+            }
+            break;
+        }
+
+        case 'remove_friend': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) break;
+            try {
+                await db.query(
+                    'DELETE FROM friendships WHERE (user_id = $1 AND friend_id = $2) OR (user_id = $2 AND friend_id = $1)',
+                    [session.userId, data.friendId]
+                );
+                send(ws, { type: 'friend_removed', userId: data.friendId });
+                const friendWs = onlineUsers.get(data.friendId);
+                if (friendWs) send(friendWs, { type: 'friend_removed', userId: session.userId });
+                // Clean up any pending invites between them
+                for (const [inviteId, invite] of pendingInvites) {
+                    if ((invite.fromUserId === session.userId && invite.toUserId === data.friendId) ||
+                        (invite.fromUserId === data.friendId && invite.toUserId === session.userId)) {
+                        pendingInvites.delete(inviteId);
+                    }
+                }
+            } catch (e) {
+                console.error('Remove friend error:', e.message);
+            }
+            break;
+        }
+
+        case 'get_friends_list': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'friends_list', friends: [] }); break; }
+            try {
+                const result = await db.query(
+                    `SELECT u.id, u.username, u.rating
+                     FROM friendships f
+                     JOIN users u ON u.id = CASE WHEN f.user_id = $1 THEN f.friend_id ELSE f.user_id END
+                     WHERE (f.user_id = $1 OR f.friend_id = $1) AND f.status = 'accepted'
+                     ORDER BY u.username`,
+                    [session.userId]
+                );
+                const friends = result.rows.map(row => ({
+                    userId: row.id,
+                    username: row.username,
+                    rank: auth.getRank(row.rating),
+                    status: getUserStatus(row.id),
+                }));
+                send(ws, { type: 'friends_list', friends });
+            } catch (e) {
+                console.error('Get friends list error:', e.message);
+                send(ws, { type: 'friends_list', friends: [] });
+            }
+            break;
+        }
+
+        case 'get_pending_requests': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'pending_requests', incoming: [], outgoing: [] }); break; }
+            try {
+                const incoming = await db.query(
+                    `SELECT u.id, u.username, u.rating FROM friendships f
+                     JOIN users u ON u.id = f.user_id
+                     WHERE f.friend_id = $1 AND f.status = 'pending'
+                     ORDER BY f.created_at DESC`,
+                    [session.userId]
+                );
+                const outgoing = await db.query(
+                    `SELECT u.id, u.username FROM friendships f
+                     JOIN users u ON u.id = f.friend_id
+                     WHERE f.user_id = $1 AND f.status = 'pending'
+                     ORDER BY f.created_at DESC`,
+                    [session.userId]
+                );
+                send(ws, {
+                    type: 'pending_requests',
+                    incoming: incoming.rows.map(r => ({ id: r.id, username: r.username, rank: auth.getRank(r.rating) })),
+                    outgoing: outgoing.rows.map(r => ({ id: r.id, username: r.username })),
+                });
+            } catch (e) {
+                console.error('Get pending requests error:', e.message);
+                send(ws, { type: 'pending_requests', incoming: [], outgoing: [] });
+            }
+            break;
+        }
+
+        // ---- GAME INVITES ----
+        case 'send_game_invite': {
+            const session = playerSessions.get(ws);
+            if (!session) { send(ws, { type: 'game_invite_error', error: 'Must be logged in' }); break; }
+            if (playerRooms.has(ws)) { send(ws, { type: 'game_invite_error', error: 'You are already in a game' }); break; }
+            const toUserId = data.toUserId;
+            const toWs = onlineUsers.get(toUserId);
+            if (!toWs || toWs.readyState !== WebSocket.OPEN) { send(ws, { type: 'game_invite_error', error: 'Player is offline' }); break; }
+            if (playerRooms.has(toWs)) { send(ws, { type: 'game_invite_error', error: 'Player is in a game' }); break; }
+            // Check for duplicate invite
+            for (const [, inv] of pendingInvites) {
+                if (inv.fromUserId === session.userId && inv.toUserId === toUserId) {
+                    send(ws, { type: 'game_invite_error', error: 'Invite already sent' }); break;
+                }
+            }
+            // Check for mutual invite (they already invited us) — auto-start game
+            for (const [existingId, inv] of pendingInvites) {
+                if (inv.fromUserId === toUserId && inv.toUserId === session.userId) {
+                    // Mutual invite — start game immediately
+                    pendingInvites.delete(existingId);
+                    // Clean up other invites for both players
+                    cleanupInvitesForUser(session.userId);
+                    cleanupInvitesForUser(toUserId);
+                    const [red, yellow] = Math.random() < 0.5 ? [ws, toWs] : [toWs, ws];
+                    const room = createRoom(red);
+                    room.players[1] = yellow;
+                    playerRooms.set(yellow, room.code);
+                    await startGame(room);
+                    break;
+                }
+            }
+            // Check if we already handled it via mutual invite
+            if (playerRooms.has(ws)) break;
+            // Get target username
+            try {
+                const targetResult = await db.query('SELECT username FROM users WHERE id = $1', [toUserId]);
+                const toUsername = targetResult.rows[0]?.username || '';
+                const inviteId = uuidv4();
+                pendingInvites.set(inviteId, {
+                    fromUserId: session.userId, fromUsername: session.username,
+                    toUserId, toUsername, fromWs: ws, createdAt: Date.now()
+                });
+                send(ws, { type: 'game_invite_sent', inviteId, toUsername });
+                // Get sender's rank for the invite display
+                const profile = await auth.getProfile(session.userId);
+                const fromRank = profile ? profile.rank : auth.getRank(1200);
+                send(toWs, { type: 'game_invite_received', inviteId, fromUserId: session.userId, fromUsername: session.username, fromRank });
+            } catch (e) {
+                console.error('Send game invite error:', e.message);
+                send(ws, { type: 'game_invite_error', error: 'Failed to send invite' });
+            }
+            break;
+        }
+
+        case 'accept_game_invite': {
+            const session = playerSessions.get(ws);
+            if (!session) break;
+            const invite = pendingInvites.get(data.inviteId);
+            if (!invite) { send(ws, { type: 'game_invite_error', error: 'Invite no longer valid' }); break; }
+            if (invite.toUserId !== session.userId) break;
+            const fromWs = onlineUsers.get(invite.fromUserId);
+            if (!fromWs || fromWs.readyState !== WebSocket.OPEN) {
+                pendingInvites.delete(data.inviteId);
+                send(ws, { type: 'game_invite_error', error: 'Player went offline' });
+                break;
+            }
+            if (playerRooms.has(fromWs)) {
+                pendingInvites.delete(data.inviteId);
+                send(ws, { type: 'game_invite_error', error: 'Player is now in a game' });
+                break;
+            }
+            if (playerRooms.has(ws)) {
+                send(ws, { type: 'game_invite_error', error: 'You are already in a game' });
+                break;
+            }
+            // Clean up all invites for both players
+            pendingInvites.delete(data.inviteId);
+            cleanupInvitesForUser(session.userId);
+            cleanupInvitesForUser(invite.fromUserId);
+            // Create game — randomly assign teams
+            const [red, yellow] = Math.random() < 0.5 ? [fromWs, ws] : [ws, fromWs];
+            const room = createRoom(red);
+            room.players[1] = yellow;
+            playerRooms.set(yellow, room.code);
+            await startGame(room);
+            break;
+        }
+
+        case 'deny_game_invite': {
+            const session = playerSessions.get(ws);
+            if (!session) break;
+            const invite = pendingInvites.get(data.inviteId);
+            if (!invite) break;
+            pendingInvites.delete(data.inviteId);
+            const fromWs = onlineUsers.get(invite.fromUserId);
+            if (fromWs) send(fromWs, { type: 'game_invite_denied', inviteId: data.inviteId, byUsername: session.username });
+            break;
+        }
+
+        case 'cancel_game_invite': {
+            const session = playerSessions.get(ws);
+            if (!session) break;
+            const invite = pendingInvites.get(data.inviteId);
+            if (!invite || invite.fromUserId !== session.userId) break;
+            pendingInvites.delete(data.inviteId);
+            const toWs = onlineUsers.get(invite.toUserId);
+            if (toWs) send(toWs, { type: 'game_invite_cancelled', inviteId: data.inviteId });
             break;
         }
 
@@ -614,9 +951,15 @@ async function handleMessage(ws, message) {
             if (opponent && opponent.readyState === WebSocket.OPEN) {
                 send(opponent, { type: 'opponent_left' });
                 playerRooms.delete(opponent);
+                // Broadcast opponent back to 'online' since they left the game
+                const oppSession = playerSessions.get(opponent);
+                if (oppSession?.userId) broadcastPresenceToFriends(oppSession.userId, 'online');
             }
             playerRooms.delete(ws);
             destroyRoom(code);
+            // Broadcast self back to 'online'
+            const mySession = playerSessions.get(ws);
+            if (mySession?.userId) broadcastPresenceToFriends(mySession.userId, 'online');
             break;
         }
 
@@ -708,6 +1051,16 @@ const cleanupInterval = setInterval(() => {
                 send(room.players[0], { type: 'room_expired' });
             }
             destroyRoom(code);
+        }
+    }
+    // Clean up stale game invites (older than 10 minutes)
+    for (const [inviteId, invite] of pendingInvites) {
+        if (now - invite.createdAt > 10 * 60 * 1000) {
+            pendingInvites.delete(inviteId);
+            const fromWs = onlineUsers.get(invite.fromUserId);
+            if (fromWs) send(fromWs, { type: 'game_invite_denied', inviteId, byUsername: 'timeout' });
+            const toWs = onlineUsers.get(invite.toUserId);
+            if (toWs) send(toWs, { type: 'game_invite_cancelled', inviteId });
         }
     }
 }, 60000);

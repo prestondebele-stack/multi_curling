@@ -1152,6 +1152,282 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* ================================================
+   FRIENDS PANEL
+   ================================================ */
+#lobby-friends-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    max-height: 65vh;
+    overflow-y: auto;
+}
+
+#lobby-friends-panel h3 {
+    margin: 0;
+}
+
+#lobby-friends-panel h4 {
+    color: #5c9ae6;
+    font-size: 13px;
+    margin: 4px 0;
+    width: 100%;
+    text-align: left;
+    border-bottom: 1px solid #333;
+    padding-bottom: 4px;
+}
+
+#friend-add-section {
+    width: 100%;
+}
+
+#friend-add-row {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+}
+
+#friend-username-input {
+    flex: 1;
+    padding: 10px 14px;
+    font-size: 14px;
+    background: rgba(42, 74, 122, 0.3);
+    border: 1px solid #5c9ae6;
+    border-radius: 6px;
+    color: #fff;
+    outline: none;
+}
+
+#friend-username-input:focus {
+    border-color: #90caf9;
+    box-shadow: 0 0 12px rgba(92, 154, 230, 0.3);
+}
+
+#friend-add-btn {
+    padding: 10px 16px;
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.lobby-success {
+    color: #66bb6a;
+    font-size: 13px;
+}
+
+#friends-list-section {
+    width: 100%;
+}
+
+.friend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: rgba(42, 74, 122, 0.15);
+    border: 1px solid rgba(92, 154, 230, 0.15);
+    border-radius: 8px;
+    width: 100%;
+    margin-bottom: 4px;
+    box-sizing: border-box;
+}
+
+.friend-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.friend-status-dot.online {
+    background: #66bb6a;
+}
+
+.friend-status-dot.in_game {
+    background: #ffa726;
+}
+
+.friend-status-dot.offline {
+    background: #555;
+}
+
+.friend-name {
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 80px;
+}
+
+.friend-rank {
+    flex-shrink: 0;
+}
+
+.friend-status-text {
+    color: #888;
+    font-size: 11px;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.friend-invite-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #2a4a7a;
+    color: #fff;
+    border: 1px solid #5c9ae6;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.friend-invite-btn:hover {
+    background: #3a5a8a;
+}
+
+.friend-invite-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.friend-remove-btn {
+    padding: 4px 6px;
+    font-size: 11px;
+    background: none;
+    color: #666;
+    border: 1px solid #444;
+    border-radius: 4px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.friend-remove-btn:hover {
+    color: #e53935;
+    border-color: #e53935;
+}
+
+.friend-request-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: rgba(92, 154, 230, 0.1);
+    border: 1px solid rgba(92, 154, 230, 0.25);
+    border-radius: 8px;
+    width: 100%;
+    margin-bottom: 4px;
+    box-sizing: border-box;
+}
+
+.request-name {
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    flex: 1;
+}
+
+.request-accept-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #2a4a7a;
+    color: #fff;
+    border: 1px solid #5c9ae6;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.request-accept-btn:hover {
+    background: #3a5a8a;
+}
+
+.request-deny-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+    background: none;
+    color: #aaa;
+    border: 1px solid #555;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.request-deny-btn:hover {
+    color: #e53935;
+    border-color: #e53935;
+}
+
+#lobby-friends {
+    position: relative;
+}
+
+.friend-notification-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: #e53935;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+/* ================================================
+   GAME INVITE OVERLAY
+   ================================================ */
+#game-invite-overlay {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100;
+    animation: inviteSlideIn 0.3s ease-out;
+}
+
+@keyframes inviteSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+.invite-content {
+    background: rgba(20, 20, 45, 0.97);
+    border: 2px solid #5c9ae6;
+    border-radius: 12px;
+    padding: 16px 24px;
+    text-align: center;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+#invite-from-text {
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 12px;
+}
+
+.invite-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+/* ================================================
    DISCONNECT OVERLAY
    ================================================ */
 #disconnect-overlay {

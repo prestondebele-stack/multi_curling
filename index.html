@@ -235,6 +235,7 @@
                     <button id="lobby-create" class="lobby-btn">Create Game</button>
                     <button id="lobby-join" class="lobby-btn">Join Game</button>
                     <button id="lobby-queue" class="lobby-btn">Quick Match</button>
+                    <button id="lobby-friends" class="lobby-btn" style="display:none;">Friends</button>
                     <button id="lobby-back" class="lobby-btn secondary">Back</button>
                 </div>
                 <div id="lobby-create-panel" style="display:none;">
@@ -264,6 +265,37 @@
                     </div>
                     <p id="team-assignment">You are <span id="your-team-label">Red</span></p>
                     <p class="lobby-status">Game starting...</p>
+                </div>
+                <div id="lobby-friends-panel" style="display:none;">
+                    <h3>Friends</h3>
+                    <div id="friend-add-section">
+                        <div id="friend-add-row">
+                            <input type="text" id="friend-username-input" placeholder="Add by username" maxlength="20" autocomplete="off">
+                            <button id="friend-add-btn" class="lobby-btn">Add</button>
+                        </div>
+                        <p id="friend-add-error" class="lobby-error" style="display:none;"></p>
+                        <p id="friend-add-success" class="lobby-success" style="display:none;"></p>
+                    </div>
+                    <div id="friend-requests-section" style="display:none;">
+                        <h4>Pending Requests</h4>
+                        <div id="friend-requests-list"></div>
+                    </div>
+                    <div id="friends-list-section">
+                        <div id="friends-list-empty" style="display:none;">
+                            <p style="color:#888;font-size:13px;">No friends yet. Add someone above!</p>
+                        </div>
+                        <div id="friends-list"></div>
+                    </div>
+                    <button id="lobby-friends-back" class="lobby-btn secondary">Back</button>
+                </div>
+            </div>
+        </div>
+        <div id="game-invite-overlay" style="display:none;">
+            <div class="invite-content">
+                <p id="invite-from-text">Player wants to play!</p>
+                <div class="invite-buttons">
+                    <button id="invite-accept-btn" class="lobby-btn">Accept</button>
+                    <button id="invite-deny-btn" class="lobby-btn secondary">Deny</button>
                 </div>
             </div>
         </div>
