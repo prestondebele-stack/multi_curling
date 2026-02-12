@@ -2419,6 +2419,33 @@ function drawStagedStones() {
     setupOnlineHandlers();
 
     // --------------------------------------------------------
+    // WELCOME SCREEN
+    // --------------------------------------------------------
+    function dismissWelcome() {
+        const ws = document.getElementById('welcome-screen');
+        if (ws) {
+            ws.style.opacity = '0';
+            ws.style.transition = 'opacity 0.25s';
+            setTimeout(() => ws.remove(), 250);
+        }
+    }
+
+    document.getElementById('welcome-1p').addEventListener('click', () => {
+        dismissWelcome();
+        document.getElementById('mode-1p').click();
+    });
+
+    document.getElementById('welcome-2p').addEventListener('click', () => {
+        dismissWelcome();
+        document.getElementById('mode-2p').click();
+    });
+
+    document.getElementById('welcome-online').addEventListener('click', () => {
+        dismissWelcome();
+        document.getElementById('mode-online').click();
+    });
+
+    // --------------------------------------------------------
     // INIT
     // --------------------------------------------------------
     resizeCanvas();

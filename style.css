@@ -52,6 +52,101 @@ body {
 }
 
 /* ================================================
+   WELCOME SCREEN
+   ================================================ */
+#welcome-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(10, 10, 25, 0.95);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: welcomeFadeIn 0.4s ease-out;
+}
+
+@keyframes welcomeFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+#welcome-content {
+    text-align: center;
+    max-width: 360px;
+    padding: 20px;
+}
+
+#welcome-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+}
+
+#welcome-subtitle {
+    color: #888;
+    font-size: 14px;
+    margin-bottom: 24px;
+}
+
+#welcome-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.welcome-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    background: rgba(42, 74, 122, 0.25);
+    border: 1px solid #3a5a8a;
+    border-radius: 12px;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+}
+
+.welcome-btn:hover {
+    background: rgba(42, 74, 122, 0.5);
+    border-color: #5c9ae6;
+    transform: translateY(-1px);
+}
+
+.welcome-btn:active {
+    transform: translateY(0);
+}
+
+.welcome-btn-primary {
+    border-color: #5c9ae6;
+    background: rgba(42, 74, 122, 0.4);
+}
+
+.welcome-btn-icon {
+    font-size: 28px;
+    width: 40px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.welcome-btn-label {
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.welcome-btn-desc {
+    font-size: 12px;
+    color: #888;
+    margin-left: auto;
+}
+
+/* ================================================
    SETTINGS TOGGLE & DROPDOWN
    ================================================ */
 #settings-wrapper {

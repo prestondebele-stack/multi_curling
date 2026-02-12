@@ -1,5 +1,5 @@
 // Service Worker for Capital Curling Club PWA
-const CACHE_NAME = 'curling-v11';
+const CACHE_NAME = 'curling-v12';
 const ASSETS = [
     './',
     './index.html',

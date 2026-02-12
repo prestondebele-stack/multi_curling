@@ -22,6 +22,32 @@
 <body>
     <div id="game-container">
         <canvas id="curling-canvas"></canvas>
+
+        <!-- Welcome screen - shown on first load -->
+        <div id="welcome-screen">
+            <div id="welcome-content">
+                <h1 id="welcome-title">Capital Curling Club</h1>
+                <p id="welcome-subtitle">Choose how to play</p>
+                <div id="welcome-buttons">
+                    <button id="welcome-1p" class="welcome-btn">
+                        <span class="welcome-btn-icon">🤖</span>
+                        <span class="welcome-btn-label">1 Player</span>
+                        <span class="welcome-btn-desc">Play vs AI</span>
+                    </button>
+                    <button id="welcome-2p" class="welcome-btn">
+                        <span class="welcome-btn-icon">👥</span>
+                        <span class="welcome-btn-label">2 Player</span>
+                        <span class="welcome-btn-desc">Pass & Play</span>
+                    </button>
+                    <button id="welcome-online" class="welcome-btn welcome-btn-primary">
+                        <span class="welcome-btn-icon">🌐</span>
+                        <span class="welcome-btn-label">Online</span>
+                        <span class="welcome-btn-desc">Play a friend</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div id="ui-overlay">
             <div id="settings-wrapper">
                 <span id="settings-label">Choose Opponent Settings</span>
