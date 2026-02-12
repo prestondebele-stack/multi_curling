@@ -50,7 +50,7 @@ function calculateDrawElo(rating1, rating2) {
     return { new1, new2 };
 }
 
-async function register(username, password, country) {
+async function register(username, password, country, securityQuestion, securityAnswer) {
     if (!db.isAvailable()) return { error: 'Accounts not available' };
 
     if (!username || username.length < 3 || username.length > 20) {
@@ -62,13 +62,17 @@ async function register(username, password, country) {
     if (!password || password.length < 4) {
         return { error: 'Password must be at least 4 characters' };
     }
+    if (!securityQuestion || !securityAnswer || securityAnswer.trim().length === 0) {
+        return { error: 'Security question and answer required' };
+    }
 
     const hash = await bcrypt.hash(password, 10);
+    const answerHash = await bcrypt.hash(securityAnswer.trim().toLowerCase(), 10);
 
     try {
         const result = await db.query(
-            'INSERT INTO users (username, password_hash, country) VALUES ($1, $2, $3) RETURNING id, username',
-            [username.toLowerCase(), hash, country || '']
+            'INSERT INTO users (username, password_hash, country, security_question, security_answer_hash) VALUES ($1, $2, $3, $4, $5) RETURNING id, username',
+            [username.toLowerCase(), hash, country || '', securityQuestion, answerHash]
         );
 
         const user = result.rows[0];
@@ -207,4 +211,65 @@ async function recordGameResult(redUserId, yellowUserId, redScore, yellowScore, 
     }
 }
 
-module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult, getRank };
+async function getSecurityQuestion(username) {
+    if (!db.isAvailable()) return { error: 'Accounts not available' };
+    if (!username) return { error: 'Username required' };
+
+    try {
+        const result = await db.query(
+            'SELECT security_question FROM users WHERE username = $1',
+            [username.toLowerCase()]
+        );
+        if (result.rows.length === 0) {
+            return { error: 'User not found' };
+        }
+        const question = result.rows[0].security_question;
+        if (!question) {
+            return { error: 'No security question set for this account' };
+        }
+        return { question };
+    } catch (e) {
+        console.error('Get security question error:', e.message);
+        return { error: 'Recovery failed' };
+    }
+}
+
+async function resetPassword(username, securityAnswer, newPassword) {
+    if (!db.isAvailable()) return { error: 'Accounts not available' };
+    if (!username || !securityAnswer || !newPassword) {
+        return { error: 'All fields are required' };
+    }
+    if (newPassword.length < 4) {
+        return { error: 'Password must be at least 4 characters' };
+    }
+
+    try {
+        const result = await db.query(
+            'SELECT id, security_answer_hash FROM users WHERE username = $1',
+            [username.toLowerCase()]
+        );
+        if (result.rows.length === 0) {
+            return { error: 'User not found' };
+        }
+
+        const user = result.rows[0];
+        if (!user.security_answer_hash) {
+            return { error: 'No security question set for this account' };
+        }
+
+        const valid = await bcrypt.compare(securityAnswer.trim().toLowerCase(), user.security_answer_hash);
+        if (!valid) {
+            return { error: 'Incorrect answer' };
+        }
+
+        const newHash = await bcrypt.hash(newPassword, 10);
+        await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, user.id]);
+
+        return { success: true };
+    } catch (e) {
+        console.error('Reset password error:', e.message);
+        return { error: 'Password reset failed' };
+    }
+}
+
+module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword };

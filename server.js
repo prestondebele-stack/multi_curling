@@ -231,7 +231,7 @@ async function handleMessage(ws, message) {
 
         // ---- AUTH ----
         case 'register': {
-            const result = await auth.register(data.username, data.password, data.country);
+            const result = await auth.register(data.username, data.password, data.country, data.securityQuestion, data.securityAnswer);
             if (result.error) {
                 send(ws, { type: 'auth_error', error: result.error });
             } else {
@@ -277,6 +277,26 @@ async function handleMessage(ws, message) {
             }
             const profile = await auth.getProfile(session.userId);
             send(ws, { type: 'profile_data', profile });
+            break;
+        }
+
+        case 'get_security_question': {
+            const result = await auth.getSecurityQuestion(data.username);
+            if (result.error) {
+                send(ws, { type: 'auth_error', error: result.error });
+            } else {
+                send(ws, { type: 'security_question', question: result.question });
+            }
+            break;
+        }
+
+        case 'reset_password': {
+            const result = await auth.resetPassword(data.username, data.answer, data.newPassword);
+            if (result.error) {
+                send(ws, { type: 'auth_error', error: result.error });
+            } else {
+                send(ws, { type: 'password_reset_success' });
+            }
             break;
         }
 

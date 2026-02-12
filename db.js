@@ -62,6 +62,12 @@ async function initSchema() {
                 played_at TIMESTAMP DEFAULT NOW()
             );
         `);
+        // Add security question columns (safe migration for existing DBs)
+        await pool.query(`
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS security_question VARCHAR(100) DEFAULT '';
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS security_answer_hash VARCHAR(72) DEFAULT '';
+        `);
+
         dbAvailable = true;
         console.log('Database schema initialized');
     } catch (err) {

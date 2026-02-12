@@ -36,6 +36,8 @@ const CurlingNetwork = (() => {
         onAuthError: null,
         onProfileData: null,
         onRatingUpdate: null,
+        onSecurityQuestion: null,
+        onPasswordResetSuccess: null,
     };
 
     function send(data) {
@@ -178,6 +180,14 @@ const CurlingNetwork = (() => {
 
             case 'rating_update':
                 if (callbacks.onRatingUpdate) callbacks.onRatingUpdate({ rank: data.rank });
+                break;
+
+            case 'security_question':
+                if (callbacks.onSecurityQuestion) callbacks.onSecurityQuestion({ question: data.question });
+                break;
+
+            case 'password_reset_success':
+                if (callbacks.onPasswordResetSuccess) callbacks.onPasswordResetSuccess();
                 break;
         }
     }
@@ -341,9 +351,11 @@ const CurlingNetwork = (() => {
 
         // Auth
         sendLogin(username, password) { send({ type: 'login', username, password }); },
-        sendRegister(username, password, country) { send({ type: 'register', username, password, country }); },
+        sendRegister(username, password, country, securityQuestion, securityAnswer) { send({ type: 'register', username, password, country, securityQuestion, securityAnswer }); },
         sendTokenLogin(token) { send({ type: 'token_login', token }); },
         sendGetProfile() { send({ type: 'get_profile' }); },
+        sendGetSecurityQuestion(username) { send({ type: 'get_security_question', username }); },
+        sendResetPassword(username, answer, newPassword) { send({ type: 'reset_password', username, answer, newPassword }); },
 
         // Event registration
         onGameStart(cb) { callbacks.onGameStart = cb; },
@@ -368,6 +380,8 @@ const CurlingNetwork = (() => {
         onAuthError(cb) { callbacks.onAuthError = cb; },
         onProfileData(cb) { callbacks.onProfileData = cb; },
         onRatingUpdate(cb) { callbacks.onRatingUpdate = cb; },
+        onSecurityQuestion(cb) { callbacks.onSecurityQuestion = cb; },
+        onPasswordResetSuccess(cb) { callbacks.onPasswordResetSuccess = cb; },
 
         // State
         getMyTeam() { return myTeam; },

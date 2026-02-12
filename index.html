@@ -128,6 +128,22 @@
                         <input type="text" id="auth-username" placeholder="Username" maxlength="20" autocomplete="username">
                         <input type="password" id="auth-password" placeholder="Password" maxlength="32" autocomplete="current-password">
                         <button id="auth-login-btn" class="lobby-btn">Login</button>
+                        <a href="#" id="forgot-password-link">Forgot Password?</a>
+                    </div>
+                    <div id="auth-recovery-form" style="display:none;">
+                        <div id="recovery-step-1">
+                            <p class="recovery-label">Enter your username</p>
+                            <input type="text" id="recovery-username" placeholder="Username" maxlength="20" autocomplete="off">
+                            <button id="recovery-next-btn" class="lobby-btn">Next</button>
+                        </div>
+                        <div id="recovery-step-2" style="display:none;">
+                            <p id="recovery-question-text" class="recovery-label"></p>
+                            <input type="text" id="recovery-answer" placeholder="Your Answer" maxlength="50" autocomplete="off">
+                            <input type="password" id="recovery-new-password" placeholder="New Password (4+ chars)" maxlength="32" autocomplete="new-password">
+                            <button id="recovery-reset-btn" class="lobby-btn">Reset Password</button>
+                        </div>
+                        <p id="recovery-success" class="recovery-success" style="display:none;">Password reset! You can now log in.</p>
+                        <a href="#" id="recovery-back-link">Back to Login</a>
                     </div>
                     <div id="auth-register-form" style="display:none;">
                         <input type="text" id="reg-username" placeholder="Username" maxlength="20" autocomplete="off">
@@ -158,6 +174,15 @@
                             <option value="CZ">Czech Republic</option>
                             <option value="SC">Scotland</option>
                         </select>
+                        <select id="reg-security-question">
+                            <option value="">Security Question (for recovery)</option>
+                            <option value="What was the name of your first pet?">What was the name of your first pet?</option>
+                            <option value="What city were you born in?">What city were you born in?</option>
+                            <option value="What is your favorite food?">What is your favorite food?</option>
+                            <option value="What is your mother's maiden name?">What is your mother's maiden name?</option>
+                            <option value="What was your childhood nickname?">What was your childhood nickname?</option>
+                        </select>
+                        <input type="text" id="reg-security-answer" placeholder="Security Answer" maxlength="50" autocomplete="off">
                         <button id="auth-register-btn" class="lobby-btn">Register</button>
                     </div>
                     <p id="auth-error" class="lobby-error" style="display:none;"></p>

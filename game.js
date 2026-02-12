@@ -2143,6 +2143,22 @@ function drawStagedStones() {
                 CurlingNetwork.sendGetProfile();
             }
         });
+
+        CurlingNetwork.onSecurityQuestion(({ question }) => {
+            document.getElementById('auth-error').style.display = 'none';
+            document.getElementById('recovery-step-1').style.display = 'none';
+            document.getElementById('recovery-step-2').style.display = 'flex';
+            document.getElementById('recovery-question-text').textContent = question;
+            document.getElementById('recovery-answer').value = '';
+            document.getElementById('recovery-new-password').value = '';
+        });
+
+        CurlingNetwork.onPasswordResetSuccess(() => {
+            document.getElementById('auth-error').style.display = 'none';
+            document.getElementById('recovery-step-1').style.display = 'none';
+            document.getElementById('recovery-step-2').style.display = 'none';
+            document.getElementById('recovery-success').style.display = 'block';
+        });
     }
 
     // Online mode button
@@ -2299,22 +2315,93 @@ function drawStagedStones() {
         const username = document.getElementById('reg-username').value.trim();
         const password = document.getElementById('reg-password').value;
         const country = document.getElementById('reg-country').value;
+        const securityQuestion = document.getElementById('reg-security-question').value;
+        const securityAnswer = document.getElementById('reg-security-answer').value.trim();
         if (!username || !password) {
             document.getElementById('auth-error').textContent = 'Enter username and password';
             document.getElementById('auth-error').style.display = 'block';
             return;
         }
+        if (!securityQuestion || !securityAnswer) {
+            document.getElementById('auth-error').textContent = 'Security question and answer required';
+            document.getElementById('auth-error').style.display = 'block';
+            return;
+        }
         document.getElementById('auth-error').style.display = 'none';
-        CurlingNetwork.sendRegister(username, password, country);
+        CurlingNetwork.sendRegister(username, password, country, securityQuestion, securityAnswer);
     });
 
-    document.getElementById('reg-password').addEventListener('keydown', (e) => {
+    document.getElementById('reg-security-answer').addEventListener('keydown', (e) => {
         if (e.code === 'Enter') document.getElementById('auth-register-btn').click();
     });
 
     document.getElementById('auth-skip').addEventListener('click', () => {
         document.getElementById('auth-panel').style.display = 'none';
         showLobbyPanel('lobby-menu');
+    });
+
+    // ---- PASSWORD RECOVERY ----
+    let recoveryUsername = '';
+
+    document.getElementById('forgot-password-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        document.getElementById('auth-login-form').style.display = 'none';
+        document.getElementById('auth-register-form').style.display = 'none';
+        document.getElementById('auth-tabs').style.display = 'none';
+        document.getElementById('auth-recovery-form').style.display = 'flex';
+        document.getElementById('recovery-step-1').style.display = 'flex';
+        document.getElementById('recovery-step-2').style.display = 'none';
+        document.getElementById('recovery-success').style.display = 'none';
+        document.getElementById('auth-error').style.display = 'none';
+        document.getElementById('recovery-username').value = '';
+        document.getElementById('recovery-answer').value = '';
+        document.getElementById('recovery-new-password').value = '';
+    });
+
+    document.getElementById('recovery-back-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        document.getElementById('auth-recovery-form').style.display = 'none';
+        document.getElementById('auth-tabs').style.display = 'flex';
+        document.getElementById('auth-login-form').style.display = 'flex';
+        document.getElementById('auth-login-tab').classList.add('active');
+        document.getElementById('auth-register-tab').classList.remove('active');
+        document.getElementById('auth-error').style.display = 'none';
+    });
+
+    document.getElementById('recovery-next-btn').addEventListener('click', () => {
+        recoveryUsername = document.getElementById('recovery-username').value.trim();
+        if (!recoveryUsername) {
+            document.getElementById('auth-error').textContent = 'Enter your username';
+            document.getElementById('auth-error').style.display = 'block';
+            return;
+        }
+        document.getElementById('auth-error').style.display = 'none';
+        CurlingNetwork.sendGetSecurityQuestion(recoveryUsername);
+    });
+
+    document.getElementById('recovery-username').addEventListener('keydown', (e) => {
+        if (e.code === 'Enter') document.getElementById('recovery-next-btn').click();
+    });
+
+    document.getElementById('recovery-reset-btn').addEventListener('click', () => {
+        const answer = document.getElementById('recovery-answer').value.trim();
+        const newPassword = document.getElementById('recovery-new-password').value;
+        if (!answer) {
+            document.getElementById('auth-error').textContent = 'Enter your answer';
+            document.getElementById('auth-error').style.display = 'block';
+            return;
+        }
+        if (!newPassword || newPassword.length < 4) {
+            document.getElementById('auth-error').textContent = 'New password must be at least 4 characters';
+            document.getElementById('auth-error').style.display = 'block';
+            return;
+        }
+        document.getElementById('auth-error').style.display = 'none';
+        CurlingNetwork.sendResetPassword(recoveryUsername, answer, newPassword);
+    });
+
+    document.getElementById('recovery-new-password').addEventListener('keydown', (e) => {
+        if (e.code === 'Enter') document.getElementById('recovery-reset-btn').click();
     });
 
     document.getElementById('auth-logout').addEventListener('click', () => {

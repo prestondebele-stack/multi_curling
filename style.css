@@ -1274,6 +1274,81 @@ input[type="range"]::-moz-range-thumb {
     padding: 3px 12px;
 }
 
+/* Password Recovery */
+#forgot-password-link,
+#recovery-back-link {
+    color: #5c9ae6;
+    font-size: 12px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.15s;
+}
+
+#forgot-password-link:hover,
+#recovery-back-link:hover {
+    color: #90caf9;
+    text-decoration: underline;
+}
+
+#auth-recovery-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+#recovery-step-1,
+#recovery-step-2 {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.recovery-label {
+    color: #aaa;
+    font-size: 13px;
+    margin: 0;
+    text-align: center;
+}
+
+#recovery-question-text {
+    color: #5c9ae6;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.recovery-success {
+    color: #66bb6a;
+    font-size: 13px;
+    font-weight: 600;
+    margin: 4px 0;
+}
+
+#auth-recovery-form input[type="text"],
+#auth-recovery-form input[type="password"] {
+    width: 220px;
+    padding: 10px 14px;
+    font-size: 14px;
+    background: rgba(42, 74, 122, 0.3);
+    border: 1px solid #5c9ae6;
+    border-radius: 6px;
+    color: #fff;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#auth-recovery-form input:focus {
+    border-color: #90caf9;
+    box-shadow: 0 0 12px rgba(92, 154, 230, 0.3);
+}
+
+#auth-recovery-form input::placeholder {
+    color: #667;
+}
+
 /* Landscape mobile */
 @media (max-height: 500px) and (max-width: 900px) {
     #game-container {
