@@ -2529,7 +2529,7 @@ function drawStagedStones() {
     }
 
     function setupOnlineHandlers() {
-        CurlingNetwork.onGameStart(({ yourTeam, opponent }) => {
+        CurlingNetwork.onGameStart(({ yourTeam, opponent, totalEnds }) => {
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.botMode = false;
@@ -2546,6 +2546,7 @@ function drawStagedStones() {
             setTimeout(() => {
                 hideLobbyScreen();
                 resetGame();
+                if (totalEnds) gameState.totalEnds = totalEnds;
                 showOnlineTeamBadge();
                 updateScoreboardNames();
                 updateUI();
@@ -2617,11 +2618,12 @@ function drawStagedStones() {
             rematchBtn.textContent = 'Opponent wants rematch!';
         });
 
-        CurlingNetwork.onRematchAccepted(({ yourTeam, opponent }) => {
+        CurlingNetwork.onRematchAccepted(({ yourTeam, opponent, totalEnds }) => {
             gameState.myTeam = yourTeam;
             gameState.opponentInfo = opponent;
             document.getElementById('game-over-screen').style.display = 'none';
             resetGame();
+            if (totalEnds) gameState.totalEnds = totalEnds;
             showOnlineTeamBadge();
             updateScoreboardNames();
             updateUI();
@@ -2913,7 +2915,25 @@ function drawStagedStones() {
 
     // Lobby button handlers
     document.getElementById('lobby-create').addEventListener('click', () => {
-        CurlingNetwork.createRoom();
+        showLobbyPanel('lobby-ends-panel');
+    });
+
+    // Ends selector buttons
+    document.querySelectorAll('.ends-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.ends-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        });
+    });
+
+    document.getElementById('lobby-create-confirm').addEventListener('click', () => {
+        const activeBtn = document.querySelector('.ends-btn.active');
+        const totalEnds = activeBtn ? parseInt(activeBtn.dataset.ends) : 6;
+        CurlingNetwork.createRoom(totalEnds);
+    });
+
+    document.getElementById('lobby-cancel-ends').addEventListener('click', () => {
+        showLobbyPanel('lobby-menu');
     });
 
     document.getElementById('lobby-join').addEventListener('click', () => {

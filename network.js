@@ -116,7 +116,7 @@ const CurlingNetwork = (() => {
             case 'game_start':
                 myTeam = data.yourTeam;
                 reconnectAttempts = 0;
-                if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null });
+                if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6 });
                 break;
 
             case 'opponent_throw':
@@ -164,7 +164,7 @@ const CurlingNetwork = (() => {
 
             case 'rematch_accepted':
                 myTeam = data.yourTeam;
-                if (callbacks.onRematchAccepted) callbacks.onRematchAccepted({ yourTeam: data.yourTeam, opponent: data.opponent || null });
+                if (callbacks.onRematchAccepted) callbacks.onRematchAccepted({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6 });
                 break;
 
             case 'reconnected':
@@ -398,7 +398,7 @@ const CurlingNetwork = (() => {
         },
 
         // Lobby
-        createRoom() { send({ type: 'create_room' }); },
+        createRoom(totalEnds) { send({ type: 'create_room', totalEnds: totalEnds || 6 }); },
         joinRoom(code) { send({ type: 'join_room', code: code.toUpperCase() }); },
         joinQueue() { send({ type: 'join_queue' }); },
         leaveQueue() { send({ type: 'leave_queue' }); },

@@ -1860,6 +1860,33 @@ input[type="range"]::-moz-range-thumb {
     }
 }
 
+/* Ends Selector */
+#ends-selector {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin: 12px 0;
+}
+
+.ends-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    border: 2px solid #555;
+    background: #1a1a2e;
+    color: #ccc;
+    font-size: 18px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.ends-btn.active {
+    border-color: #1565c0;
+    background: #1565c0;
+    color: #fff;
+}
+
 /* Quick Chat */
 #chat-btn {
     font-size: 18px;

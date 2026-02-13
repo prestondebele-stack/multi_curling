@@ -134,11 +134,15 @@ function generateRoomCode() {
     return code;
 }
 
-function createRoom(hostWs) {
+function createRoom(hostWs, totalEnds) {
     const code = generateRoomCode();
+    // Validate totalEnds to one of the allowed values
+    const allowedEnds = [4, 6, 8, 10];
+    const ends = allowedEnds.includes(totalEnds) ? totalEnds : 6;
     const room = {
         code,
         players: [hostWs, null], // index 0 = red (host), index 1 = yellow
+        totalEnds: ends,
         state: {
             currentTeam: 'red',
             phase: 'waiting', // waiting | playing | finished
@@ -177,11 +181,13 @@ async function startGame(room) {
         type: 'game_start',
         yourTeam: 'red',
         opponent: yellowInfo,
+        totalEnds: room.totalEnds || 6,
     });
     send(room.players[1], {
         type: 'game_start',
         yourTeam: 'yellow',
         opponent: redInfo,
+        totalEnds: room.totalEnds || 6,
     });
 
     // Broadcast in_game presence to friends
@@ -743,7 +749,7 @@ async function handleMessage(ws, message) {
 
         // ---- LOBBY ----
         case 'create_room': {
-            const room = createRoom(ws);
+            const room = createRoom(ws, data.totalEnds);
             send(ws, { type: 'room_created', code: room.code });
             break;
         }
@@ -958,8 +964,8 @@ async function handleMessage(ws, message) {
                 room.resultRecorded = false;
                 const redInfo = await getPlayerInfo(room.players[0]);
                 const yellowInfo = await getPlayerInfo(room.players[1]);
-                send(room.players[0], { type: 'rematch_accepted', yourTeam: 'red', opponent: yellowInfo });
-                send(room.players[1], { type: 'rematch_accepted', yourTeam: 'yellow', opponent: redInfo });
+                send(room.players[0], { type: 'rematch_accepted', yourTeam: 'red', opponent: yellowInfo, totalEnds: room.totalEnds || 6 });
+                send(room.players[1], { type: 'rematch_accepted', yourTeam: 'yellow', opponent: redInfo, totalEnds: room.totalEnds || 6 });
             }
             break;
         }
