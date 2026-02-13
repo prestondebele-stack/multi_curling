@@ -1127,6 +1127,7 @@ input[type="range"]::-moz-range-thumb {
     font-size: 22px;
 }
 
+#lobby-ends-panel,
 #lobby-create-panel,
 #lobby-join-panel,
 #lobby-queue-panel,
