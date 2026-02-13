@@ -2820,7 +2820,7 @@ function drawStagedStones() {
             // Set up push notifications for logged-in users
             PushSetup.setup();
             // Show friends button for logged-in users
-            document.getElementById('lobby-friends').style.display = '';
+            document.getElementById('lobby-friends').style.display = 'block';
         });
 
         CurlingNetwork.onVapidKey(({ key }) => {
@@ -2898,6 +2898,7 @@ function drawStagedStones() {
                     document.getElementById('user-info-bar').style.display = 'flex';
                     document.getElementById('logged-in-as').textContent = savedUsername;
                     showLobbyPanel('lobby-menu');
+                    document.getElementById('lobby-friends').style.display = 'block';
                 }
             } else {
                 // Show auth panel
