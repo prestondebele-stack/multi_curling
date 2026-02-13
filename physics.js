@@ -333,10 +333,6 @@ const CurlingPhysics = (() => {
         // (used for hog-line exception: stones that hit another stone stay in play)
         a.hasHitStone = true;
         b.hasHitStone = true;
-
-        // Flag for sound effects (cleared by game loop after playing sound)
-        a.collided = true;
-        b.collided = true;
     }
 
     // Playing area bounds check
