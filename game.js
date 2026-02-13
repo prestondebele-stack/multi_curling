@@ -2360,8 +2360,12 @@ function drawStagedStones() {
             showDisconnectOverlay();
         });
 
-        CurlingNetwork.onOpponentReconnected(() => {
+        CurlingNetwork.onOpponentReconnected(({ opponent }) => {
             gameState.opponentConnected = true;
+            if (opponent) {
+                gameState.opponentInfo = opponent;
+                updateScoreboardNames();
+            }
             hideDisconnectOverlay();
         });
 

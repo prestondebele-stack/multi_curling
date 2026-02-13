@@ -211,11 +211,16 @@ function getOpponent(room, ws) {
 async function getPlayerInfo(ws) {
     const session = playerSessions.get(ws);
     if (!session || !session.userId) return null;
-    const profile = await auth.getProfile(session.userId);
-    return {
-        username: session.username,
-        rank: profile ? profile.rank : auth.getRank(1200),
-    };
+    try {
+        const profile = await auth.getProfile(session.userId);
+        return {
+            username: session.username,
+            rank: profile ? profile.rank : auth.getRank(1200),
+        };
+    } catch (e) {
+        console.error('getPlayerInfo error:', e.message);
+        return { username: session.username, rank: auth.getRank(1200) };
+    }
 }
 
 // --------------------------------------------------------
@@ -631,12 +636,17 @@ async function handleMessage(ws, message) {
             if (!toWs || toWs.readyState !== WebSocket.OPEN) { send(ws, { type: 'game_invite_error', error: 'Player is offline' }); break; }
             if (playerRooms.has(toWs)) { send(ws, { type: 'game_invite_error', error: 'Player is in a game' }); break; }
             // Check for duplicate invite
+            let isDuplicate = false;
             for (const [, inv] of pendingInvites) {
                 if (inv.fromUserId === session.userId && inv.toUserId === toUserId) {
-                    send(ws, { type: 'game_invite_error', error: 'Invite already sent' }); break;
+                    send(ws, { type: 'game_invite_error', error: 'Invite already sent' });
+                    isDuplicate = true;
+                    break;
                 }
             }
+            if (isDuplicate) break;
             // Check for mutual invite (they already invited us) — auto-start game
+            let mutualHandled = false;
             for (const [existingId, inv] of pendingInvites) {
                 if (inv.fromUserId === toUserId && inv.toUserId === session.userId) {
                     // Mutual invite — start game immediately
@@ -649,11 +659,11 @@ async function handleMessage(ws, message) {
                     room.players[1] = yellow;
                     playerRooms.set(yellow, room.code);
                     await startGame(room);
+                    mutualHandled = true;
                     break;
                 }
             }
-            // Check if we already handled it via mutual invite
-            if (playerRooms.has(ws)) break;
+            if (mutualHandled) break;
             // Get target username
             try {
                 const targetResult = await db.query('SELECT username FROM users WHERE id = $1', [toUserId]);
@@ -775,7 +785,7 @@ async function handleMessage(ws, message) {
                 const room = createRoom(red);
                 room.players[1] = yellow;
                 playerRooms.set(yellow, room.code);
-                startGame(room);
+                await startGame(room);
             }
             break;
         }
@@ -987,6 +997,8 @@ async function handleMessage(ws, message) {
             room.players[emptySlot] = ws;
             playerRooms.set(ws, code);
 
+            // Note: session for this ws may not be set yet (token_login comes right after)
+            // We send opponent info that IS available, and the token_login will restore our session
             const team = emptySlot === 0 ? 'red' : 'yellow';
             const opponentWs = getOpponent(room, ws);
             const opponentInfo = opponentWs ? await getPlayerInfo(opponentWs) : null;
@@ -997,9 +1009,10 @@ async function handleMessage(ws, message) {
                 opponent: opponentInfo,
             });
 
-            const opponent = opponentWs;
-            if (opponent) {
-                send(opponent, { type: 'opponent_reconnected' });
+            // Notify opponent and send updated info about reconnected player
+            if (opponentWs && opponentWs.readyState === WebSocket.OPEN) {
+                const myInfo = await getPlayerInfo(ws);
+                send(opponentWs, { type: 'opponent_reconnected', opponent: myInfo });
             }
             break;
         }

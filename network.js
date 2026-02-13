@@ -145,7 +145,7 @@ const CurlingNetwork = (() => {
                 break;
 
             case 'opponent_reconnected':
-                if (callbacks.onOpponentReconnected) callbacks.onOpponentReconnected();
+                if (callbacks.onOpponentReconnected) callbacks.onOpponentReconnected({ opponent: data.opponent || null });
                 break;
 
             case 'opponent_left':
