@@ -1387,46 +1387,64 @@
         }
     }
 
-    // Cache for trajectory preview to avoid recalculating every frame
+    // Cache for trajectory preview (easy mode only)
     let _trajCache = { aim: null, weight: null, spin: null, amount: null, points: null };
 
     function drawAimLine() {
         if (gameState.phase !== 'aiming') return;
 
         const aimDeg = parseFloat(document.getElementById('aim-slider').value);
-        const weightPct = parseFloat(document.getElementById('weight-slider').value);
-        const spinDir = parseInt(document.getElementById('spin-direction').value);
-        const spinAmount = parseFloat(document.getElementById('spin-amount-slider').value);
+        const aimRad = aimDeg * Math.PI / 180;
+        const startX = 0;
+        const startY = P.hack + 1.0;
 
-        // Recalculate trajectory only when inputs change
-        if (_trajCache.aim !== aimDeg || _trajCache.weight !== weightPct ||
-            _trajCache.spin !== spinDir || _trajCache.amount !== spinAmount) {
-            _trajCache.aim = aimDeg;
-            _trajCache.weight = weightPct;
-            _trajCache.spin = spinDir;
-            _trajCache.amount = spinAmount;
-            _trajCache.points = CurlingPhysics.simulateTrajectory(aimDeg, weightPct, spinDir, spinAmount);
-        }
+        const showTrajectory = gameState.botMode && CurlingBot.getDifficulty() === 'easy';
 
-        const pts = _trajCache.points;
+        if (showTrajectory) {
+            // Curved trajectory preview for easy mode
+            const weightPct = parseFloat(document.getElementById('weight-slider').value);
+            const spinDir = parseInt(document.getElementById('spin-direction').value);
+            const spinAmount = parseFloat(document.getElementById('spin-amount-slider').value);
 
-        // Draw curved dashed trajectory line
-        if (pts && pts.length > 1) {
+            if (_trajCache.aim !== aimDeg || _trajCache.weight !== weightPct ||
+                _trajCache.spin !== spinDir || _trajCache.amount !== spinAmount) {
+                _trajCache.aim = aimDeg;
+                _trajCache.weight = weightPct;
+                _trajCache.spin = spinDir;
+                _trajCache.amount = spinAmount;
+                _trajCache.points = CurlingPhysics.simulateTrajectory(aimDeg, weightPct, spinDir, spinAmount);
+            }
+
+            const pts = _trajCache.points;
+            if (pts && pts.length > 1) {
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([8, 6]);
+                ctx.beginPath();
+                ctx.moveTo(toCanvasX(pts[0].x), toCanvasY(pts[0].y));
+                for (let i = 1; i < pts.length; i++) {
+                    ctx.lineTo(toCanvasX(pts[i].x), toCanvasY(pts[i].y));
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        } else {
+            // Straight dashed aim line
+            const lineLen = 45;
+            const endX = startX + lineLen * Math.sin(aimRad);
+            const endY = startY + lineLen * Math.cos(aimRad);
+
             ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
             ctx.lineWidth = 1.5;
             ctx.setLineDash([8, 6]);
             ctx.beginPath();
-            ctx.moveTo(toCanvasX(pts[0].x), toCanvasY(pts[0].y));
-            for (let i = 1; i < pts.length; i++) {
-                ctx.lineTo(toCanvasX(pts[i].x), toCanvasY(pts[i].y));
-            }
+            ctx.moveTo(toCanvasX(startX), toCanvasY(startY));
+            ctx.lineTo(toCanvasX(endX), toCanvasY(endY));
             ctx.stroke();
             ctx.setLineDash([]);
         }
 
         // Draw the stone at delivery position (preview)
-        const startX = 0;
-        const startY = P.hack + 1.0;
         const previewStone = {
             team: gameState.currentTeam,
             x: startX,
