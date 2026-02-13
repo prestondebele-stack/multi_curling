@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 280" width="500" height="280">
+  <!-- Olympic Rings - simple non-interlocked version for icon use -->
+  <circle cx="100" cy="100" r="50" fill="none" stroke="#0081C8" stroke-width="10"/>
+  <circle cx="220" cy="100" r="50" fill="none" stroke="#000000" stroke-width="10"/>
+  <circle cx="340" cy="100" r="50" fill="none" stroke="#EE334E" stroke-width="10"/>
+  <circle cx="160" cy="160" r="50" fill="none" stroke="#FCB131" stroke-width="10"/>
+  <circle cx="280" cy="160" r="50" fill="none" stroke="#00A651" stroke-width="10"/>
+</svg>

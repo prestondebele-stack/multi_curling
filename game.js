@@ -867,40 +867,99 @@
     }
 
     // --------------------------------------------------------
-    // ICE LOGO (Capital Curling Club)
+    // ICE LOGO (Olympic Rings)
     // Drawn between the far hog line and the house
     // --------------------------------------------------------
-    const logoImg = new Image();
-    logoImg.src = 'ccc-final-png_orig.png';
-    let logoLoaded = false;
-    logoImg.onload = () => { logoLoaded = true; };
-
     function drawIceLogos() {
-        if (!logoLoaded) return;
-
         ctx.save();
         ctx.globalAlpha = 0.45; // painted-on-ice look
 
-        // Place the logo centered between the far hog line and the front of the house
+        // Place the rings centered between the far hog line and the front of the house
         const logoTopY = P.farHogLine + 0.3;
         const logoBottomY = P.farTeeLine - HOUSE.twelveFoot - 0.3;
         const logoMidY = (logoTopY + logoBottomY) / 2;
         const logoHeight = logoBottomY - logoTopY;
 
-        // Maintain aspect ratio of the logo image
-        const aspect = logoImg.width / logoImg.height;
-        const drawH = toCanvasLen(logoHeight);
-        const drawW = drawH * aspect;
+        // Ring dimensions in canvas pixels
+        const totalH = toCanvasLen(logoHeight);
+        // Rings aspect ratio is roughly 5:3 (width:height)
+        const ringRadius = totalH * 0.28;
+        const strokeW = ringRadius * 0.18;
+        const gap = ringRadius * 0.22; // horizontal gap between ring centers in same row
 
-        // Clamp width to sheet width minus margins
-        const maxW = toCanvasLen(CurlingPhysics.SHEET.width * 0.85);
-        const finalW = Math.min(drawW, maxW);
-        const finalH = finalW / aspect;
+        const centerX = toCanvasX(0);
+        const centerY = toCanvasY(logoMidY);
 
-        const cx = toCanvasX(0);
-        const cy = toCanvasY(logoMidY);
+        // Top row y, bottom row y
+        const topY = centerY - ringRadius * 0.45;
+        const botY = centerY + ringRadius * 0.45;
 
-        ctx.drawImage(logoImg, cx - finalW / 2, cy - finalH / 2, finalW, finalH);
+        // Horizontal spacing: rings overlap slightly
+        const dx = ringRadius * 2 + gap;
+
+        // Ring centers: top row (blue, black, red), bottom row (yellow, green)
+        const rings = [
+            { x: centerX - dx,     y: topY, color: '#0081C8' },  // blue
+            { x: centerX,          y: topY, color: '#222222' },  // black (slightly lighter for ice visibility)
+            { x: centerX + dx,     y: topY, color: '#EE334E' },  // red
+            { x: centerX - dx / 2, y: botY, color: '#FCB131' },  // yellow
+            { x: centerX + dx / 2, y: botY, color: '#00A651' },  // green
+        ];
+
+        ctx.lineWidth = strokeW;
+        ctx.lineCap = 'round';
+
+        // Draw all rings as simple overlapping circles (no interlocking needed at this scale)
+        // Draw bottom row first, then top row on top
+        // Bottom row
+        for (let i = 3; i <= 4; i++) {
+            ctx.beginPath();
+            ctx.arc(rings[i].x, rings[i].y, ringRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = rings[i].color;
+            ctx.stroke();
+        }
+        // Top row
+        for (let i = 0; i <= 2; i++) {
+            ctx.beginPath();
+            ctx.arc(rings[i].x, rings[i].y, ringRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = rings[i].color;
+            ctx.stroke();
+        }
+
+        // Draw interlocking weave: bottom rings pass IN FRONT of top rings on the right side
+        // For each bottom-top pair, redraw a small arc of the bottom ring over the top ring
+        const pairs = [
+            { bot: 3, top: 0 }, // yellow over blue (right intersection)
+            { bot: 3, top: 1 }, // yellow over black (left intersection)
+            { bot: 4, top: 1 }, // green over black (right intersection)
+            { bot: 4, top: 2 }, // green over red (left intersection)
+        ];
+
+        for (let p = 0; p < pairs.length; p++) {
+            const b = rings[pairs[p].bot];
+            const t = rings[pairs[p].top];
+            // Find the angle from bottom ring center to top ring center
+            const angle = Math.atan2(t.y - b.y, t.x - b.x);
+            // The "in front" arc is on the side closer to the top ring
+            // We draw a small arc segment of the bottom ring that overlaps
+            const arcSpan = 0.45; // radians of arc to redraw
+            // For even index pairs (right side), bottom goes in front
+            // For odd index pairs (left side), top goes in front
+            if (p % 2 === 0) {
+                // Bottom ring in front on right side of intersection
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, ringRadius, angle - arcSpan, angle + arcSpan);
+                ctx.strokeStyle = b.color;
+                ctx.stroke();
+            } else {
+                // Top ring in front on left side of intersection
+                const angle2 = Math.atan2(b.y - t.y, b.x - t.x);
+                ctx.beginPath();
+                ctx.arc(t.x, t.y, ringRadius, angle2 - arcSpan, angle2 + arcSpan);
+                ctx.strokeStyle = t.color;
+                ctx.stroke();
+            }
+        }
 
         ctx.globalAlpha = 1.0;
         ctx.restore();

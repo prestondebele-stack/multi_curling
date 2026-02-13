@@ -1,5 +1,5 @@
 // Service Worker for Capital Curling Club PWA
-const CACHE_NAME = 'curling-v17';
+const CACHE_NAME = 'curling-v18';
 const ASSETS = [
     './',
     './index.html',
@@ -8,7 +8,7 @@ const ASSETS = [
     './bot.js',
     './network.js',
     './game.js',
-    './ccc-final-png_orig.png',
+    './olympic-rings.svg',
     './manifest.json'
 ];
 
@@ -96,8 +96,8 @@ self.addEventListener('push', (event) => {
 
             return self.registration.showNotification(title, {
                 body,
-                icon: './ccc-final-png_orig.png',
-                badge: './ccc-final-png_orig.png',
+                icon: './olympic-rings.svg',
+                badge: './olympic-rings.svg',
                 tag: 'turn-notification',
                 renotify: true,
                 vibrate: [200, 100, 200],
