@@ -791,6 +791,20 @@ async function handleMessage(ws, message) {
                     continue;
                 }
 
+                // Verify both have sessions (logged in)
+                const s1 = playerSessions.get(p1);
+                const s2 = playerSessions.get(p2);
+                if (!s1 || !s1.userId) {
+                    send(p1, { type: 'auth_error', error: 'Session expired' });
+                    matchmakingQueue.unshift(p2);
+                    continue;
+                }
+                if (!s2 || !s2.userId) {
+                    send(p2, { type: 'auth_error', error: 'Session expired' });
+                    matchmakingQueue.unshift(p1);
+                    continue;
+                }
+
                 // Randomly assign teams
                 const [red, yellow] = Math.random() < 0.5 ? [p1, p2] : [p2, p1];
                 const room = createRoom(red);

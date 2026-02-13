@@ -2833,8 +2833,14 @@ function drawStagedStones() {
         });
 
         CurlingNetwork.onAuthError(({ error }) => {
+            // If auto-login token expired, clear it and show login form
+            localStorage.removeItem('curling_token');
+            localStorage.removeItem('curling_username');
+            document.getElementById('user-info-bar').style.display = 'none';
+            document.getElementById('auth-panel').style.display = 'flex';
+            document.getElementById('lobby-menu').style.display = 'none';
             const errEl = document.getElementById('auth-error');
-            errEl.textContent = error;
+            errEl.textContent = error === 'Session expired' ? 'Session expired — please log in again.' : error;
             errEl.style.display = 'block';
         });
 
