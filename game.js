@@ -2161,6 +2161,11 @@ function drawStagedStones() {
             const el = document.getElementById(id);
             if (el) el.style.display = id === panelId ? 'flex' : 'none';
         });
+        // Always sync friends button visibility when showing lobby menu
+        if (panelId === 'lobby-menu') {
+            const isLoggedIn = !!localStorage.getItem('curling_token');
+            document.getElementById('lobby-friends').style.display = isLoggedIn ? 'block' : 'none';
+        }
     }
 
     function showLobbyScreen() {
@@ -2898,7 +2903,6 @@ function drawStagedStones() {
                     document.getElementById('user-info-bar').style.display = 'flex';
                     document.getElementById('logged-in-as').textContent = savedUsername;
                     showLobbyPanel('lobby-menu');
-                    document.getElementById('lobby-friends').style.display = 'block';
                 }
             } else {
                 // Show auth panel
