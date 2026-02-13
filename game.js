@@ -201,6 +201,136 @@
     })();
 
     // --------------------------------------------------------
+    // SOUND EFFECTS
+    // --------------------------------------------------------
+    const SFX = (() => {
+        let ctx = null;
+        let slideNode = null;
+        let slideGain = null;
+        let sweepNode = null;
+        let sweepGain = null;
+
+        function getCtx() {
+            if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+            return ctx;
+        }
+
+        // Unlock audio on first gesture (iOS)
+        document.addEventListener('click', function unlock() {
+            const c = getCtx();
+            if (c.state === 'suspended') c.resume();
+            document.removeEventListener('click', unlock);
+        }, { once: true });
+
+        function createNoise(duration, filterFreq, filterQ) {
+            const c = getCtx();
+            if (c.state === 'suspended') return null;
+            const bufferSize = c.sampleRate * duration;
+            const buffer = c.createBuffer(1, bufferSize, c.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+            const source = c.createBufferSource();
+            source.buffer = buffer;
+            const filter = c.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.value = filterFreq;
+            filter.Q.value = filterQ;
+            source.connect(filter);
+            return { source, filter, ctx: c };
+        }
+
+        return {
+            playCollision(relSpeed) {
+                try {
+                    const n = createNoise(0.08, 2200, 1.5);
+                    if (!n) return;
+                    const gain = n.ctx.createGain();
+                    const vol = Math.min(0.5, 0.1 + relSpeed * 0.12);
+                    gain.gain.setValueAtTime(vol, n.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, n.ctx.currentTime + 0.08);
+                    n.filter.connect(gain);
+                    gain.connect(n.ctx.destination);
+                    n.source.start();
+                    n.source.stop(n.ctx.currentTime + 0.08);
+                } catch (_) {}
+            },
+
+            playSlide() {
+                try {
+                    if (slideNode) return;
+                    const c = getCtx();
+                    if (c.state === 'suspended') return;
+                    const bufferSize = c.sampleRate * 2;
+                    const buffer = c.createBuffer(1, bufferSize, c.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                    slideNode = c.createBufferSource();
+                    slideNode.buffer = buffer;
+                    slideNode.loop = true;
+                    const filter = c.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.value = 400;
+                    slideGain = c.createGain();
+                    slideGain.gain.setValueAtTime(0.04, c.currentTime);
+                    slideNode.connect(filter);
+                    filter.connect(slideGain);
+                    slideGain.connect(c.destination);
+                    slideNode.start();
+                } catch (_) {}
+            },
+
+            stopSlide() {
+                try {
+                    if (slideNode) {
+                        slideGain.gain.exponentialRampToValueAtTime(0.001, getCtx().currentTime + 0.2);
+                        const node = slideNode;
+                        setTimeout(() => { try { node.stop(); } catch(_){} }, 250);
+                        slideNode = null;
+                        slideGain = null;
+                    }
+                } catch (_) {}
+            },
+
+            playSweep() {
+                try {
+                    if (sweepNode) return;
+                    const c = getCtx();
+                    if (c.state === 'suspended') return;
+                    const bufferSize = c.sampleRate * 2;
+                    const buffer = c.createBuffer(1, bufferSize, c.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                    sweepNode = c.createBufferSource();
+                    sweepNode.buffer = buffer;
+                    sweepNode.loop = true;
+                    const filter = c.createBiquadFilter();
+                    filter.type = 'bandpass';
+                    filter.frequency.value = 1800;
+                    filter.Q.value = 0.8;
+                    sweepGain = c.createGain();
+                    sweepGain.gain.setValueAtTime(0.06, c.currentTime);
+                    sweepNode.connect(filter);
+                    filter.connect(sweepGain);
+                    sweepGain.connect(c.destination);
+                    sweepNode.start();
+                } catch (_) {}
+            },
+
+            stopSweep() {
+                try {
+                    if (sweepNode) {
+                        sweepGain.gain.exponentialRampToValueAtTime(0.001, getCtx().currentTime + 0.15);
+                        const node = sweepNode;
+                        setTimeout(() => { try { node.stop(); } catch(_){} }, 200);
+                        sweepNode = null;
+                        sweepGain = null;
+                    }
+                } catch (_) {}
+            },
+        };
+    })();
+
+    // --------------------------------------------------------
     // PUSH NOTIFICATION SETUP
     // --------------------------------------------------------
     const PushSetup = (() => {
@@ -321,6 +451,7 @@
 
     // Free Guard Zone (FGZ) violation indicator
     let fgzViolation = null; // { timer }
+    let extraEndNotice = null; // { timer }
 
     // FGZ snapshots — saved positions of protected stones before each throw
     let fgzSnapshots = []; // [{ stone, x, y }]
@@ -430,6 +561,7 @@
 
         // Camera follows stone
         VIEW.followStone = true;
+        SFX.playSlide();
 
         // Snapshot FGZ-protected stones before this throw resolves
         snapshotFGZStones();
@@ -504,9 +636,15 @@
         document.getElementById('yellow-total').textContent = gameState.yellowScore;
 
         if (gameState.currentEnd >= gameState.totalEnds) {
-            gameState.phase = 'gameover';
-            showGameOver();
-            return;
+            if (gameState.redScore === gameState.yellowScore) {
+                // Tied — add an extra end
+                gameState.totalEnds++;
+                extraEndNotice = { timer: 2500 };
+            } else {
+                gameState.phase = 'gameover';
+                showGameOver();
+                return;
+            }
         }
 
         // Start next end
@@ -1095,7 +1233,7 @@
 
         ctx.translate(cx, cy);
         if (settleScale !== 1.0) ctx.scale(settleScale, settleScale);
-        ctx.rotate(-stone.angle); // negative because canvas y is inverted
+        ctx.rotate(stone.angle);
 
         // Stone body shadow (scaled with stone size)
         const shadowOff = Math.max(2, r * 0.12);
@@ -1249,30 +1387,46 @@
         }
     }
 
+    // Cache for trajectory preview to avoid recalculating every frame
+    let _trajCache = { aim: null, weight: null, spin: null, amount: null, points: null };
+
     function drawAimLine() {
         if (gameState.phase !== 'aiming') return;
 
         const aimDeg = parseFloat(document.getElementById('aim-slider').value);
-        const aimRad = aimDeg * Math.PI / 180;
+        const weightPct = parseFloat(document.getElementById('weight-slider').value);
+        const spinDir = parseInt(document.getElementById('spin-direction').value);
+        const spinAmount = parseFloat(document.getElementById('spin-amount-slider').value);
 
-        const startX = 0;
-        const startY = P.hack + 1.0;
+        // Recalculate trajectory only when inputs change
+        if (_trajCache.aim !== aimDeg || _trajCache.weight !== weightPct ||
+            _trajCache.spin !== spinDir || _trajCache.amount !== spinAmount) {
+            _trajCache.aim = aimDeg;
+            _trajCache.weight = weightPct;
+            _trajCache.spin = spinDir;
+            _trajCache.amount = spinAmount;
+            _trajCache.points = CurlingPhysics.simulateTrajectory(aimDeg, weightPct, spinDir, spinAmount);
+        }
 
-        // Draw a dark dashed line showing the aim direction
-        const lineLen = 45; // meters — extends past the house
-        const endX = startX + lineLen * Math.sin(aimRad);
-        const endY = startY + lineLen * Math.cos(aimRad);
+        const pts = _trajCache.points;
 
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([8, 6]);
-        ctx.beginPath();
-        ctx.moveTo(toCanvasX(startX), toCanvasY(startY));
-        ctx.lineTo(toCanvasX(endX), toCanvasY(endY));
-        ctx.stroke();
-        ctx.setLineDash([]);
+        // Draw curved dashed trajectory line
+        if (pts && pts.length > 1) {
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([8, 6]);
+            ctx.beginPath();
+            ctx.moveTo(toCanvasX(pts[0].x), toCanvasY(pts[0].y));
+            for (let i = 1; i < pts.length; i++) {
+                ctx.lineTo(toCanvasX(pts[i].x), toCanvasY(pts[i].y));
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
 
         // Draw the stone at delivery position (preview)
+        const startX = 0;
+        const startY = P.hack + 1.0;
         const previewStone = {
             team: gameState.currentTeam,
             x: startX,
@@ -1418,6 +1572,8 @@
                 checkFGZViolation();
                 gameState.phase = 'waitingNextTurn';
                 gameState.isSweeping = false;
+                SFX.stopSlide();
+                SFX.stopSweep();
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
                 setTimeout(() => {
                     if (gameState.phase === 'waitingNextTurn') {
@@ -1464,6 +1620,15 @@
                 const sweep = gameState.isSweeping ? gameState.sweepLevel : 'none';
                 const anyMoving = CurlingPhysics.simulate(gameState.stones, PHYSICS_DT, sweep);
 
+                // Check for collisions and play sound
+                for (const s of gameState.stones) {
+                    if (s.collided) {
+                        const spd = Math.sqrt(s.vx * s.vx + s.vy * s.vy);
+                        SFX.playCollision(spd);
+                        s.collided = false;
+                    }
+                }
+
                 // Record trail for the delivered stone
                 if (gameState.deliveredStone && gameState.deliveredStone.moving) {
                     const ds = gameState.deliveredStone;
@@ -1488,6 +1653,8 @@
 
                         gameState.phase = 'waitingNextTurn';
                         gameState.isSweeping = false;
+                        SFX.stopSlide();
+                        SFX.stopSweep();
                         document.getElementById('sweep-toggle-btn').style.display = 'none';
                         setTimeout(() => {
                             if (gameState.phase === 'waitingNextTurn') {
@@ -1532,6 +1699,11 @@
             fgzViolation.timer -= frameDeltaMs;
             if (fgzViolation.timer <= 0) fgzViolation = null;
         }
+        // Tick extra end notice
+        if (extraEndNotice) {
+            extraEndNotice.timer -= frameDeltaMs;
+            if (extraEndNotice.timer <= 0) extraEndNotice = null;
+        }
 
 
 
@@ -1552,6 +1724,7 @@
         drawScoreOverlay();
         drawHogLineViolation();
         drawFGZViolation();
+        drawExtraEndNotice();
         drawVignette();
         drawStagedStones();
 
@@ -1626,6 +1799,41 @@
 
         ctx.restore();
     }
+
+    // Extra end notice — centered on screen
+    function drawExtraEndNotice() {
+        if (!extraEndNotice) return;
+        const alpha = Math.min(1, extraEndNotice.timer / 400);
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+
+        const cx = canvas.width / 2;
+        const cy = canvas.height * 0.25;
+
+        // Background pill
+        ctx.fillStyle = 'rgba(30, 100, 200, 0.9)';
+        const textW = 220;
+        const textH = 50;
+        ctx.beginPath();
+        ctx.moveTo(cx - textW / 2 + 12, cy - textH / 2);
+        ctx.lineTo(cx + textW / 2 - 12, cy - textH / 2);
+        ctx.arcTo(cx + textW / 2, cy - textH / 2, cx + textW / 2, cy, 12);
+        ctx.arcTo(cx + textW / 2, cy + textH / 2, cx - textW / 2, cy + textH / 2, 12);
+        ctx.arcTo(cx - textW / 2, cy + textH / 2, cx - textW / 2, cy, 12);
+        ctx.arcTo(cx - textW / 2, cy - textH / 2, cx + textW / 2, cy - textH / 2, 12);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 22px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('EXTRA END!', cx, cy + 1);
+
+        ctx.restore();
+    }
+
 // Stone staging display — shows each team's 8 stones on the ice
 // Red stones: top-left corner, Yellow stones: top-right corner
 // 2 columns × 4 rows, ordered by throw number
@@ -1863,6 +2071,7 @@ function drawStagedStones() {
             }
             document.getElementById('sweep-toggle-btn').classList.add('sweeping');
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
+            SFX.playSweep();
             if (gameState.onlineMode) CurlingNetwork.sendSweepStart();
         }
     }
@@ -1872,6 +2081,7 @@ function drawStagedStones() {
         gameState.isSweeping = false;
         document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
         document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
+        SFX.stopSweep();
         if (gameState.onlineMode && wasSweeping) CurlingNetwork.sendSweepStop();
     }
 
@@ -1946,6 +2156,7 @@ function drawStagedStones() {
 
         fgzSnapshots = [];
         fgzViolation = null;
+        extraEndNotice = null;
         hogLineViolation = null;
 
         document.getElementById('zoom-btn').classList.remove('zoomed');
@@ -1956,6 +2167,11 @@ function drawStagedStones() {
         enableControlsForHuman();
 
         updateUI();
+
+        // Show tutorial for first-time players
+        if (gameState.currentEnd === 1) {
+            checkTutorial();
+        }
     }
 
     // --------------------------------------------------------
@@ -1991,6 +2207,8 @@ function drawStagedStones() {
         gameState.roomCode = null;
         gameState.opponentInfo = null;
         document.getElementById('online-team-badge').style.display = 'none';
+        document.getElementById('chat-btn').style.display = 'none';
+        document.getElementById('chat-popup').style.display = 'none';
         // Clear player names from scoreboard
         document.getElementById('red-player-name').textContent = '';
         document.getElementById('yellow-player-name').textContent = '';
@@ -2316,6 +2534,86 @@ function drawStagedStones() {
         document.getElementById('game-invite-overlay').style.display = 'none';
     }
 
+    // ---- QUICK CHAT ----
+    function showChatToast(text, from) {
+        const container = document.getElementById('chat-toast-container');
+        const toast = document.createElement('div');
+        toast.className = 'chat-toast';
+        toast.innerHTML = '<span class="chat-from">' + from + ':</span>' + text;
+        container.appendChild(toast);
+        setTimeout(() => { toast.remove(); }, 3000);
+    }
+
+    // Chat button toggle
+    const chatBtn = document.getElementById('chat-btn');
+    const chatPopup = document.getElementById('chat-popup');
+    chatBtn.addEventListener('click', () => {
+        chatPopup.style.display = chatPopup.style.display === 'none' ? 'flex' : 'none';
+    });
+
+    // Preset message buttons
+    document.querySelectorAll('.chat-preset').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const text = btn.textContent;
+            CurlingNetwork.sendChatMessage(text);
+            const username = localStorage.getItem('curling_username') || 'You';
+            showChatToast(text, username);
+            chatPopup.style.display = 'none';
+        });
+    });
+
+    // ---- TUTORIAL ----
+    const tutorialSteps = [
+        { text: 'Adjust the Aim slider to angle your shot left or right.', target: 'aim-slider' },
+        { text: 'Set Weight to control power \u2014 from a soft Guard to a hard Takeout.', target: 'weight-slider' },
+        { text: 'Choose spin direction \u2014 the stone curls that way on the ice.', target: 'spin-direction' },
+        { text: 'Tap THROW to deliver your stone!', target: 'throw-btn' },
+        { text: 'Hold SWEEP during delivery to straighten and extend the shot.', target: 'sweep-toggle-btn' },
+    ];
+    let tutorialStep = 0;
+
+    function checkTutorial() {
+        if (localStorage.getItem('curling_tutorial_done')) return;
+        tutorialStep = 0;
+        showTutorialStep(0);
+    }
+
+    function showTutorialStep(n) {
+        const overlay = document.getElementById('tutorial-overlay');
+        const text = document.getElementById('tutorial-text');
+        const counter = document.getElementById('tutorial-step-counter');
+        const nextBtn = document.getElementById('tutorial-next');
+
+        // Remove previous highlight
+        document.querySelectorAll('.tutorial-highlight').forEach(el => el.classList.remove('tutorial-highlight'));
+
+        if (n >= tutorialSteps.length) {
+            overlay.style.display = 'none';
+            localStorage.setItem('curling_tutorial_done', '1');
+            return;
+        }
+
+        const step = tutorialSteps[n];
+        overlay.style.display = 'flex';
+        text.textContent = step.text;
+        counter.textContent = (n + 1) + ' / ' + tutorialSteps.length;
+        nextBtn.textContent = n === tutorialSteps.length - 1 ? 'Got it!' : 'Next';
+
+        const target = document.getElementById(step.target);
+        if (target) target.classList.add('tutorial-highlight');
+    }
+
+    document.getElementById('tutorial-next').addEventListener('click', () => {
+        tutorialStep++;
+        showTutorialStep(tutorialStep);
+    });
+
+    document.getElementById('tutorial-skip').addEventListener('click', () => {
+        document.getElementById('tutorial-overlay').style.display = 'none';
+        document.querySelectorAll('.tutorial-highlight').forEach(el => el.classList.remove('tutorial-highlight'));
+        localStorage.setItem('curling_tutorial_done', '1');
+    });
+
     function animateOpponentSliders(aim, weight, spinDir, spinAmount, callback) {
         if (spinDir >= 0) {
             document.getElementById('spin-cw').classList.add('active');
@@ -2379,6 +2677,7 @@ function drawStagedStones() {
                 showOnlineTeamBadge();
                 updateScoreboardNames();
                 updateUI();
+                document.getElementById('chat-btn').style.display = '';
                 if (isMyTurn()) {
                     enableControlsForHuman();
                     document.getElementById('throw-btn').disabled = false;
@@ -2624,6 +2923,11 @@ function drawStagedStones() {
 
         CurlingNetwork.onGameInviteCancelled(() => {
             hideGameInvite();
+        });
+
+        // ---- CHAT ----
+        CurlingNetwork.onChatMessage((text, from) => {
+            showChatToast(text, from);
         });
 
         // ---- AUTH HANDLERS ----

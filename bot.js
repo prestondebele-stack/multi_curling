@@ -819,6 +819,227 @@ const CurlingBot = (() => {
     }
 
     // --------------------------------------------------------
+    // MULTI-SHOT LOOKAHEAD (Hard mode)
+    // --------------------------------------------------------
+
+    // Heuristic board score from bot's perspective (higher = better for bot)
+    function scoreBoard(board) {
+        let score = 0;
+
+        // Points for scoring stones
+        score += board.botScoring * 10;
+        score -= board.oppScoring * 10;
+
+        // Bonus for having shot stone
+        if (board.shotTeam === 'yellow') score += 15;
+        else if (board.shotTeam === 'red') score -= 15;
+
+        // Guards
+        score += board.botGuards.length * 3;
+        score -= board.oppGuards.length * 2;
+
+        // Stones in house (presence)
+        score += board.botInHouse.length * 2;
+        score -= board.oppInHouse.length * 2;
+
+        // Hammer advantage in late game
+        if (board.hasHammer && board.isLateGame) score += 5;
+
+        return score;
+    }
+
+    // Generate 3-4 candidate shots for the current board
+    function generateCandidateShots(board) {
+        const primary = selectShot(board);
+        const candidates = [primary];
+
+        // Add alternative shots based on situation
+        const oppInHouse = board.inHouseSorted.filter(s => s.team === 'red');
+
+        // Always consider a draw to the button
+        if (primary.description !== 'Draw to Button') {
+            candidates.push(makeDrawToButton(board));
+        }
+
+        // Consider a guard if we're not already guarding
+        if (primary.description !== 'Center Guard' && primary.description !== 'Guard Shot Stone') {
+            if (board.botScoring > 0) {
+                candidates.push(makeGuardOwnStone(board));
+            } else {
+                candidates.push(makeCenterGuard(board));
+            }
+        }
+
+        // Consider a takeout if opponent has stones in house
+        if (oppInHouse.length > 0 && primary.description !== 'Takeout' && primary.description !== 'Hit & Roll') {
+            candidates.push(makeTakeout(board));
+        }
+
+        // Consider a freeze if opponent has shot stone
+        if (board.shotTeam === 'red' && primary.description !== 'Freeze') {
+            candidates.push(makeFreeze(board));
+        }
+
+        // Limit to 4 candidates
+        return candidates.slice(0, 4);
+    }
+
+    // Estimate outcome of a shot without physics simulation
+    function estimateShotOutcome(shot, board) {
+        const P = CurlingPhysics.POSITIONS;
+        const H = CurlingPhysics.HOUSE;
+        const SR = CurlingPhysics.STONE.radius;
+        const teeX = board.teeX;
+        const teeY = board.teeY;
+        const d = DIFFICULTY[difficulty];
+
+        // Clone stone arrays for simulation
+        let botStones = board.botStones.map(s => ({ x: s.x, y: s.y, team: s.team, active: true }));
+        let oppStones = board.oppStones.map(s => ({ x: s.x, y: s.y, team: s.team, active: true }));
+
+        const desc = shot.description;
+
+        if (desc === 'Takeout' || desc === 'Takeout Guard' || desc === 'Peel') {
+            // Remove the target opponent stone, our stone goes through
+            if (oppStones.length > 0) {
+                const target = oppStones.reduce((closest, s) => {
+                    const d1 = distTo(s.x, s.y, shot.targetX, shot.targetY);
+                    const d2 = distTo(closest.x, closest.y, shot.targetX, shot.targetY);
+                    return d1 < d2 ? s : closest;
+                });
+                oppStones = oppStones.filter(s => s !== target);
+            }
+        } else if (desc === 'Hit & Roll') {
+            // Remove target, add our stone near the tee
+            if (oppStones.length > 0) {
+                const target = oppStones.reduce((closest, s) => {
+                    const d1 = distTo(s.x, s.y, shot.targetX, shot.targetY);
+                    const d2 = distTo(closest.x, closest.y, shot.targetX, shot.targetY);
+                    return d1 < d2 ? s : closest;
+                });
+                oppStones = oppStones.filter(s => s !== target);
+                // Our stone rolls to a nearby position
+                botStones.push({ x: shot.targetX + rand(-0.3, 0.3), y: teeY + rand(-0.3, 0.3), team: 'yellow', active: true });
+            }
+        } else if (desc === 'Freeze') {
+            // Add our stone touching the target
+            botStones.push({ x: shot.targetX, y: shot.targetY - SR * 2, team: 'yellow', active: true });
+        } else if (desc === 'Tap') {
+            // Nudge opponent stone back, both stay
+            botStones.push({ x: shot.targetX, y: shot.targetY, team: 'yellow', active: true });
+        } else {
+            // Draw/Guard/Button — add our stone at target position
+            botStones.push({ x: shot.targetX, y: shot.targetY, team: 'yellow', active: true });
+        }
+
+        // Apply accuracy factor — hard mode has high accuracy but not perfect
+        // Chance that the shot misses badly
+        if (Math.random() > d.perfectRate) {
+            // Missed shot — reduce the benefit
+            return scoreBoard(board); // No change from current position
+        }
+
+        // Build a pseudo-board for scoring
+        const allStones = [...botStones, ...oppStones].filter(s => s.active);
+        const allSorted = allStones.map(s => ({
+            stone: s,
+            dist: distTo(s.x, s.y, teeX, teeY),
+            team: s.team,
+        })).sort((a, b) => a.dist - b.dist);
+
+        const inHouseSorted = allSorted.filter(s => s.dist <= H.twelveFoot + SR);
+
+        let shotTeam = null;
+        let newBotScoring = 0;
+        let newOppScoring = 0;
+        if (inHouseSorted.length > 0) {
+            shotTeam = inHouseSorted[0].team;
+            const otherDist = inHouseSorted.find(s => s.team !== shotTeam);
+            const otherD = otherDist ? otherDist.dist : Infinity;
+            for (const s of inHouseSorted) {
+                if (s.team === shotTeam && s.dist < otherD) {
+                    if (shotTeam === 'yellow') newBotScoring++;
+                    else newOppScoring++;
+                }
+            }
+        }
+
+        const isGuard = (s) => {
+            const d = distTo(s.x, s.y, teeX, teeY);
+            return s.y >= P.farHogLine && d > H.twelveFoot + SR;
+        };
+
+        const newBotGuards = botStones.filter(isGuard);
+        const newOppGuards = oppStones.filter(isGuard);
+
+        let score = 0;
+        score += newBotScoring * 10;
+        score -= newOppScoring * 10;
+        if (shotTeam === 'yellow') score += 15;
+        else if (shotTeam === 'red') score -= 15;
+        score += newBotGuards.length * 3;
+        score -= newOppGuards.length * 2;
+        score += botStones.filter(s => distTo(s.x, s.y, teeX, teeY) <= H.twelveFoot + SR).length * 2;
+        score -= oppStones.filter(s => distTo(s.x, s.y, teeX, teeY) <= H.twelveFoot + SR).length * 2;
+
+        return score;
+    }
+
+    // Estimate opponent's best response score (from opponent's perspective)
+    function estimateOpponentBestResponse(board, myShot) {
+        // After our shot, what's the best the opponent can do?
+        // Generate a few opponent shot ideas and pick their best
+        const P = CurlingPhysics.POSITIONS;
+        const H = CurlingPhysics.HOUSE;
+        const SR = CurlingPhysics.STONE.radius;
+        const teeX = board.teeX;
+        const teeY = board.teeY;
+
+        // Simplified: opponent will either takeout our best stone, draw to button, or guard
+        const oppResponses = [];
+
+        // Response 1: Takeout our closest stone in house
+        const botInHouse = board.botInHouse;
+        if (botInHouse.length > 0) {
+            oppResponses.push(-5); // Opponent removes one of our stones — hurts us
+        }
+
+        // Response 2: Draw to button
+        oppResponses.push(-3); // Opponent draws to button — slightly hurts us
+
+        // Response 3: Guard
+        oppResponses.push(-1); // Opponent places a guard — minimal impact
+
+        // Return the worst case for us (best for opponent)
+        return Math.min(...oppResponses);
+    }
+
+    // Select shot with 2-shot lookahead for hard mode
+    function selectShotWithLookahead(board) {
+        const candidates = generateCandidateShots(board);
+
+        let bestShot = candidates[0];
+        let bestScore = -Infinity;
+
+        for (const shot of candidates) {
+            // Estimate our resulting board score
+            const ourScore = estimateShotOutcome(shot, board);
+
+            // Estimate opponent's best response penalty
+            const oppPenalty = estimateOpponentBestResponse(board, shot);
+
+            const totalScore = ourScore + oppPenalty;
+
+            if (totalScore > bestScore) {
+                bestScore = totalScore;
+                bestShot = shot;
+            }
+        }
+
+        return bestShot;
+    }
+
+    // --------------------------------------------------------
     // MAIN: TAKE TURN
     // --------------------------------------------------------
     function takeTurn(bridge) {
@@ -832,8 +1053,10 @@ const CurlingBot = (() => {
         // Evaluate the board
         const board = evaluateBoard(bridge);
 
-        // Select a shot
-        const shot = selectShot(board);
+        // Select a shot (hard mode uses lookahead)
+        const shot = (difficulty === 'hard')
+            ? selectShotWithLookahead(board)
+            : selectShot(board);
 
         // Calculate aim
         const aimDeg = calculateAim(shot);

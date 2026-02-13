@@ -55,6 +55,8 @@ const CurlingNetwork = (() => {
         onGameInviteError: null,
         onGameInviteDenied: null,
         onGameInviteCancelled: null,
+        // Chat
+        onChatMessage: null,
     };
 
     function send(data) {
@@ -138,6 +140,10 @@ const CurlingNetwork = (() => {
 
             case 'opponent_sweep_stop':
                 if (callbacks.onOpponentSweepStop) callbacks.onOpponentSweepStop();
+                break;
+
+            case 'chat_message':
+                if (callbacks.onChatMessage) callbacks.onChatMessage(data.text, data.from);
                 break;
 
             case 'opponent_disconnected':
@@ -407,6 +413,7 @@ const CurlingNetwork = (() => {
         sendTurnComplete() { send({ type: 'turn_complete' }); },
         sendRematch() { send({ type: 'rematch' }); },
         sendLeave() { send({ type: 'leave' }); },
+        sendChatMessage(text) { send({ type: 'chat_message', text }); },
 
         // Game state sync (for reconnection)
         sendGameStateSync(snapshot) { send({ type: 'game_state_sync', snapshot }); },
@@ -481,6 +488,8 @@ const CurlingNetwork = (() => {
         onGameInviteError(cb) { callbacks.onGameInviteError = cb; },
         onGameInviteDenied(cb) { callbacks.onGameInviteDenied = cb; },
         onGameInviteCancelled(cb) { callbacks.onGameInviteCancelled = cb; },
+        // Chat
+        onChatMessage(cb) { callbacks.onChatMessage = cb; },
 
         // State
         getMyTeam() { return myTeam; },

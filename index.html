@@ -128,6 +128,14 @@
                     <button id="zoom-btn" title="Zoom to house">&#128269;</button>
                     <button id="throw-btn">THROW</button>
                     <button id="sweep-toggle-btn" style="display:none;">SWEEP</button>
+                    <button id="chat-btn" title="Quick Chat" style="display:none;">&#128172;</button>
+                </div>
+                <div id="chat-popup" style="display:none;">
+                    <button class="chat-preset">Good shot!</button>
+                    <button class="chat-preset">Nice!</button>
+                    <button class="chat-preset">Good game!</button>
+                    <button class="chat-preset">Good luck!</button>
+                    <button class="chat-preset">Thanks!</button>
                 </div>
             </div>
             <div id="instructions">
@@ -307,6 +315,16 @@
             </div>
         </div>
         <div id="online-team-badge" style="display:none;"></div>
+        <div id="tutorial-overlay" style="display:none;">
+            <div id="tutorial-box">
+                <p id="tutorial-step-counter"></p>
+                <p id="tutorial-text"></p>
+                <div class="tutorial-buttons">
+                    <button id="tutorial-skip">Skip</button>
+                    <button id="tutorial-next">Next</button>
+                </div>
+            </div>
+        </div>
     </div>
     <script src="physics.js"></script>
     <script src="bot.js"></script>
@@ -318,6 +336,7 @@
             navigator.serviceWorker.register('sw.js').catch(() => { });
         }
     </script>
+    <div id="chat-toast-container"></div>
 </body>
 
 </html>

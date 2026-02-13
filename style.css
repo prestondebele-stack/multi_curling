@@ -1859,3 +1859,148 @@ input[type="range"]::-moz-range-thumb {
         display: none;
     }
 }
+
+/* Quick Chat */
+#chat-btn {
+    font-size: 18px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: none;
+    background: #1565c0;
+    color: #fff;
+    cursor: pointer;
+}
+
+#chat-popup {
+    position: absolute;
+    bottom: 60px;
+    right: 10px;
+    background: #222;
+    border-radius: 10px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 200;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+.chat-preset {
+    background: #1565c0;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 14px;
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+}
+.chat-preset:active {
+    background: #0d47a1;
+}
+
+#chat-toast-container {
+    position: fixed;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 300;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    pointer-events: none;
+}
+
+.chat-toast {
+    background: rgba(0,0,0,0.85);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    animation: chatToastIn 0.3s ease, chatToastOut 0.3s ease 2.7s forwards;
+    pointer-events: none;
+}
+.chat-toast .chat-from {
+    font-weight: bold;
+    margin-right: 6px;
+    color: #64b5f6;
+}
+
+@keyframes chatToastIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes chatToastOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+/* Tutorial */
+#tutorial-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#tutorial-box {
+    background: #222;
+    color: #fff;
+    border-radius: 12px;
+    padding: 20px 24px;
+    max-width: 340px;
+    text-align: center;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.6);
+}
+
+#tutorial-step-counter {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 8px;
+}
+
+#tutorial-text {
+    font-size: 16px;
+    line-height: 1.4;
+    margin-bottom: 16px;
+}
+
+.tutorial-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.tutorial-buttons button {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+#tutorial-skip {
+    background: #555;
+    color: #ccc;
+}
+
+#tutorial-next {
+    background: #1565c0;
+    color: #fff;
+}
+
+.tutorial-highlight {
+    outline: 3px solid #1565c0 !important;
+    outline-offset: 2px;
+    animation: tutorialPulse 1s ease-in-out infinite;
+}
+
+@keyframes tutorialPulse {
+    0%, 100% { outline-color: #1565c0; }
+    50% { outline-color: #42a5f5; }
+}

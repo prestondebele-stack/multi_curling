@@ -333,6 +333,10 @@ const CurlingPhysics = (() => {
         // (used for hog-line exception: stones that hit another stone stay in play)
         a.hasHitStone = true;
         b.hasHitStone = true;
+
+        // Flag for sound effects (cleared by game loop after playing sound)
+        a.collided = true;
+        b.collided = true;
     }
 
     // Playing area bounds check
@@ -370,6 +374,69 @@ const CurlingPhysics = (() => {
         halfWidth: SHEET.width / 2,
     };
 
+    // --------------------------------------------------------
+    // TRAJECTORY PREDICTION (for aim preview)
+    // Simplified single-stone physics — no collisions, no sweeping
+    // --------------------------------------------------------
+    function simulateTrajectory(aimDeg, weightPct, spinDir, spinAmount) {
+        const speed = weightToSpeed(weightPct);
+        const aimRad = aimDeg * Math.PI / 180;
+        const omega = rotationsToAngularVelocity(spinAmount, speed) * spinDir;
+        const dt = 0.016; // coarser timestep for preview (60 Hz)
+        const maxSteps = 600;
+        const g = 9.81;
+
+        let x = 0, y = POSITIONS.hack + 1.0;
+        let vx = speed * Math.sin(aimRad);
+        let vy = speed * Math.cos(aimRad);
+        let w = omega;
+
+        const points = [{ x, y }];
+
+        for (let i = 0; i < maxSteps; i++) {
+            const spd = Math.sqrt(vx * vx + vy * vy);
+            if (spd < 0.01) break;
+
+            // Friction
+            const mu = FRICTION.getMu(spd);
+            const frictionForce = mu * STONE.mass * g;
+            const frictionAccel = frictionForce / STONE.mass;
+            const ax = -(vx / spd) * frictionAccel;
+            const ay = -(vy / spd) * frictionAccel;
+
+            // Curl
+            let curlAx = 0, curlAy = 0;
+            if (Math.abs(w) > 0.05) {
+                const curlForce = CURL.getForce(w, spd, frictionForce);
+                const perpX = vy / spd;
+                const perpY = -vx / spd;
+                const sign = w > 0 ? 1 : -1;
+                curlAx = sign * perpX * curlForce / STONE.mass;
+                curlAy = sign * perpY * curlForce / STONE.mass;
+            }
+
+            vx += (ax + curlAx) * dt;
+            vy += (ay + curlAy) * dt;
+            x += vx * dt;
+            y += vy * dt;
+
+            // Spin decay
+            if (Math.abs(w) > 0.01) {
+                w -= Math.sign(w) * Math.abs(w) * 0.015 * dt;
+            }
+
+            // Record every 5th point
+            if (i % 5 === 0) {
+                points.push({ x, y });
+            }
+
+            // Stop if past back line
+            if (y > POSITIONS.farBackLine + 2) break;
+        }
+
+        return points;
+    }
+
     return {
         SHEET,
         HOUSE,
@@ -384,5 +451,6 @@ const CurlingPhysics = (() => {
         weightToSpeed,
         weightLabel,
         rotationsToAngularVelocity,
+        simulateTrajectory,
     };
 })();

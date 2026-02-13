@@ -871,6 +871,19 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        case 'chat_message': {
+            const allowedMessages = ['Good shot!', 'Nice!', 'Good game!', 'Good luck!', 'Thanks!'];
+            if (!allowedMessages.includes(data.text)) break;
+            const code = playerRooms.get(ws);
+            if (!code) break;
+            const room = rooms.get(code);
+            if (!room) break;
+            const opponent = getOpponent(room, ws);
+            const session = playerSessions.get(ws);
+            send(opponent, { type: 'chat_message', text: data.text, from: session ? session.username : 'Opponent' });
+            break;
+        }
+
         case 'turn_complete': {
             // Turn switching now happens atomically when the throw is relayed.
             // This message is kept for backward compatibility but is a no-op.
