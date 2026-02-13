@@ -2773,8 +2773,8 @@ function drawStagedStones() {
             renderFriendsList(friendsList);
         });
 
-        CurlingNetwork.onFriendPresence(({ friendId, status }) => {
-            const friend = friendsList.find(f => f.userId === friendId);
+        CurlingNetwork.onFriendPresence(({ userId, status }) => {
+            const friend = friendsList.find(f => f.userId === userId);
             if (friend) {
                 friend.status = status;
                 renderFriendsList(friendsList);
