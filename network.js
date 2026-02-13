@@ -115,6 +115,7 @@ const CurlingNetwork = (() => {
 
             case 'game_start':
                 myTeam = data.yourTeam;
+                if (data.roomCode) roomCode = data.roomCode;
                 reconnectAttempts = 0;
                 if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6 });
                 break;

@@ -182,12 +182,14 @@ async function startGame(room) {
         yourTeam: 'red',
         opponent: yellowInfo,
         totalEnds: room.totalEnds || 6,
+        roomCode: room.code,
     });
     send(room.players[1], {
         type: 'game_start',
         yourTeam: 'yellow',
         opponent: redInfo,
         totalEnds: room.totalEnds || 6,
+        roomCode: room.code,
     });
 
     // Broadcast in_game presence to friends
@@ -216,7 +218,10 @@ function getOpponent(room, ws) {
 
 async function getPlayerInfo(ws) {
     const session = playerSessions.get(ws);
-    if (!session || !session.userId) return null;
+    if (!session || !session.userId) {
+        console.log('[getPlayerInfo] No session for ws — playerSessions has', playerSessions.size, 'entries');
+        return null;
+    }
     try {
         const profile = await auth.getProfile(session.userId);
         return {
@@ -761,7 +766,7 @@ async function handleMessage(ws, message) {
                 send(ws, { type: result.error, code });
             } else {
                 send(ws, { type: 'room_joined', code });
-                startGame(result.room);
+                await startGame(result.room);
             }
             break;
         }
@@ -1044,9 +1049,15 @@ async function handleMessage(ws, message) {
 wss.on('connection', (ws) => {
     ws.isAlive = true;
 
+    ws.on('pong', () => {
+        ws.isAlive = true;
+    });
+
     ws.on('message', (message) => {
         ws.isAlive = true;
-        handleMessage(ws, message.toString());
+        handleMessage(ws, message.toString()).catch(err => {
+            console.error('[MESSAGE ERROR]', err.message);
+        });
     });
 
     ws.on('close', () => {
@@ -1064,10 +1075,13 @@ wss.on('connection', (ws) => {
 const heartbeatInterval = setInterval(() => {
     wss.clients.forEach((ws) => {
         if (!ws.isAlive) {
+            console.log('[HEARTBEAT] Terminating dead connection');
             cleanupPlayer(ws);
             return ws.terminate();
         }
         ws.isAlive = false;
+        // Send WebSocket-level ping (client auto-replies with pong)
+        try { ws.ping(); } catch (_) {}
     });
 }, 60000); // 60 seconds — tolerant of backgrounded mobile tabs
 
