@@ -2156,7 +2156,7 @@ function drawStagedStones() {
     }
 
     function showLobbyPanel(panelId) {
-        const panels = ['lobby-menu', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel'];
+        const panels = ['lobby-menu', 'lobby-ends-panel', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel'];
         panels.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = id === panelId ? 'flex' : 'none';

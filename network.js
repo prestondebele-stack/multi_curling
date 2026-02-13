@@ -69,7 +69,7 @@ const CurlingNetwork = (() => {
         stopHeartbeat();
         heartbeatTimer = setInterval(() => {
             send({ type: 'ping' });
-        }, 5000);
+        }, 15000); // every 15s — well within server's 120s tolerance
     }
 
     function stopHeartbeat() {
@@ -317,36 +317,23 @@ const CurlingNetwork = (() => {
 
     // --- Tab visibility handling ---
     // When the tab is backgrounded (e.g., switching to text messenger),
-    // browsers throttle/suspend timers. We stop heartbeat when hidden
-    // and immediately reconnect when the tab becomes visible again.
+    // browsers throttle/suspend timers. We keep heartbeat running
+    // (browser will throttle it naturally) and aggressively recover
+    // when the tab becomes visible again.
     document.addEventListener('visibilitychange', () => {
-        if (document.hidden) {
-            // Tab hidden — stop heartbeat (timers get throttled anyway)
-            stopHeartbeat();
-        } else {
-            // Tab visible again — check connection and resume
+        if (!document.hidden) {
+            // Tab visible again — immediately check and recover connection
             if (ws && ws.readyState === WebSocket.OPEN) {
                 // Connection still alive — send immediate ping and restart heartbeat
                 send({ type: 'ping' });
                 startHeartbeat();
             } else if (ws && ws.readyState === WebSocket.CONNECTING) {
-                // Connection in progress, just restart heartbeat
-                startHeartbeat();
+                // Connection in progress, just wait
             } else if (roomCode && !intentionalClose) {
-                // Connection was lost while tab was hidden — reconnect
-                if (callbacks.onDisconnect) callbacks.onDisconnect();
+                // Connection was lost while tab was hidden — reconnect immediately
+                reconnectAttempts = 0; // reset so we try aggressively
                 attemptReconnect();
             }
-        }
-    });
-
-    // Distinguish actual page close from tab switch
-    window.addEventListener('beforeunload', () => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            // Only send leave if actually closing the page
-            // (beforeunload fires on close/refresh, not on tab switch)
-            intentionalClose = true;
-            send({ type: 'leave' });
         }
     });
 

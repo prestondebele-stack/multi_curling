@@ -1070,20 +1070,27 @@ wss.on('connection', (ws) => {
 });
 
 // --------------------------------------------------------
-// HEARTBEAT - detect dead connections (60s tolerance for backgrounded tabs)
+// HEARTBEAT - detect dead connections
+// Uses missedPings counter: connections survive 2 missed pings (up to 4 min)
+// to tolerate mobile tab-switching (sending a text, checking another app)
 // --------------------------------------------------------
 const heartbeatInterval = setInterval(() => {
     wss.clients.forEach((ws) => {
         if (!ws.isAlive) {
-            console.log('[HEARTBEAT] Terminating dead connection');
-            cleanupPlayer(ws);
-            return ws.terminate();
+            ws._missedPings = (ws._missedPings || 0) + 1;
+            if (ws._missedPings >= 2) {
+                console.log('[HEARTBEAT] Terminating dead connection (missed 2 pings)');
+                cleanupPlayer(ws);
+                return ws.terminate();
+            }
+        } else {
+            ws._missedPings = 0;
         }
         ws.isAlive = false;
         // Send WebSocket-level ping (client auto-replies with pong)
         try { ws.ping(); } catch (_) {}
     });
-}, 60000); // 60 seconds — tolerant of backgrounded mobile tabs
+}, 120000); // 120 seconds per cycle — 2 missed = 4 min tolerance
 
 // --------------------------------------------------------
 // STALE ROOM CLEANUP
