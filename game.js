@@ -1272,7 +1272,7 @@
         if (showTrajectory) {
             // Curved trajectory preview for easy mode
             const weightPct = parseFloat(document.getElementById('weight-slider').value);
-            const spinDir = parseInt(document.getElementById('spin-direction').value);
+            const spinDir = document.getElementById('spin-cw').classList.contains('active') ? 1 : -1;
             const spinAmount = parseFloat(document.getElementById('spin-amount-slider').value);
 
             if (_trajCache.aim !== aimDeg || _trajCache.weight !== weightPct ||
