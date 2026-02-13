@@ -880,10 +880,15 @@
         const logoMidY = (logoTopY + logoBottomY) / 2;
         const logoHeight = logoBottomY - logoTopY;
 
-        // Ring dimensions in canvas pixels
+        // Ring dimensions — constrain to fit within the ice sheet width
+        const sheetWidthPx = toCanvasLen(CurlingPhysics.SHEET.width * 0.80);
         const totalH = toCanvasLen(logoHeight);
-        // Rings aspect ratio is roughly 5:3 (width:height)
-        const ringRadius = totalH * 0.28;
+        // Olympic rings total width ≈ 6.44 * ringRadius (with gaps)
+        // Solve: 6.44 * r = sheetWidthPx → r = sheetWidthPx / 6.44
+        const radiusFromWidth = sheetWidthPx / 6.44;
+        // Also limit by available height (rings span ~2.9 * radius vertically)
+        const radiusFromHeight = totalH / 2.9;
+        const ringRadius = Math.min(radiusFromWidth, radiusFromHeight);
         const strokeW = ringRadius * 0.18;
         const gap = ringRadius * 0.22; // horizontal gap between ring centers in same row
 
