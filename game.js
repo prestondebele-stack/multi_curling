@@ -2184,8 +2184,17 @@ function drawStagedStones() {
     // MODE & DIFFICULTY BUTTONS
     // --------------------------------------------------------
     function clearOnlineMode(reason) {
-        console.log('[CLEAR_ONLINE] clearOnlineMode called, reason:', reason || 'unknown', 'onlineMode:', gameState.onlineMode, 'phase:', gameState.phase);
-        console.trace('[CLEAR_ONLINE] stack trace');
+        const msg = '[CLEAR_ONLINE] reason=' + (reason || 'unknown') + ' online=' + gameState.onlineMode + ' phase=' + gameState.phase;
+        console.log(msg);
+        console.trace(msg);
+        // Show on screen so we can see on mobile
+        try {
+            const toast = document.createElement('div');
+            toast.textContent = msg;
+            toast.style.cssText = 'position:fixed;top:10px;left:10px;right:10px;background:red;color:white;padding:12px;z-index:99999;font-size:14px;border-radius:8px;word-break:break-all;';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 15000);
+        } catch(_) {}
         if (gameState.onlineMode) {
             CurlingNetwork.sendLeave();
             CurlingNetwork.disconnect();
