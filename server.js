@@ -1033,10 +1033,11 @@ async function handleMessage(ws, message) {
             if (data.snapshot) room.gameSnapshot = data.snapshot;
 
             // Keep server's currentTeam in sync with the thrower's authoritative state.
-            // This prevents mismatches where the server rejects a valid throw.
+            const prevTeam = room.state.currentTeam;
             if (data.currentTeam) {
                 room.state.currentTeam = data.currentTeam;
             }
+            console.log(`[THROW_SETTLED] currentTeam: ${prevTeam} -> ${room.state.currentTeam} redThrown=${data.redThrown} yellowThrown=${data.yellowThrown} (room ${code})`);
 
             // Relay final stone positions to the opponent
             const opponent = getOpponent(room, ws);

@@ -449,13 +449,12 @@
         const spinAmount = parseFloat(document.getElementById('spin-amount-slider').value);
         const spinDir = document.getElementById('spin-cw').classList.contains('active') ? 1 : -1;
 
+        console.log('[DELIVER] Throwing! currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
+
         // Hide replay button when throwing
         hideReplayButton();
 
         // If online mode, send throw to server (which relays to opponent).
-        // Do NOT send game_state_sync here — the pre-throw snapshot has stale
-        // currentTeam that can revert the server's turn switch. The authoritative
-        // post-throw sync is sent by throw_settled when the stone settles.
         if (gameState.onlineMode) {
             CurlingNetwork.sendThrow({ aim: aimDeg, weight: weightPct, spinDir, spinAmount });
         }
@@ -728,12 +727,14 @@
         gameState._latestStonePositions = null;
         gameState._lastPositionSendTime = 0;
 
+        const prevTeam = gameState.currentTeam;
         // Switch teams (alternating throws)
         if (gameState.currentTeam === TEAMS.RED) {
             gameState.currentTeam = TEAMS.YELLOW;
         } else {
             gameState.currentTeam = TEAMS.RED;
         }
+        console.log('[NEXT-TURN] Switched ' + prevTeam + ' -> ' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn() + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
 
         // Check if all 16 stones have been thrown
         if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
@@ -791,7 +792,7 @@
                 disableControlsForBot();
                 document.getElementById('throw-btn').disabled = true;
                 // I just threw — send authoritative settled state to opponent.
-                // This corrects any physics desync from missed sweep messages.
+                console.log('[NEXT-TURN] Sending throw_settled: currentTeam=' + gameState.currentTeam + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
                 CurlingNetwork.sendThrowSettled({
                     stones: settledStones,
                     currentTeam: gameState.currentTeam,
@@ -2137,6 +2138,7 @@ function drawStagedStones() {
     // EVENT HANDLERS
     // --------------------------------------------------------
     document.getElementById('throw-btn').addEventListener('click', () => {
+        console.log('[THROW-BTN] Clicked! phase=' + gameState.phase + ' currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isOnlineOpponentTurn=' + isOnlineOpponentTurn() + ' remoteDelivery=' + gameState._remoteDelivery);
         if (gameState.phase === 'aiming') {
             if (isOnlineOpponentTurn()) return;
             deliverStone();
