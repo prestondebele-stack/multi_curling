@@ -739,6 +739,38 @@
         }
         console.log('[NEXT-TURN] Switched ' + prevTeam + ' -> ' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn() + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
 
+        // In online mode, ALWAYS send throw_settled before doing anything else.
+        // This ensures the opponent gets the authoritative stone positions for
+        // scoring, end-of-end transitions, etc. (Without this, the opponent
+        // would be stuck in _remoteDelivery forever if we enter scoring.)
+        if (gameState.onlineMode && !isMyTurn()) {
+            const settledStones = gameState.stones.filter(s => s.active).map(s => ({
+                team: s.team, x: s.x, y: s.y,
+            }));
+            const syncPayload = {
+                currentTeam: gameState.currentTeam,
+                redScore: gameState.redScore,
+                yellowScore: gameState.yellowScore,
+                currentEnd: gameState.currentEnd,
+                redThrown: gameState.redThrown,
+                yellowThrown: gameState.yellowThrown,
+                hammer: gameState.hammer,
+                endScores: gameState.endScores,
+                stones: settledStones,
+            };
+            console.log('[NEXT-TURN] Sending throw_settled: currentTeam=' + gameState.currentTeam + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
+            CurlingNetwork.sendThrowSettled({
+                stones: settledStones,
+                currentTeam: gameState.currentTeam,
+                redThrown: gameState.redThrown,
+                yellowThrown: gameState.yellowThrown,
+                redScore: gameState.redScore,
+                yellowScore: gameState.yellowScore,
+                currentEnd: gameState.currentEnd,
+                snapshot: syncPayload,
+            });
+        }
+
         // Check if all 16 stones have been thrown
         if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
             gameState.phase = 'scoring';
@@ -761,24 +793,6 @@
         document.getElementById('aim-value').textContent = '0.0°';
 
         if (gameState.onlineMode) {
-            // Server switches turns atomically when relaying the throw,
-            // so no turn_complete message needed here.
-            // Build the authoritative stone state for syncing
-            const settledStones = gameState.stones.filter(s => s.active).map(s => ({
-                team: s.team, x: s.x, y: s.y,
-            }));
-            const syncPayload = {
-                currentTeam: gameState.currentTeam,
-                redScore: gameState.redScore,
-                yellowScore: gameState.yellowScore,
-                currentEnd: gameState.currentEnd,
-                redThrown: gameState.redThrown,
-                yellowThrown: gameState.yellowThrown,
-                hammer: gameState.hammer,
-                endScores: gameState.endScores,
-                stones: settledStones,
-            };
-
             if (isMyTurn()) {
                 enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
@@ -792,18 +806,6 @@
             } else {
                 disableControlsForBot();
                 document.getElementById('throw-btn').disabled = true;
-                // I just threw — send authoritative settled state to opponent.
-                console.log('[NEXT-TURN] Sending throw_settled: currentTeam=' + gameState.currentTeam + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
-                CurlingNetwork.sendThrowSettled({
-                    stones: settledStones,
-                    currentTeam: gameState.currentTeam,
-                    redThrown: gameState.redThrown,
-                    yellowThrown: gameState.yellowThrown,
-                    redScore: gameState.redScore,
-                    yellowScore: gameState.yellowScore,
-                    currentEnd: gameState.currentEnd,
-                    snapshot: syncPayload,
-                });
             }
         } else if (isBotTurn()) {
             triggerBotTurn();
@@ -3019,7 +3021,6 @@ function drawStagedStones() {
                     gameState._lastPositionSendTime = 0;
                     applyAuthoritativeState(data);
 
-                    gameState.phase = 'aiming';
                     gameState.isSweeping = false;
                     gameState.deliveredStone = null;
                     document.getElementById('sweep-toggle-btn').style.display = 'none';
@@ -3027,10 +3028,21 @@ function drawStagedStones() {
                     document.getElementById('aim-slider').value = 0;
                     document.getElementById('aim-value').textContent = '0.0°';
                     VIEW.followStone = false;
-                    updateUI();
 
                     console.log('[AUTH] Remote delivery settled: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn() +
                         ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
+
+                    // Check if this was the last stone of the end (all 16 thrown).
+                    // The thrower already scored on their side; we must do the same.
+                    if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
+                        console.log('[AUTH] End complete — entering scoring phase');
+                        gameState.phase = 'scoring';
+                        setTimeout(() => endEnd(), 1500);
+                        return;
+                    }
+
+                    gameState.phase = 'aiming';
+                    updateUI();
 
                     setupTurnControls();
 
@@ -3049,6 +3061,13 @@ function drawStagedStones() {
                 if (gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
                     applyAuthoritativeState(data);
                     console.log('[AUTH] Non-remote apply: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn());
+                    // Check if end is complete (all 16 stones thrown)
+                    if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
+                        console.log('[AUTH] Non-remote: end complete — entering scoring');
+                        gameState.phase = 'scoring';
+                        setTimeout(() => endEnd(), 1500);
+                        return;
+                    }
                     setupTurnControls();
                 } else if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
                     // My local simulation hasn't finished yet — store and apply when it does
