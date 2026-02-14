@@ -449,23 +449,12 @@
         // Hide replay button when throwing
         hideReplayButton();
 
-        // If online mode, send throw and a fresh game state snapshot
+        // If online mode, send throw to server (which relays to opponent).
+        // Do NOT send game_state_sync here — the pre-throw snapshot has stale
+        // currentTeam that can revert the server's turn switch. The authoritative
+        // post-throw sync is sent by throw_settled when the stone settles.
         if (gameState.onlineMode) {
             CurlingNetwork.sendThrow({ aim: aimDeg, weight: weightPct, spinDir, spinAmount });
-            // Sync state BEFORE the throw settles so server always has fresh data
-            CurlingNetwork.sendGameStateSync({
-                currentTeam: gameState.currentTeam,
-                redScore: gameState.redScore,
-                yellowScore: gameState.yellowScore,
-                currentEnd: gameState.currentEnd,
-                redThrown: gameState.redThrown,
-                yellowThrown: gameState.yellowThrown,
-                hammer: gameState.hammer,
-                endScores: gameState.endScores,
-                stones: gameState.stones.filter(s => s.active).map(s => ({
-                    team: s.team, x: s.x, y: s.y,
-                })),
-            });
         }
 
         deliverStoneWithParams(aimDeg, weightPct, spinDir, spinAmount);

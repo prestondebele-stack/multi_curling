@@ -993,12 +993,12 @@ async function handleMessage(ws, message) {
             if (!code) return;
             const room = rooms.get(code);
             if (!room) return;
-            // Store the latest game state snapshot
+            // Store the latest game state snapshot for reconnection.
+            // IMPORTANT: Do NOT update room.state.currentTeam here!
+            // game_state_sync can be sent pre-throw (from deliverStone) with stale
+            // currentTeam that would revert the server's authoritative turn state.
+            // Only 'throw' and 'throw_settled' should update room.state.currentTeam.
             room.gameSnapshot = data.snapshot;
-            // Keep server's currentTeam in sync
-            if (data.snapshot && data.snapshot.currentTeam) {
-                room.state.currentTeam = data.snapshot.currentTeam;
-            }
             break;
         }
 
@@ -1188,10 +1188,19 @@ async function handleMessage(ws, message) {
             const team = emptySlot === 0 ? 'red' : 'yellow';
             const opponentWs = getOpponent(room, ws);
             const opponentInfo = opponentWs ? await getPlayerInfo(opponentWs) : null;
+
+            // Override snapshot's currentTeam with the server's authoritative value.
+            // The snapshot may have been stored pre-throw (from game_state_sync in
+            // deliverStone) with a stale currentTeam before the server switched turns.
+            let snapshot = room.gameSnapshot || null;
+            if (snapshot) {
+                snapshot = { ...snapshot, currentTeam: room.state.currentTeam };
+            }
+
             send(ws, {
                 type: 'reconnected',
                 yourTeam: team,
-                gameSnapshot: room.gameSnapshot || null,
+                gameSnapshot: snapshot,
                 opponent: opponentInfo,
             });
 
