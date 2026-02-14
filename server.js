@@ -1101,15 +1101,19 @@ wss.on('connection', (ws) => {
 
 // --------------------------------------------------------
 // HEARTBEAT - detect dead connections
-// Uses missedPings counter: connections survive 2 missed pings (up to 4 min)
-// to tolerate mobile tab-switching (sending a text, checking another app)
+// Uses missedPings counter: connections survive 3 missed pings (up to 6 min)
+// to tolerate mobile tab-switching (sending a text, checking another app).
+// Mobile browsers throttle/suspend WebSocket-level pong responses when
+// backgrounded, so we must be VERY generous here. False positives
+// (killing a live connection) are far worse than false negatives
+// (keeping a dead connection around a few extra minutes).
 // --------------------------------------------------------
 const heartbeatInterval = setInterval(() => {
     wss.clients.forEach((ws) => {
         if (!ws.isAlive) {
             ws._missedPings = (ws._missedPings || 0) + 1;
-            if (ws._missedPings >= 2) {
-                console.log('[HEARTBEAT] Terminating dead connection (missed 2 pings)');
+            if (ws._missedPings >= 3) {
+                console.log('[HEARTBEAT] Terminating dead connection (missed 3 pings)');
                 cleanupPlayer(ws);
                 return ws.terminate();
             }
@@ -1120,7 +1124,7 @@ const heartbeatInterval = setInterval(() => {
         // Send WebSocket-level ping (client auto-replies with pong)
         try { ws.ping(); } catch (_) {}
     });
-}, 120000); // 120 seconds per cycle — 2 missed = 4 min tolerance
+}, 120000); // 120 seconds per cycle — 3 missed = 6 min tolerance
 
 // --------------------------------------------------------
 // STALE ROOM CLEANUP

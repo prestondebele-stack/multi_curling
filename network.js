@@ -72,16 +72,20 @@ const CurlingNetwork = (() => {
         stopHeartbeat();
         lastPongTime = Date.now();
         heartbeatTimer = setInterval(() => {
-            // Check if we haven't heard back in a while (stale connection)
-            const sinceLastPong = Date.now() - lastPongTime;
-            if (sinceLastPong > 45000 && ws && ws.readyState === WebSocket.OPEN) {
-                // Connection is likely dead — force close to trigger reconnect
-                console.log('[HEARTBEAT] No response for 45s, forcing reconnect');
-                ws.close();
-                return;
+            // ONLY check for stale connections when the tab is VISIBLE.
+            // When the tab is backgrounded, browsers throttle setInterval to
+            // 60s+ which makes sinceLastPong spike even on healthy connections.
+            // The server has its own generous 4-minute heartbeat — let it decide.
+            if (!document.hidden) {
+                const sinceLastPong = Date.now() - lastPongTime;
+                if (sinceLastPong > 45000 && ws && ws.readyState === WebSocket.OPEN) {
+                    console.log('[HEARTBEAT] No response for 45s (tab visible), forcing reconnect');
+                    ws.close();
+                    return;
+                }
             }
             send({ type: 'ping' });
-        }, 10000); // every 10s — frequent enough to keep mobile connections alive
+        }, 10000);
     }
 
     function stopHeartbeat() {
@@ -284,18 +288,35 @@ const CurlingNetwork = (() => {
     }
 
     function attemptReconnect() {
+        // Cancel any pending reconnect timer to avoid stacking
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+
         if (reconnectAttempts >= 30 || !roomCode) {
             if (callbacks.onReconnectFailed) callbacks.onReconnectFailed();
             return;
         }
 
+        // If we already have a healthy connection, skip
+        if (ws && ws.readyState === WebSocket.OPEN) return;
+
         reconnectAttempts++;
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 16000);
+        // Shorter backoff: 500ms, 1s, 2s, 4s, 8s max (not 16s)
+        // Fast reconnects are critical on mobile tab-switch
+        const delay = Math.min(500 * Math.pow(2, reconnectAttempts - 1), 8000);
 
         reconnectTimer = setTimeout(() => {
             if (ws && ws.readyState === WebSocket.OPEN) return;
 
-            const newWs = new WebSocket(serverUrl);
+            let newWs;
+            try {
+                newWs = new WebSocket(serverUrl);
+            } catch (e) {
+                attemptReconnect();
+                return;
+            }
 
             newWs.onopen = () => {
                 ws = newWs;
@@ -313,11 +334,11 @@ const CurlingNetwork = (() => {
             };
 
             newWs.onerror = () => {
-                attemptReconnect();
+                // Don't double-trigger (onclose will also fire)
             };
 
             newWs.onclose = () => {
-                if (reconnectAttempts < 30) {
+                if (reconnectAttempts < 30 && roomCode) {
                     attemptReconnect();
                 }
             };
@@ -334,30 +355,26 @@ const CurlingNetwork = (() => {
 
     // --- Tab visibility handling ---
     // When the tab is backgrounded (e.g., switching to text messenger),
-    // browsers throttle/suspend timers. We aggressively recover
-    // when the tab becomes visible again.
+    // browsers throttle/suspend timers. We recover when visible again.
+    // KEY INSIGHT: Do NOT kill the connection just because lastPongTime is old.
+    // Browsers throttle timers but the WebSocket itself stays alive — the pong
+    // responses just didn't get processed because our interval was suspended.
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
-            // Tab visible again — immediately check and recover connection
+            // Tab visible again — probe the connection, don't kill it
             if (ws && ws.readyState === WebSocket.OPEN) {
-                // Check if connection went stale while hidden
-                const sinceLastPong = Date.now() - lastPongTime;
-                if (sinceLastPong > 60000) {
-                    // Connection is probably dead — force reconnect
-                    console.log('[VISIBILITY] Connection stale for', Math.round(sinceLastPong / 1000), 's — forcing reconnect');
-                    ws.close();
-                    reconnectAttempts = 0;
-                    attemptReconnect();
-                } else {
-                    // Connection still alive — send immediate ping and restart heartbeat
-                    send({ type: 'ping' });
-                    startHeartbeat();
-                }
+                // Connection object says OPEN — send a ping to verify.
+                // Reset lastPongTime so the heartbeat doesn't immediately kill
+                // it before the pong arrives (pong typically arrives in <100ms).
+                lastPongTime = Date.now();
+                send({ type: 'ping' });
+                startHeartbeat();
             } else if (ws && ws.readyState === WebSocket.CONNECTING) {
                 // Connection in progress, just wait
             } else if (roomCode && !intentionalClose) {
-                // Connection was lost while tab was hidden — reconnect immediately
-                reconnectAttempts = 0; // reset so we try aggressively
+                // Connection was actually lost while tab was hidden — reconnect
+                console.log('[VISIBILITY] Connection lost while hidden, reconnecting');
+                reconnectAttempts = 0;
                 attemptReconnect();
             }
         }
