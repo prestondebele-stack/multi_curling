@@ -313,24 +313,35 @@ function cleanupPlayer(ws) {
         return;
     }
 
-    // Notify opponent of disconnect
+    // DON'T notify the opponent immediately — give the player a 45-second
+    // grace period to reconnect (common when sending a text on mobile).
+    // If they reconnect within the grace window, the opponent never sees anything.
     const opponent = getOpponent(room, ws);
-    if (opponent && opponent.readyState === WebSocket.OPEN) {
-        send(opponent, { type: 'opponent_disconnected' });
-    }
 
-    // Start disconnect timer - keep room for 5 minutes
     room.players[playerIdx] = null;
-    room.disconnectTimers[playerIdx] = setTimeout(() => {
-        // Player didn't reconnect - destroy room
-        if (opponent && opponent.readyState === WebSocket.OPEN) {
-            send(opponent, { type: 'opponent_left' });
-            playerRooms.delete(opponent);
-        }
-        rooms.delete(code);
-    }, 300000); // 5 minutes
-
     playerRooms.delete(ws);
+
+    // Grace timer: after 45s, THEN tell opponent about the disconnect
+    room.disconnectTimers[playerIdx] = setTimeout(() => {
+        // Check if the player has already reconnected during grace period
+        if (room.players[playerIdx] !== null) return; // They're back!
+
+        if (opponent && opponent.readyState === WebSocket.OPEN) {
+            send(opponent, { type: 'opponent_disconnected' });
+        }
+
+        // Now start the 5-minute hard timer for room destruction
+        room.disconnectTimers[playerIdx] = setTimeout(() => {
+            // Check again — they may have reconnected after the notification
+            if (room.players[playerIdx] !== null) return;
+
+            if (opponent && opponent.readyState === WebSocket.OPEN) {
+                send(opponent, { type: 'opponent_left' });
+                playerRooms.delete(opponent);
+            }
+            rooms.delete(code);
+        }, 300000); // 5 minutes after grace period
+    }, 45000); // 45 second grace period
 }
 
 function destroyRoom(code) {

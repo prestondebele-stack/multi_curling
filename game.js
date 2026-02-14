@@ -448,9 +448,23 @@
         // Hide replay button when throwing
         hideReplayButton();
 
-        // If online mode, send to server
+        // If online mode, send throw and a fresh game state snapshot
         if (gameState.onlineMode) {
             CurlingNetwork.sendThrow({ aim: aimDeg, weight: weightPct, spinDir, spinAmount });
+            // Sync state BEFORE the throw settles so server always has fresh data
+            CurlingNetwork.sendGameStateSync({
+                currentTeam: gameState.currentTeam,
+                redScore: gameState.redScore,
+                yellowScore: gameState.yellowScore,
+                currentEnd: gameState.currentEnd,
+                redThrown: gameState.redThrown,
+                yellowThrown: gameState.yellowThrown,
+                hammer: gameState.hammer,
+                endScores: gameState.endScores,
+                stones: gameState.stones.filter(s => s.active).map(s => ({
+                    team: s.team, x: s.x, y: s.y,
+                })),
+            });
         }
 
         deliverStoneWithParams(aimDeg, weightPct, spinDir, spinAmount);
@@ -2797,7 +2811,7 @@ function drawStagedStones() {
             updateScoreboardNames();
 
             if (gameSnapshot) {
-                // Resync from server snapshot
+                // Server has a snapshot — use it to resync
                 gameState.redScore = gameSnapshot.redScore || 0;
                 gameState.yellowScore = gameSnapshot.yellowScore || 0;
                 gameState.currentEnd = gameSnapshot.currentEnd || 1;
@@ -2822,6 +2836,27 @@ function drawStagedStones() {
                 document.getElementById('red-total').textContent = gameState.redScore;
                 document.getElementById('yellow-total').textContent = gameState.yellowScore;
                 document.getElementById('current-end').textContent = gameState.currentEnd;
+                updateUI();
+            } else {
+                // No server snapshot — client state is the best we have.
+                // Keep everything as-is and push OUR state to the server
+                // so the opponent can resync if THEY disconnect later.
+                if (gameState.phase !== 'gameOver') {
+                    gameState.phase = 'aiming';
+                }
+                CurlingNetwork.sendGameStateSync({
+                    currentTeam: gameState.currentTeam,
+                    redScore: gameState.redScore,
+                    yellowScore: gameState.yellowScore,
+                    currentEnd: gameState.currentEnd,
+                    redThrown: gameState.redThrown,
+                    yellowThrown: gameState.yellowThrown,
+                    hammer: gameState.hammer,
+                    endScores: gameState.endScores,
+                    stones: gameState.stones.filter(s => s.active).map(s => ({
+                        team: s.team, x: s.x, y: s.y,
+                    })),
+                });
                 updateUI();
             }
 
