@@ -5,6 +5,65 @@
     -webkit-tap-highlight-color: transparent;
 }
 
+/* ================================================
+   BETA NOTICE
+   ================================================ */
+#beta-notice {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(21, 101, 192, 0.92);
+    color: #fff;
+    padding: 10px 38px 10px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.4;
+    max-width: 380px;
+    width: calc(100% - 24px);
+    z-index: 100000;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    animation: betaSlideIn 0.4s ease-out;
+}
+
+@keyframes betaSlideIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+#beta-notice strong {
+    color: #ffca28;
+}
+
+#beta-close {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.7);
+    font-size: 20px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 2px 6px;
+}
+
+#beta-close:hover {
+    color: #fff;
+}
+
+#beta-version {
+    display: block;
+    text-align: right;
+    font-size: 10px;
+    color: rgba(255,255,255,0.5);
+    margin-top: 4px;
+}
+
+#beta-notice.hidden {
+    display: none;
+}
+
 html,
 body {
     background: #1a1a2e;

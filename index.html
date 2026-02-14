@@ -20,6 +20,13 @@
 </head>
 
 <body>
+    <!-- Beta notice -->
+    <div id="beta-notice">
+        <button id="beta-close" aria-label="Close" onclick="document.getElementById('beta-notice').classList.add('hidden')">&times;</button>
+        <strong>Beta</strong> &mdash; This game is still in active development. You may encounter bugs or unexpected behavior. Thanks for your patience!
+        <span id="beta-version">v63</span>
+    </div>
+
     <div id="game-container">
         <canvas id="curling-canvas"></canvas>
 
