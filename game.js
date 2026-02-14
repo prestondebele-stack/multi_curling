@@ -683,6 +683,42 @@
         }
     }
 
+    // Apply authoritative stone positions from the thrower.
+    // This is the single correction point that keeps both clients in sync.
+    function applyAuthoritativeState(auth) {
+        if (auth.stones && auth.stones.length > 0) {
+            gameState.stones = auth.stones.map(s => {
+                const stone = CurlingPhysics.createStone(s.team, s.x, s.y, 0, 0, 0);
+                stone.active = true;
+                stone.moving = false;
+                return stone;
+            });
+        }
+        if (auth.currentTeam) gameState.currentTeam = auth.currentTeam;
+        if (auth.redThrown !== undefined) gameState.redThrown = auth.redThrown;
+        if (auth.yellowThrown !== undefined) gameState.yellowThrown = auth.yellowThrown;
+        if (auth.redScore !== undefined) gameState.redScore = auth.redScore;
+        if (auth.yellowScore !== undefined) gameState.yellowScore = auth.yellowScore;
+        if (auth.currentEnd !== undefined) gameState.currentEnd = auth.currentEnd;
+        updateUI();
+        console.log('[AUTH] Applied authoritative state: ' + auth.stones.length + ' stones');
+
+        // Re-send corrected positions to server so the snapshot is accurate
+        CurlingNetwork.sendGameStateSync({
+            currentTeam: gameState.currentTeam,
+            redScore: gameState.redScore,
+            yellowScore: gameState.yellowScore,
+            currentEnd: gameState.currentEnd,
+            redThrown: gameState.redThrown,
+            yellowThrown: gameState.yellowThrown,
+            hammer: gameState.hammer,
+            endScores: gameState.endScores,
+            stones: gameState.stones.filter(s => s.active).map(s => ({
+                team: s.team, x: s.x, y: s.y,
+            })),
+        });
+    }
+
     function nextTurn() {
         // Switch teams (alternating throws)
         if (gameState.currentTeam === TEAMS.RED) {
@@ -739,8 +775,10 @@
                 if (gameState.lastOpponentShot) {
                     showReplayButton();
                 }
-                // Send snapshot for server reconnection cache
-                CurlingNetwork.sendGameStateSync(syncPayload);
+                // DON'T send game_state_sync here — our local stone positions
+                // may be wrong (opponent threw, we simulated independently).
+                // The thrower's throw_settled already set the server snapshot,
+                // and applyAuthoritativeState() will re-sync corrected positions.
             } else {
                 disableControlsForBot();
                 document.getElementById('throw-btn').disabled = true;
@@ -1576,18 +1614,10 @@
 
                 // Apply pending authoritative state if the thrower already sent one
                 if (gameState._pendingAuthState) {
+                    console.log('[AUTH] Applying deferred auth state (visibility fast-forward)');
                     const auth = gameState._pendingAuthState;
                     gameState._pendingAuthState = null;
-                    if (auth.stones && auth.stones.length > 0) {
-                        gameState.stones = auth.stones.map(s => {
-                            const stone = CurlingPhysics.createStone(s.team, s.x, s.y, 0, 0, 0);
-                            stone.active = true;
-                            stone.moving = false;
-                            return stone;
-                        });
-                    }
-                    if (auth.redThrown !== undefined) gameState.redThrown = auth.redThrown;
-                    if (auth.yellowThrown !== undefined) gameState.yellowThrown = auth.yellowThrown;
+                    applyAuthoritativeState(auth);
                 }
 
                 // Show replay button since the player missed seeing the shot
@@ -1677,18 +1707,10 @@
                         // Apply pending authoritative state from the thrower
                         // (corrects any stone position desync from missed sweep msgs)
                         if (gameState._pendingAuthState) {
+                            console.log('[AUTH] Applying deferred auth state (gameLoop settle)');
                             const auth = gameState._pendingAuthState;
                             gameState._pendingAuthState = null;
-                            if (auth.stones && auth.stones.length > 0) {
-                                gameState.stones = auth.stones.map(s => {
-                                    const stone = CurlingPhysics.createStone(s.team, s.x, s.y, 0, 0, 0);
-                                    stone.active = true;
-                                    stone.moving = false;
-                                    return stone;
-                                });
-                            }
-                            if (auth.redThrown !== undefined) gameState.redThrown = auth.redThrown;
-                            if (auth.yellowThrown !== undefined) gameState.yellowThrown = auth.yellowThrown;
+                            applyAuthoritativeState(auth);
                         }
 
                         setTimeout(() => {
@@ -2803,29 +2825,16 @@ function drawStagedStones() {
         // This corrects any physics desync caused by missed sweep messages
         // (e.g., when the connection dropped and reconnected mid-throw).
         CurlingNetwork.onAuthoritativeState((data) => {
-            // Only apply if we're in aiming or waitingNextTurn phase
-            // (the throw has already settled on our side too, or we're waiting)
+            console.log('[AUTH] authoritative_state received, phase=' + gameState.phase + ' stones=' + (data.stones ? data.stones.length : 0));
+            // Apply authoritative state: either immediately or deferred
             if (gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
-                // Correct stone positions to match the thrower's simulation
-                if (data.stones && data.stones.length > 0) {
-                    gameState.stones = data.stones.map(s => {
-                        const stone = CurlingPhysics.createStone(s.team, s.x, s.y, 0, 0, 0);
-                        stone.active = true;
-                        stone.moving = false;
-                        return stone;
-                    });
-                }
-                // Sync throw counts and team (in case they drifted)
-                if (data.currentTeam) gameState.currentTeam = data.currentTeam;
-                if (data.redThrown !== undefined) gameState.redThrown = data.redThrown;
-                if (data.yellowThrown !== undefined) gameState.yellowThrown = data.yellowThrown;
-                if (data.redScore !== undefined) gameState.redScore = data.redScore;
-                if (data.yellowScore !== undefined) gameState.yellowScore = data.yellowScore;
-                if (data.currentEnd !== undefined) gameState.currentEnd = data.currentEnd;
-                updateUI();
+                applyAuthoritativeState(data);
             } else if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
                 // Our simulation hasn't finished yet — store and apply when it does
+                console.log('[AUTH] Deferring — local sim still running');
                 gameState._pendingAuthState = data;
+            } else {
+                console.log('[AUTH] Ignoring — unexpected phase: ' + gameState.phase);
             }
         });
 
