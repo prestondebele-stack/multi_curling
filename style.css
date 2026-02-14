@@ -99,6 +99,20 @@ body {
     gap: 12px;
 }
 
+#feedback-link {
+    display: inline-block;
+    margin-top: 18px;
+    color: #aaa;
+    font-size: 13px;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+#feedback-link:hover,
+#feedback-link:active {
+    color: #fff;
+}
+
 .welcome-btn {
     display: flex;
     align-items: center;
