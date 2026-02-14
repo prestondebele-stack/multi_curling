@@ -68,6 +68,12 @@ async function initSchema() {
             ALTER TABLE users ADD COLUMN IF NOT EXISTS security_answer_hash VARCHAR(72) DEFAULT '';
         `);
 
+        // Add first/last name columns (safe migration for existing DBs)
+        await pool.query(`
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(30) DEFAULT '';
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(30) DEFAULT '';
+        `);
+
         // Push notification subscriptions
         await pool.query(`
             CREATE TABLE IF NOT EXISTS push_subscriptions (

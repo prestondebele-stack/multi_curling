@@ -189,6 +189,10 @@
                         <a href="#" id="recovery-back-link">Back to Login</a>
                     </div>
                     <div id="auth-register-form" style="display:none;">
+                        <div id="reg-name-row">
+                            <input type="text" id="reg-first-name" placeholder="First Name" maxlength="30" autocomplete="given-name">
+                            <input type="text" id="reg-last-name" placeholder="Last Name" maxlength="30" autocomplete="family-name">
+                        </div>
                         <input type="text" id="reg-username" placeholder="Username" maxlength="20" autocomplete="off">
                         <input type="password" id="reg-password" placeholder="Password (4+ chars)" maxlength="32" autocomplete="new-password">
                         <select id="reg-country">
@@ -291,9 +295,10 @@
                     <h3>Friends</h3>
                     <div id="friend-add-section">
                         <div id="friend-add-row">
-                            <input type="text" id="friend-username-input" placeholder="Add by username" maxlength="20" autocomplete="off">
-                            <button id="friend-add-btn" class="lobby-btn">Add</button>
+                            <input type="text" id="friend-username-input" placeholder="Search by name or username" maxlength="30" autocomplete="off">
+                            <button id="friend-search-btn" class="lobby-btn">Search</button>
                         </div>
+                        <div id="friend-search-results" style="display:none;"></div>
                         <p id="friend-add-error" class="lobby-error" style="display:none;"></p>
                         <p id="friend-add-success" class="lobby-success" style="display:none;"></p>
                     </div>

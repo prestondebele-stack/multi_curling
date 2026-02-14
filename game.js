@@ -3153,16 +3153,56 @@ function drawStagedStones() {
         showLobbyPanel('lobby-menu');
     });
 
-    document.getElementById('friend-add-btn').addEventListener('click', () => {
-        const username = document.getElementById('friend-username-input').value.trim();
-        if (!username) return;
+    document.getElementById('friend-search-btn').addEventListener('click', () => {
+        const query = document.getElementById('friend-username-input').value.trim();
+        if (!query) return;
         document.getElementById('friend-add-error').style.display = 'none';
         document.getElementById('friend-add-success').style.display = 'none';
-        CurlingNetwork.sendFriendRequest(username);
+        CurlingNetwork.sendSearchUsers(query);
     });
 
     document.getElementById('friend-username-input').addEventListener('keydown', (e) => {
-        if (e.code === 'Enter') document.getElementById('friend-add-btn').click();
+        if (e.code === 'Enter') document.getElementById('friend-search-btn').click();
+    });
+
+    CurlingNetwork.onSearchResults(({ results }) => {
+        const container = document.getElementById('friend-search-results');
+        container.innerHTML = '';
+        if (results.length === 0) {
+            container.style.display = 'block';
+            container.innerHTML = '<p class="search-no-results">No users found</p>';
+            return;
+        }
+        container.style.display = 'block';
+        results.forEach(user => {
+            const item = document.createElement('div');
+            item.className = 'friend-search-item';
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'search-result-name';
+            nameSpan.textContent = user.username;
+            item.appendChild(nameSpan);
+            if (user.rank) {
+                const badge = document.createElement('span');
+                badge.className = 'rank-badge';
+                badge.textContent = user.rank.name;
+                badge.style.background = user.rank.color;
+                badge.style.color = user.rank.color === '#ffd54f' || user.rank.color === '#e0e0e0' ? '#333' : '#fff';
+                item.appendChild(badge);
+            }
+            const addBtn = document.createElement('button');
+            addBtn.className = 'lobby-btn search-add-btn';
+            addBtn.textContent = 'Add';
+            addBtn.addEventListener('click', () => {
+                document.getElementById('friend-add-error').style.display = 'none';
+                document.getElementById('friend-add-success').style.display = 'none';
+                CurlingNetwork.sendFriendRequest(user.username);
+                container.style.display = 'none';
+                container.innerHTML = '';
+                document.getElementById('friend-username-input').value = '';
+            });
+            item.appendChild(addBtn);
+            container.appendChild(item);
+        });
     });
 
     document.getElementById('invite-accept-btn').addEventListener('click', () => {
@@ -3217,6 +3257,8 @@ function drawStagedStones() {
     });
 
     document.getElementById('auth-register-btn').addEventListener('click', () => {
+        const firstName = document.getElementById('reg-first-name').value.trim();
+        const lastName = document.getElementById('reg-last-name').value.trim();
         const username = document.getElementById('reg-username').value.trim();
         const password = document.getElementById('reg-password').value;
         const country = document.getElementById('reg-country').value;
@@ -3233,7 +3275,7 @@ function drawStagedStones() {
             return;
         }
         document.getElementById('auth-error').style.display = 'none';
-        CurlingNetwork.sendRegister(username, password, country, securityQuestion, securityAnswer);
+        CurlingNetwork.sendRegister(username, password, country, securityQuestion, securityAnswer, firstName, lastName);
     });
 
     document.getElementById('reg-security-answer').addEventListener('keydown', (e) => {

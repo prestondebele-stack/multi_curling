@@ -50,7 +50,7 @@ function calculateDrawElo(rating1, rating2) {
     return { new1, new2 };
 }
 
-async function register(username, password, country, securityQuestion, securityAnswer) {
+async function register(username, password, country, securityQuestion, securityAnswer, firstName, lastName) {
     if (!db.isAvailable()) return { error: 'Accounts not available' };
 
     if (!username || username.length < 3 || username.length > 20) {
@@ -71,8 +71,8 @@ async function register(username, password, country, securityQuestion, securityA
 
     try {
         const result = await db.query(
-            'INSERT INTO users (username, password_hash, country, security_question, security_answer_hash) VALUES ($1, $2, $3, $4, $5) RETURNING id, username',
-            [username.toLowerCase(), hash, country || '', securityQuestion, answerHash]
+            'INSERT INTO users (username, password_hash, country, security_question, security_answer_hash, first_name, last_name) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, username',
+            [username.toLowerCase(), hash, country || '', securityQuestion, answerHash, (firstName || '').trim().substring(0, 30), (lastName || '').trim().substring(0, 30)]
         );
 
         const user = result.rows[0];
@@ -272,4 +272,29 @@ async function resetPassword(username, securityAnswer, newPassword) {
     }
 }
 
-module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword };
+async function searchUsers(query, excludeUserId) {
+    if (!db.isAvailable()) return [];
+    if (!query || query.trim().length === 0) return [];
+
+    const searchTerm = query.trim().substring(0, 30);
+    try {
+        const result = await db.query(
+            `SELECT id, username, rating FROM users
+             WHERE (username ILIKE '%' || $1 || '%' OR first_name ILIKE '%' || $1 || '%' OR last_name ILIKE '%' || $1 || '%')
+             AND id != $2
+             ORDER BY username
+             LIMIT 10`,
+            [searchTerm, excludeUserId]
+        );
+        return result.rows.map(row => ({
+            id: row.id,
+            username: row.username,
+            rank: getRank(row.rating),
+        }));
+    } catch (e) {
+        console.error('Search users error:', e.message);
+        return [];
+    }
+}
+
+module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers };

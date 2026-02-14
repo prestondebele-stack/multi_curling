@@ -56,6 +56,8 @@ const CurlingNetwork = (() => {
         onGameInviteError: null,
         onGameInviteDenied: null,
         onGameInviteCancelled: null,
+        // Search
+        onSearchResults: null,
         // Chat
         onChatMessage: null,
     };
@@ -274,6 +276,10 @@ const CurlingNetwork = (() => {
             case 'game_invite_cancelled':
                 if (callbacks.onGameInviteCancelled) callbacks.onGameInviteCancelled({ inviteId: data.inviteId });
                 break;
+            // Search
+            case 'search_results':
+                if (callbacks.onSearchResults) callbacks.onSearchResults({ results: data.results || [] });
+                break;
         }
     }
 
@@ -433,7 +439,7 @@ const CurlingNetwork = (() => {
 
         // Auth
         sendLogin(username, password) { send({ type: 'login', username, password }); },
-        sendRegister(username, password, country, securityQuestion, securityAnswer) { send({ type: 'register', username, password, country, securityQuestion, securityAnswer }); },
+        sendRegister(username, password, country, securityQuestion, securityAnswer, firstName, lastName) { send({ type: 'register', username, password, country, securityQuestion, securityAnswer, firstName, lastName }); },
         sendTokenLogin(token) { send({ type: 'token_login', token }); },
         sendGetProfile() { send({ type: 'get_profile' }); },
         sendGetSecurityQuestion(username) { send({ type: 'get_security_question', username }); },
@@ -441,6 +447,9 @@ const CurlingNetwork = (() => {
         sendGetVapidKey() { send({ type: 'get_vapid_key' }); },
         sendPushSubscribe(subscription) { send({ type: 'push_subscribe', subscription }); },
         sendPushUnsubscribe(endpoint) { send({ type: 'push_unsubscribe', endpoint }); },
+
+        // Search
+        sendSearchUsers(query) { send({ type: 'search_users', query }); },
 
         // Friends
         sendFriendRequest(username) { send({ type: 'send_friend_request', username }); },
@@ -496,6 +505,8 @@ const CurlingNetwork = (() => {
         onGameInviteError(cb) { callbacks.onGameInviteError = cb; },
         onGameInviteDenied(cb) { callbacks.onGameInviteDenied = cb; },
         onGameInviteCancelled(cb) { callbacks.onGameInviteCancelled = cb; },
+        // Search
+        onSearchResults(cb) { callbacks.onSearchResults = cb; },
         // Chat
         onChatMessage(cb) { callbacks.onChatMessage = cb; },
 

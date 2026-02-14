@@ -368,7 +368,7 @@ async function handleMessage(ws, message) {
 
         // ---- AUTH ----
         case 'register': {
-            const result = await auth.register(data.username, data.password, data.country, data.securityQuestion, data.securityAnswer);
+            const result = await auth.register(data.username, data.password, data.country, data.securityQuestion, data.securityAnswer, data.firstName, data.lastName);
             if (result.error) {
                 send(ws, { type: 'auth_error', error: result.error });
             } else {
@@ -476,6 +476,22 @@ async function handleMessage(ws, message) {
                 );
             } catch (e) {
                 console.error('Push unsubscribe error:', e.message);
+            }
+            break;
+        }
+
+        // ---- USER SEARCH ----
+        case 'search_users': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'search_results', results: [] }); break; }
+            const query = (data.query || '').trim();
+            if (!query || query.length < 1) { send(ws, { type: 'search_results', results: [] }); break; }
+            try {
+                const results = await auth.searchUsers(query, session.userId);
+                send(ws, { type: 'search_results', results });
+            } catch (e) {
+                console.error('Search users error:', e.message);
+                send(ws, { type: 'search_results', results: [] });
             }
             break;
         }
