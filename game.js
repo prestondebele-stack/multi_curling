@@ -1548,6 +1548,14 @@
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden && gameState.onlineMode) {
             if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                // If the WebSocket is NOT connected, a reconnect cycle is starting.
+                // Let onReconnected handle the fast-forward instead — it will apply
+                // the server snapshot and correctly determine whose turn it is.
+                if (!CurlingNetwork.isConnected()) {
+                    console.log('[VISIBILITY] Stone in-flight but WS disconnected — deferring to reconnect handler');
+                    return;
+                }
+
                 fastForwardPhysics();
                 // Check FGZ violation and advance turn
                 checkFGZViolation();
@@ -2816,7 +2824,7 @@ function drawStagedStones() {
         });
 
         CurlingNetwork.onReconnected(({ yourTeam, gameSnapshot, opponent }) => {
-            console.log('[GAME] onReconnected received, team:', yourTeam, 'snapshot:', !!gameSnapshot);
+            console.log('[GAME] onReconnected received, team:', yourTeam, 'snapshot:', !!gameSnapshot, 'phase:', gameState.phase);
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.opponentConnected = true;
@@ -2824,6 +2832,26 @@ function drawStagedStones() {
             hideDisconnectOverlay();
             showOnlineTeamBadge();
             updateScoreboardNames();
+
+            // If a stone is currently in-flight (opponent threw just before we
+            // disconnected), fast-forward the physics to completion FIRST so we
+            // don't leave a ghost stone mid-ice.
+            let hadActiveDelivery = false;
+            if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                console.log('[GAME] onReconnected — fast-forwarding in-flight stone');
+                hadActiveDelivery = true;
+                fastForwardPhysics();
+                checkFGZViolation();
+                gameState.isSweeping = false;
+                document.getElementById('sweep-toggle-btn').style.display = 'none';
+                gameState.deliveredStone = null;
+                VIEW.followStone = false;
+            }
+
+            // Cancel any pending replay state
+            if (gameState.isReplaying && gameState._replayRestore) {
+                gameState._replayRestore();
+            }
 
             if (gameSnapshot) {
                 // Server has a snapshot — use it to resync
@@ -2853,11 +2881,22 @@ function drawStagedStones() {
                 document.getElementById('current-end').textContent = gameState.currentEnd;
                 updateUI();
             } else {
-                // No server snapshot — client state is the best we have.
-                // Keep everything as-is and push OUR state to the server
-                // so the opponent can resync if THEY disconnect later.
+                // No server snapshot — use client state after fast-forward.
                 if (gameState.phase !== 'gameOver') {
-                    gameState.phase = 'aiming';
+                    // Ensure no ghost stones are left moving
+                    for (const s of gameState.stones) {
+                        if (s.active && s.moving) s.moving = false;
+                    }
+
+                    if (hadActiveDelivery) {
+                        // We just fast-forwarded a delivery. The throw count was
+                        // already incremented by deliverStoneWithParams but the
+                        // team wasn't switched yet. Call nextTurn to advance.
+                        gameState.phase = 'waitingNextTurn';
+                        nextTurn();
+                    } else {
+                        gameState.phase = 'aiming';
+                    }
                 }
                 CurlingNetwork.sendGameStateSync({
                     currentTeam: gameState.currentTeam,
@@ -2875,9 +2914,14 @@ function drawStagedStones() {
                 updateUI();
             }
 
+            // Reset delivery state
+            gameState.deliveredStone = null;
+            VIEW.followStone = false;
+
             if (isMyTurn()) {
                 enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
+                document.getElementById('throw-btn').style.display = '';
                 TabNotify.notify();
             } else {
                 disableControlsForBot();
