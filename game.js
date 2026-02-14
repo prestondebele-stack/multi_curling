@@ -2106,6 +2106,8 @@ function drawStagedStones() {
     });
 
     function resetGame() {
+        console.log('[RESET_GAME] resetGame called, onlineMode:', gameState.onlineMode, 'phase:', gameState.phase);
+        console.trace('[RESET_GAME] stack trace');
         const preserveBotMode = gameState.botMode;
         const preserveOnlineMode = gameState.onlineMode;
         const preserveMyTeam = gameState.myTeam;
@@ -2181,7 +2183,9 @@ function drawStagedStones() {
     // --------------------------------------------------------
     // MODE & DIFFICULTY BUTTONS
     // --------------------------------------------------------
-    function clearOnlineMode() {
+    function clearOnlineMode(reason) {
+        console.log('[CLEAR_ONLINE] clearOnlineMode called, reason:', reason || 'unknown', 'onlineMode:', gameState.onlineMode, 'phase:', gameState.phase);
+        console.trace('[CLEAR_ONLINE] stack trace');
         if (gameState.onlineMode) {
             CurlingNetwork.sendLeave();
             CurlingNetwork.disconnect();
@@ -2200,7 +2204,7 @@ function drawStagedStones() {
     }
 
     document.getElementById('mode-1p').addEventListener('click', () => {
-        clearOnlineMode();
+        clearOnlineMode('mode-1p-button');
         gameState.botMode = true;
         document.getElementById('mode-1p').classList.add('active');
         document.getElementById('mode-2p').classList.remove('active');
@@ -2215,7 +2219,7 @@ function drawStagedStones() {
     });
 
     document.getElementById('mode-2p').addEventListener('click', () => {
-        clearOnlineMode();
+        clearOnlineMode('mode-2p-button');
         gameState.botMode = false;
         document.getElementById('mode-2p').classList.add('active');
         document.getElementById('mode-1p').classList.remove('active');
@@ -2747,9 +2751,10 @@ function drawStagedStones() {
         });
 
         CurlingNetwork.onOpponentLeft(() => {
+            console.log('[GAME] onOpponentLeft received');
             gameState.opponentConnected = false;
             hideDisconnectOverlay();
-            clearOnlineMode();
+            clearOnlineMode('opponent-left');
             resetGame();
         });
 
@@ -2802,6 +2807,7 @@ function drawStagedStones() {
         });
 
         CurlingNetwork.onReconnected(({ yourTeam, gameSnapshot, opponent }) => {
+            console.log('[GAME] onReconnected received, team:', yourTeam, 'snapshot:', !!gameSnapshot);
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.opponentConnected = true;
@@ -2875,7 +2881,8 @@ function drawStagedStones() {
         });
 
         CurlingNetwork.onReconnectFailed(() => {
-            clearOnlineMode();
+            console.log('[GAME] onReconnectFailed received');
+            clearOnlineMode('reconnect-failed');
             resetGame();
             hideLobbyScreen();
             hideDisconnectOverlay();
@@ -3168,7 +3175,7 @@ function drawStagedStones() {
 
     document.getElementById('disconnect-leave').addEventListener('click', () => {
         hideDisconnectOverlay();
-        clearOnlineMode();
+        clearOnlineMode('disconnect-leave-button');
         resetGame();
     });
 
@@ -3181,7 +3188,7 @@ function drawStagedStones() {
 
     document.getElementById('leave-btn').addEventListener('click', () => {
         document.getElementById('game-over-screen').style.display = 'none';
-        clearOnlineMode();
+        clearOnlineMode('leave-button');
         resetGame();
     });
 
