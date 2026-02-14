@@ -12,6 +12,8 @@ const CurlingNetwork = (() => {
     let heartbeatTimer = null;
     let intentionalClose = false;
     let lastPongTime = Date.now();
+    let isReconnecting = false;       // Guard against parallel reconnect cycles
+    let hasActiveGame = false;        // True once game_start or reconnected received
 
     // Event callbacks
     const callbacks = {
@@ -75,7 +77,7 @@ const CurlingNetwork = (() => {
             // ONLY check for stale connections when the tab is VISIBLE.
             // When the tab is backgrounded, browsers throttle setInterval to
             // 60s+ which makes sinceLastPong spike even on healthy connections.
-            // The server has its own generous 4-minute heartbeat — let it decide.
+            // The server has its own generous 6-minute heartbeat — let it decide.
             if (!document.hidden) {
                 const sinceLastPong = Date.now() - lastPongTime;
                 if (sinceLastPong > 45000 && ws && ws.readyState === WebSocket.OPEN) {
@@ -134,6 +136,8 @@ const CurlingNetwork = (() => {
                 myTeam = data.yourTeam;
                 if (data.roomCode) roomCode = data.roomCode;
                 reconnectAttempts = 0;
+                isReconnecting = false;
+                hasActiveGame = true;
                 if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6 });
                 break;
 
@@ -173,6 +177,7 @@ const CurlingNetwork = (() => {
                 break;
 
             case 'opponent_left':
+                hasActiveGame = false;
                 if (callbacks.onOpponentLeft) callbacks.onOpponentLeft();
                 break;
 
@@ -182,12 +187,15 @@ const CurlingNetwork = (() => {
 
             case 'rematch_accepted':
                 myTeam = data.yourTeam;
+                hasActiveGame = true;
                 if (callbacks.onRematchAccepted) callbacks.onRematchAccepted({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6 });
                 break;
 
             case 'reconnected':
                 myTeam = data.yourTeam;
                 reconnectAttempts = 0;
+                isReconnecting = false;
+                hasActiveGame = true;
                 if (callbacks.onReconnected) callbacks.onReconnected({
                     yourTeam: data.yourTeam,
                     gameSnapshot: data.gameSnapshot || null,
@@ -196,7 +204,18 @@ const CurlingNetwork = (() => {
                 break;
 
             case 'reconnect_failed':
-                if (callbacks.onReconnectFailed) callbacks.onReconnectFailed();
+                // Server says the room is gone or both slots are full.
+                // If we have an active game, DON'T give up — retry.
+                // The server may still be processing the old socket's close.
+                if (hasActiveGame && reconnectAttempts < 30) {
+                    console.log('[RECONNECT] Server returned reconnect_failed but game active — retrying');
+                    isReconnecting = false;
+                    attemptReconnect();
+                } else {
+                    isReconnecting = false;
+                    hasActiveGame = false;
+                    if (callbacks.onReconnectFailed) callbacks.onReconnectFailed();
+                }
                 break;
 
             case 'room_expired':
@@ -294,35 +313,59 @@ const CurlingNetwork = (() => {
             reconnectTimer = null;
         }
 
-        if (reconnectAttempts >= 30 || !roomCode) {
+        // If we already have a healthy connection, no need to reconnect
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            isReconnecting = false;
+            return;
+        }
+
+        // If another reconnect cycle is already running, skip
+        if (isReconnecting) return;
+
+        if (!roomCode) {
             if (callbacks.onReconnectFailed) callbacks.onReconnectFailed();
             return;
         }
 
-        // If we already have a healthy connection, skip
-        if (ws && ws.readyState === WebSocket.OPEN) return;
+        // If we have an active game, NEVER give up — keep trying
+        const maxAttempts = hasActiveGame ? Infinity : 30;
+        if (reconnectAttempts >= maxAttempts) {
+            isReconnecting = false;
+            hasActiveGame = false;
+            if (callbacks.onReconnectFailed) callbacks.onReconnectFailed();
+            return;
+        }
 
+        isReconnecting = true;
         reconnectAttempts++;
-        // Shorter backoff: 500ms, 1s, 2s, 4s, 8s max (not 16s)
-        // Fast reconnects are critical on mobile tab-switch
+        // Backoff: 500ms, 1s, 2s, 4s, 8s max
         const delay = Math.min(500 * Math.pow(2, reconnectAttempts - 1), 8000);
 
         reconnectTimer = setTimeout(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) return;
+            // Double-check — a different code path may have reconnected us
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                isReconnecting = false;
+                return;
+            }
 
             let newWs;
             try {
                 newWs = new WebSocket(serverUrl);
             } catch (e) {
+                isReconnecting = false;
                 attemptReconnect();
                 return;
             }
+
+            // Track this specific WebSocket so we can ignore stale close events
+            const thisWs = newWs;
 
             newWs.onopen = () => {
                 ws = newWs;
                 ws.onmessage = handleMessage;
                 ws.onclose = handleClose;
                 ws.onerror = () => {};
+                isReconnecting = false;
                 startHeartbeat();
                 // Try to rejoin room
                 send({ type: 'reconnect', code: roomCode });
@@ -338,7 +381,13 @@ const CurlingNetwork = (() => {
             };
 
             newWs.onclose = () => {
-                if (reconnectAttempts < 30 && roomCode) {
+                // ONLY continue reconnecting if this WebSocket is still the current one.
+                // If a newer WebSocket already took over, ignore this stale close event.
+                if (thisWs !== ws && ws && ws.readyState === WebSocket.OPEN) {
+                    return; // A newer connection is already working — ignore
+                }
+                isReconnecting = false;
+                if (roomCode && !intentionalClose) {
                     attemptReconnect();
                 }
             };
@@ -347,6 +396,17 @@ const CurlingNetwork = (() => {
 
     function handleClose() {
         stopHeartbeat();
+
+        // CRITICAL: Only start reconnect if this close event is from the CURRENT ws.
+        // When we reconnect with a new WebSocket, the old one may fire its close
+        // event later. We must ignore stale close events from old sockets.
+        // We can't easily check identity here since ws may have been reassigned,
+        // but we CAN check if we already have a working connection.
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            // Current connection is fine — this close event is from an old socket
+            return;
+        }
+
         if (!intentionalClose && roomCode) {
             if (callbacks.onDisconnect) callbacks.onDisconnect();
             attemptReconnect();
@@ -375,6 +435,7 @@ const CurlingNetwork = (() => {
                 // Connection was actually lost while tab was hidden — reconnect
                 console.log('[VISIBILITY] Connection lost while hidden, reconnecting');
                 reconnectAttempts = 0;
+                isReconnecting = false; // Force allow new cycle
                 attemptReconnect();
             }
         }
@@ -410,6 +471,8 @@ const CurlingNetwork = (() => {
 
         disconnect() {
             intentionalClose = true;
+            isReconnecting = false;
+            hasActiveGame = false;
             stopHeartbeat();
             if (reconnectTimer) {
                 clearTimeout(reconnectTimer);
