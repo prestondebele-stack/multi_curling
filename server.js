@@ -968,6 +968,25 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        // Real-time stone position stream from thrower to opponent.
+        // The thrower is the single source of truth for physics.
+        case 'stone_positions': {
+            const code = playerRooms.get(ws);
+            if (!code) return;
+            const room = rooms.get(code);
+            if (!room) return;
+
+            const opponent = getOpponent(room, ws);
+            if (opponent && opponent.readyState === WebSocket.OPEN) {
+                send(opponent, {
+                    type: 'opponent_stone_positions',
+                    stones: data.stones,
+                    sweep: data.sweep,
+                });
+            }
+            break;
+        }
+
         case 'chat_message': {
             const allowedMessages = ['Good shot!', 'Nice!', 'Good game!', 'Good luck!', 'Thanks!'];
             if (!allowedMessages.includes(data.text)) break;

@@ -60,6 +60,8 @@ const CurlingNetwork = (() => {
         onGameInviteCancelled: null,
         // Search
         onSearchResults: null,
+        // Stone position stream (single-authority physics)
+        onOpponentStonePositions: null,
         // Authoritative state
         onAuthoritativeState: null,
         // Connection verified (pong received after tab refocus)
@@ -173,6 +175,10 @@ const CurlingNetwork = (() => {
 
             case 'opponent_sweep_stop':
                 if (callbacks.onOpponentSweepStop) callbacks.onOpponentSweepStop();
+                break;
+
+            case 'opponent_stone_positions':
+                if (callbacks.onOpponentStonePositions) callbacks.onOpponentStonePositions({ stones: data.stones, sweep: data.sweep });
                 break;
 
             case 'chat_message':
@@ -537,6 +543,8 @@ const CurlingNetwork = (() => {
         sendSweepChange(level) { send({ type: 'sweep_change', level }); },
         sendSweepStart() { send({ type: 'sweep_start' }); },
         sendSweepStop() { send({ type: 'sweep_stop' }); },
+        // Real-time stone positions during delivery (thrower → opponent)
+        sendStonePositions(data) { send({ type: 'stone_positions', stones: data.stones, sweep: data.sweep }); },
         sendTurnComplete() { send({ type: 'turn_complete' }); },
         sendRematch() { send({ type: 'rematch' }); },
         sendLeave() { send({ type: 'leave' }); },
@@ -584,6 +592,7 @@ const CurlingNetwork = (() => {
         onOpponentSweepChange(cb) { callbacks.onOpponentSweepChange = cb; },
         onOpponentSweepStart(cb) { callbacks.onOpponentSweepStart = cb; },
         onOpponentSweepStop(cb) { callbacks.onOpponentSweepStop = cb; },
+        onOpponentStonePositions(cb) { callbacks.onOpponentStonePositions = cb; },
         onOpponentDisconnected(cb) { callbacks.onOpponentDisconnected = cb; },
         onOpponentReconnected(cb) { callbacks.onOpponentReconnected = cb; },
         onOpponentLeft(cb) { callbacks.onOpponentLeft = cb; },
