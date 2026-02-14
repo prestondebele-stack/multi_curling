@@ -995,6 +995,10 @@ async function handleMessage(ws, message) {
             if (!room) return;
             // Store the latest game state snapshot
             room.gameSnapshot = data.snapshot;
+            // Keep server's currentTeam in sync
+            if (data.snapshot && data.snapshot.currentTeam) {
+                room.state.currentTeam = data.snapshot.currentTeam;
+            }
             break;
         }
 
@@ -1008,6 +1012,12 @@ async function handleMessage(ws, message) {
 
             // Store as latest snapshot too
             if (data.snapshot) room.gameSnapshot = data.snapshot;
+
+            // Keep server's currentTeam in sync with the thrower's authoritative state.
+            // This prevents mismatches where the server rejects a valid throw.
+            if (data.currentTeam) {
+                room.state.currentTeam = data.currentTeam;
+            }
 
             // Relay final stone positions to the opponent
             const opponent = getOpponent(room, ws);

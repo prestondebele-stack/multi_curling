@@ -1564,6 +1564,11 @@
     // so the game catches up (requestAnimationFrame is throttled/paused in background tabs)
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden && gameState.onlineMode) {
+            // Temporarily disable throw while we verify connection is alive.
+            // The pong response or onReconnected will re-enable it.
+            document.getElementById('throw-btn').disabled = true;
+            gameState._awaitingConnectionVerify = true;
+
             if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
                 // If the WebSocket is NOT connected, a reconnect cycle is starting.
                 // Let onReconnected handle the fast-forward instead — it will apply
@@ -2835,6 +2840,15 @@ function drawStagedStones() {
             }
         });
 
+        // Connection verified alive after tab refocus (pong received)
+        CurlingNetwork.onConnectionVerified(() => {
+            gameState._awaitingConnectionVerify = false;
+            // Re-enable throw if it's our turn and we're in aiming phase
+            if (gameState.phase === 'aiming' && isMyTurn()) {
+                document.getElementById('throw-btn').disabled = false;
+            }
+        });
+
         CurlingNetwork.onOpponentDisconnected(() => {
             gameState.opponentConnected = false;
             showDisconnectOverlay();
@@ -2907,6 +2921,7 @@ function drawStagedStones() {
 
         CurlingNetwork.onReconnected(({ yourTeam, gameSnapshot, opponent }) => {
             console.log('[GAME] onReconnected received, team:', yourTeam, 'snapshot:', !!gameSnapshot, 'phase:', gameState.phase);
+            gameState._awaitingConnectionVerify = false;
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.opponentConnected = true;

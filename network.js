@@ -62,6 +62,8 @@ const CurlingNetwork = (() => {
         onSearchResults: null,
         // Authoritative state
         onAuthoritativeState: null,
+        // Connection verified (pong received after tab refocus)
+        onConnectionVerified: null,
         // Chat
         onChatMessage: null,
     };
@@ -110,6 +112,13 @@ const CurlingNetwork = (() => {
         switch (data.type) {
             case 'pong':
                 lastPongTime = Date.now();
+                // Connection verified alive — cancel any pending zombie check
+                if (pongVerifyTimer) {
+                    clearTimeout(pongVerifyTimer);
+                    pongVerifyTimer = null;
+                    // Notify game that connection is confirmed alive after refocus
+                    if (callbacks.onConnectionVerified) callbacks.onConnectionVerified();
+                }
                 break;
 
             case 'room_created':
@@ -420,21 +429,34 @@ const CurlingNetwork = (() => {
     }
 
     // --- Tab visibility handling ---
-    // When the tab is backgrounded (e.g., switching to text messenger),
-    // browsers throttle/suspend timers. We recover when visible again.
-    // KEY INSIGHT: Do NOT kill the connection just because lastPongTime is old.
-    // Browsers throttle timers but the WebSocket itself stays alive — the pong
-    // responses just didn't get processed because our interval was suspended.
+    // When the tab is backgrounded, Android Chrome kills the TCP connection
+    // but the JS WebSocket.readyState may still report OPEN (stale state).
+    // We MUST verify the connection is truly alive by demanding a pong.
+    let pongVerifyTimer = null;
+
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
-            // Tab visible again — probe the connection, don't kill it
+            if (pongVerifyTimer) { clearTimeout(pongVerifyTimer); pongVerifyTimer = null; }
+
             if (ws && ws.readyState === WebSocket.OPEN) {
-                // Connection object says OPEN — send a ping to verify.
-                // Reset lastPongTime so the heartbeat doesn't immediately kill
-                // it before the pong arrives (pong typically arrives in <100ms).
+                // Connection CLAIMS to be open — verify with a fast pong check.
+                // If no pong in 3 seconds, the TCP pipe is dead. Force reconnect.
                 lastPongTime = Date.now();
                 send({ type: 'ping' });
                 startHeartbeat();
+
+                pongVerifyTimer = setTimeout(() => {
+                    pongVerifyTimer = null;
+                    const elapsed = Date.now() - lastPongTime;
+                    if (elapsed >= 2900 && ws && ws.readyState === WebSocket.OPEN && roomCode) {
+                        // No pong received — connection is zombie. Kill and reconnect.
+                        console.log('[VISIBILITY] No pong in 3s after refocus — forcing reconnect');
+                        ws.close();
+                        reconnectAttempts = 0;
+                        isReconnecting = false;
+                        attemptReconnect();
+                    }
+                }, 3000);
             } else if (ws && ws.readyState === WebSocket.CONNECTING) {
                 // Connection in progress, just wait
             } else if (roomCode && !intentionalClose) {
@@ -483,6 +505,10 @@ const CurlingNetwork = (() => {
             if (reconnectTimer) {
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;
+            }
+            if (pongVerifyTimer) {
+                clearTimeout(pongVerifyTimer);
+                pongVerifyTimer = null;
             }
             if (ws) {
                 ws.close();
@@ -597,6 +623,8 @@ const CurlingNetwork = (() => {
         onSearchResults(cb) { callbacks.onSearchResults = cb; },
         // Authoritative state
         onAuthoritativeState(cb) { callbacks.onAuthoritativeState = cb; },
+        // Connection verified
+        onConnectionVerified(cb) { callbacks.onConnectionVerified = cb; },
         // Chat
         onChatMessage(cb) { callbacks.onChatMessage = cb; },
 
