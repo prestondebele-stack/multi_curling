@@ -142,6 +142,7 @@ function createRoom(hostWs, totalEnds) {
     const room = {
         code,
         players: [hostWs, null], // index 0 = red (host), index 1 = yellow
+        sessions: [null, null],  // cached session refs for resilient player info lookup
         totalEnds: ends,
         state: {
             currentTeam: 'red',
@@ -173,9 +174,29 @@ async function startGame(room) {
     room.gameSnapshot = null;
     room.resultRecorded = false;
 
+    // Cache sessions in the room for resilient lookup
+    // (guards against race conditions where ws references change)
+    room.sessions[0] = playerSessions.get(room.players[0]) || room.sessions[0];
+    room.sessions[1] = playerSessions.get(room.players[1]) || room.sessions[1];
+
     // Fetch player info for opponent display
-    const redInfo = await getPlayerInfo(room.players[0]);
-    const yellowInfo = await getPlayerInfo(room.players[1]);
+    let redInfo = await getPlayerInfo(room.players[0]);
+    let yellowInfo = await getPlayerInfo(room.players[1]);
+
+    // If either info is null, the session may not be registered yet
+    // (async race with token_login). Wait a moment and retry once.
+    if (!redInfo || !yellowInfo) {
+        console.log('[startGame] Missing player info — red:', !!redInfo, 'yellow:', !!yellowInfo, '— retrying in 500ms');
+        await new Promise(r => setTimeout(r, 500));
+        // Re-cache sessions after the delay
+        room.sessions[0] = playerSessions.get(room.players[0]) || room.sessions[0];
+        room.sessions[1] = playerSessions.get(room.players[1]) || room.sessions[1];
+        if (!redInfo) redInfo = await getPlayerInfo(room.players[0]);
+        if (!yellowInfo) yellowInfo = await getPlayerInfo(room.players[1]);
+        if (!redInfo || !yellowInfo) {
+            console.log('[startGame] STILL missing after retry — red:', !!redInfo, 'yellow:', !!yellowInfo);
+        }
+    }
 
     send(room.players[0], {
         type: 'game_start',
@@ -217,7 +238,22 @@ function getOpponent(room, ws) {
 }
 
 async function getPlayerInfo(ws) {
-    const session = playerSessions.get(ws);
+    let session = playerSessions.get(ws);
+
+    // If no session on this ws, try to find it via the room's stored sessions
+    // (handles race conditions where ws reference changes during reconnect)
+    if (!session || !session.userId) {
+        const code = playerRooms.get(ws);
+        const room = code ? rooms.get(code) : null;
+        if (room && room.sessions) {
+            const idx = getPlayerIndex(room, ws);
+            if (idx !== -1 && room.sessions[idx]) {
+                session = room.sessions[idx];
+                console.log('[getPlayerInfo] Recovered session from room.sessions for slot', idx, session.username);
+            }
+        }
+    }
+
     if (!session || !session.userId) {
         console.log('[getPlayerInfo] No session for ws — playerSessions has', playerSessions.size, 'entries');
         return null;
@@ -415,6 +451,15 @@ async function handleMessage(ws, message) {
             } else {
                 playerSessions.set(ws, session);
                 onlineUsers.set(session.userId, ws);
+                // Update room's cached session if this player is in a room
+                const roomCode = playerRooms.get(ws);
+                if (roomCode) {
+                    const room = rooms.get(roomCode);
+                    if (room) {
+                        const idx = getPlayerIndex(room, ws);
+                        if (idx !== -1) room.sessions[idx] = session;
+                    }
+                }
                 broadcastPresenceToFriends(session.userId, 'online');
                 const profile = await auth.getProfile(session.userId);
                 const rank = profile ? profile.rank : auth.getRank(1200);
@@ -964,8 +1009,8 @@ async function handleMessage(ws, message) {
             if (room.resultRecorded) break;
             room.resultRecorded = true;
 
-            const redSession = room.players[0] ? playerSessions.get(room.players[0]) : null;
-            const yellowSession = room.players[1] ? playerSessions.get(room.players[1]) : null;
+            const redSession = (room.players[0] ? playerSessions.get(room.players[0]) : null) || room.sessions[0];
+            const yellowSession = (room.players[1] ? playerSessions.get(room.players[1]) : null) || room.sessions[1];
 
             // Only record if both players are logged in
             if (redSession && yellowSession) {
@@ -1008,6 +1053,9 @@ async function handleMessage(ws, message) {
                 room.state.phase = 'playing';
                 room.gameSnapshot = null;
                 room.resultRecorded = false;
+                // Re-cache sessions
+                room.sessions[0] = playerSessions.get(room.players[0]) || room.sessions[0];
+                room.sessions[1] = playerSessions.get(room.players[1]) || room.sessions[1];
                 const redInfo = await getPlayerInfo(room.players[0]);
                 const yellowInfo = await getPlayerInfo(room.players[1]);
                 send(room.players[0], { type: 'rematch_accepted', yourTeam: 'red', opponent: yellowInfo, totalEnds: room.totalEnds || 6 });
@@ -1092,8 +1140,13 @@ async function handleMessage(ws, message) {
             room.players[emptySlot] = ws;
             playerRooms.set(ws, code);
 
-            // Note: session for this ws may not be set yet (token_login comes right after)
-            // We send opponent info that IS available, and the token_login will restore our session
+            // Restore cached session to this ws if available
+            // (token_login may not have fired yet — it's sent after reconnect)
+            if (room.sessions[emptySlot] && !playerSessions.get(ws)) {
+                playerSessions.set(ws, room.sessions[emptySlot]);
+                onlineUsers.set(room.sessions[emptySlot].userId, ws);
+            }
+
             const team = emptySlot === 0 ? 'red' : 'yellow';
             const opponentWs = getOpponent(room, ws);
             const opponentInfo = opponentWs ? await getPlayerInfo(opponentWs) : null;
@@ -1104,8 +1157,11 @@ async function handleMessage(ws, message) {
                 opponent: opponentInfo,
             });
 
-            // Notify opponent and send updated info about reconnected player
+            // Notify opponent — wait briefly for token_login to register our session
             if (opponentWs && opponentWs.readyState === WebSocket.OPEN) {
+                // Small delay to let token_login set the session if it hasn't yet
+                await new Promise(r => setTimeout(r, 300));
+                room.sessions[emptySlot] = playerSessions.get(ws) || room.sessions[emptySlot];
                 const myInfo = await getPlayerInfo(ws);
                 send(opponentWs, { type: 'opponent_reconnected', opponent: myInfo });
             }
