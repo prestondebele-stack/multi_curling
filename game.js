@@ -380,9 +380,12 @@
         let violated = false;
         for (const snap of fgzSnapshots) {
             const stone = snap.stone;
-            // Was the protected stone removed from play or knocked out of the FGZ?
-            if (!stone.active || !isInFreeGuardZone(stone)) {
-                // Restore the stone to its pre-throw position
+            // FGZ rule: a protected guard stone can be HIT and moved — that's
+            // legal and the stone stays wherever it ends up (even into the house).
+            // The violation ONLY occurs if the guard is knocked completely OUT
+            // OF PLAY (deactivated / out of bounds). Moving it is fine.
+            if (!stone.active) {
+                // Stone was removed from play — restore it to pre-throw position
                 stone.active = true;
                 stone.x = snap.x;
                 stone.y = snap.y;
