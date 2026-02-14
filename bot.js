@@ -252,15 +252,7 @@ const CurlingBot = (() => {
             if (board.botScoring > 0 && board.botGuards.length < 2) {
                 return makeGuardOwnStone(board);
             }
-            // Opponent scoring a lot — still mostly draw, small chance of a tap
-            if (board.oppScoring >= 3 && board.isDesperateTrailing) {
-                return Math.random() < 0.4 ? makeTap(board) : makeDrawToButton(board);
-            }
-            if (board.oppScoring >= 2) {
-                // Draw to beat them most of the time, occasional tap
-                return Math.random() < 0.25 ? makeTap(board) : makeDrawToButton(board);
-            }
-            // Draw for more position
+            // Draw for more position — come-around or draw to house
             if (board.botGuards.length > 0) {
                 return makeDrawBehindGuard(board);
             }
@@ -271,10 +263,6 @@ const CurlingBot = (() => {
         if (board.botScoring >= 2) {
             return makeGuardOwnStone(board); // protect multi-point score
         }
-        if (board.oppScoring >= 3 && board.isDesperateTrailing) {
-            // Only time we consider takeout — desperate and trailing badly
-            return Math.random() < 0.5 ? makeTakeout(board) : makeDrawToButton(board);
-        }
         // Default: draw to the button to outscore them
         if (board.botGuards.length > 0 && board.botScoring === 0) {
             return makeDrawBehindGuard(board); // come-around behind our guard
@@ -282,69 +270,48 @@ const CurlingBot = (() => {
         return makeDrawToButton(board);
     }
 
-    // --- WITH HAMMER (offensive — corner guards, keep center open, draw last) ---
-    // Strategy: keep the center lane clear so we can draw to the button
-    // with our last stone. Use corner guards (not center guards) to build
-    // position on the sides. If opponent clogs the center, gently remove.
+    // --- WITH HAMMER (offensive — corner guards, draw around obstacles) ---
+    // Strategy: corner guards for position, draw around opponent guards
+    // into the house, save the button draw for the last stone.
+    // Almost never remove guards — just draw around them.
     function selectShotWithHammer(board) {
         const n = board.botStoneNum;
 
         // If well ahead, play to blank the end (keep hammer)
         const playBlank = board.scoreDiff >= 3 && n >= 6;
 
-        // Opponent center guards blocking our path to the button
-        const oppCenterGuards = board.centerGuards.filter(s => s.team === 'red');
-
-        // EARLY STONES (1-2): Corner guards and draws to the sides
+        // EARLY STONES (1-2): Corner guards and draws
         if (n <= 2) {
-            // If opponent put up a center guard, gently remove it to keep center open
-            if (oppCenterGuards.length > 0 && !board.fgzActive) {
-                return makeHitAndRoll(board); // remove guard, roll into the house
-            }
-            // Corner guard or draw to the side of the house
             if (Math.random() < 0.5) {
-                return makeCornerGuard(board); // build position off-center
+                return makeCornerGuard(board);
             }
-            return makeDrawToHouse(board); // draw to the side of the house
+            return makeDrawToHouse(board);
         }
 
-        // MID STONES (3-4): Draws to house, corner guards, keep center clear
+        // MID STONES (3-4): Draw around guards into the house
         if (n <= 4) {
-            // Remove opponent center guards — we need that lane open
-            if (oppCenterGuards.length > 0 && !board.fgzActive) {
-                return makeHitAndRoll(board);
-            }
             // Corner guard to protect our scoring stones
             if (board.botScoring > 0 && board.botGuards.length < 1) {
                 return makeCornerGuard(board);
             }
-            // Draw for more position in the house
+            // Draw into the house — curl around any guards in the way
             return makeDrawToHouse(board);
         }
 
-        // LATE STONES (5-6): Draw for scoring position, guard what we have
+        // LATE STONES (5-6): Draw for scoring, guard own stones
         if (n <= 6) {
-            // Remove opponent center guards — still need center open for last stone
-            if (oppCenterGuards.length > 0 && !board.fgzActive) {
-                return makeHitAndRoll(board);
-            }
             // Guard our scoring stones off to the side
             if (board.botScoring > 0 && board.botGuards.length < 1) {
                 return makeGuardOwnStone(board);
             }
-            // Opponent scoring a lot — draw to beat them, small chance of tap
-            if (board.oppScoring >= 3) {
-                return Math.random() < 0.3 ? makeTap(board) : makeDrawToButton(board);
-            }
-            // Draw closer to the button or to the house
+            // Draw to the house or toward the button
             return Math.random() < 0.4 ? makeDrawToButton(board) : makeDrawToHouse(board);
         }
 
-        // FINAL STONES (7-8): Precision draw to the button — this is why we have hammer
+        // FINAL STONES (7-8): Precision draw to the button
         if (playBlank) {
             return makeBlank(board);
         }
-        // Last stone — draw to the button to maximize score
         return makeDrawToButton(board);
     }
 
@@ -562,8 +529,8 @@ const CurlingBot = (() => {
     function makeHitAndRoll(board) {
         // FGZ safety: during free guard zone, only target stones in the house
         // (guards between hog line and house are protected)
-        // Hit opponent stone with control weight so our stone
-        // rolls to stay in the house after contact.
+        // Hit opponent stone with just enough weight to move it,
+        // our stone rolls to stay in the house after contact.
         // Avoids targets with friendly stones behind them.
         const oppInHouse = board.inHouseSorted.filter(s => s.team === 'red');
         if (oppInHouse.length > 0) {
@@ -580,9 +547,9 @@ const CurlingBot = (() => {
             return {
                 targetX: target.x + offset,
                 targetY: target.y,
-                weight: rand(WEIGHT.control.min, WEIGHT.control.max),
+                weight: rand(WEIGHT.draw.max, WEIGHT.draw.max + 8), // just above draw weight (42-50)
                 spin: target.x > 0 ? -1 : 1,
-                spinAmount: rand(2.0, 3.0),
+                spinAmount: rand(2.5, 3.5),
                 description: 'Hit & Roll',
             };
         }
@@ -611,8 +578,8 @@ const CurlingBot = (() => {
     }
 
     function makeTap(board) {
-        // Gentle control-weight hit that nudges opponent stone back
-        // without blasting it out — both stones likely stay in play.
+        // Gentle bump — just above draw weight, nudges opponent stone
+        // without blasting it out. Both stones likely stay in play.
         // Avoids targets with friendly stones behind them.
         const oppInHouse = board.inHouseSorted.filter(s => s.team === 'red');
         if (oppInHouse.length > 0) {
@@ -625,9 +592,9 @@ const CurlingBot = (() => {
             return {
                 targetX: target.x,
                 targetY: target.y,
-                weight: rand(WEIGHT.control.min, WEIGHT.control.min + 5),
+                weight: rand(WEIGHT.draw.max, WEIGHT.draw.max + 5), // just above draw weight (42-47)
                 spin: target.x > 0 ? -1 : 1,
-                spinAmount: rand(2.0, 3.0),
+                spinAmount: rand(2.5, 3.5),
                 description: 'Tap',
             };
         }
