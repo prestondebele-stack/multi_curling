@@ -134,6 +134,7 @@
         lastOpponentShot: null,         // { aim, weight, spinDir, spinAmount }
         lastOpponentShotStones: null,   // snapshot of stone positions before the shot
         isReplaying: false,             // true during replay animation
+        _pendingAuthState: null,        // deferred authoritative state from thrower
     };
 
     // --------------------------------------------------------
@@ -725,6 +726,22 @@
         if (gameState.onlineMode) {
             // Server switches turns atomically when relaying the throw,
             // so no turn_complete message needed here.
+            // Build the authoritative stone state for syncing
+            const settledStones = gameState.stones.filter(s => s.active).map(s => ({
+                team: s.team, x: s.x, y: s.y,
+            }));
+            const syncPayload = {
+                currentTeam: gameState.currentTeam,
+                redScore: gameState.redScore,
+                yellowScore: gameState.yellowScore,
+                currentEnd: gameState.currentEnd,
+                redThrown: gameState.redThrown,
+                yellowThrown: gameState.yellowThrown,
+                hammer: gameState.hammer,
+                endScores: gameState.endScores,
+                stones: settledStones,
+            };
+
             if (isMyTurn()) {
                 enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
@@ -733,23 +750,23 @@
                 if (gameState.lastOpponentShot) {
                     showReplayButton();
                 }
-                // Send a game state snapshot so server can resync reconnecting players
-                CurlingNetwork.sendGameStateSync({
-                    currentTeam: gameState.currentTeam,
-                    redScore: gameState.redScore,
-                    yellowScore: gameState.yellowScore,
-                    currentEnd: gameState.currentEnd,
-                    redThrown: gameState.redThrown,
-                    yellowThrown: gameState.yellowThrown,
-                    hammer: gameState.hammer,
-                    endScores: gameState.endScores,
-                    stones: gameState.stones.filter(s => s.active).map(s => ({
-                        team: s.team, x: s.x, y: s.y,
-                    })),
-                });
+                // Send snapshot for server reconnection cache
+                CurlingNetwork.sendGameStateSync(syncPayload);
             } else {
                 disableControlsForBot();
                 document.getElementById('throw-btn').disabled = true;
+                // I just threw — send authoritative settled state to opponent.
+                // This corrects any physics desync from missed sweep messages.
+                CurlingNetwork.sendThrowSettled({
+                    stones: settledStones,
+                    currentTeam: gameState.currentTeam,
+                    redThrown: gameState.redThrown,
+                    yellowThrown: gameState.yellowThrown,
+                    redScore: gameState.redScore,
+                    yellowScore: gameState.yellowScore,
+                    currentEnd: gameState.currentEnd,
+                    snapshot: syncPayload,
+                });
             }
         } else if (isBotTurn()) {
             triggerBotTurn();
@@ -1563,6 +1580,22 @@
                 gameState.isSweeping = false;
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
 
+                // Apply pending authoritative state if the thrower already sent one
+                if (gameState._pendingAuthState) {
+                    const auth = gameState._pendingAuthState;
+                    gameState._pendingAuthState = null;
+                    if (auth.stones && auth.stones.length > 0) {
+                        gameState.stones = auth.stones.map(s => {
+                            const stone = CurlingPhysics.createStone(s.team, s.x, s.y, 0, 0, 0);
+                            stone.active = true;
+                            stone.moving = false;
+                            return stone;
+                        });
+                    }
+                    if (auth.redThrown !== undefined) gameState.redThrown = auth.redThrown;
+                    if (auth.yellowThrown !== undefined) gameState.yellowThrown = auth.yellowThrown;
+                }
+
                 // Show replay button since the player missed seeing the shot
                 if (gameState.lastOpponentShot) {
                     showReplayButton();
@@ -1646,6 +1679,24 @@
                         gameState.phase = 'waitingNextTurn';
                         gameState.isSweeping = false;
                         document.getElementById('sweep-toggle-btn').style.display = 'none';
+
+                        // Apply pending authoritative state from the thrower
+                        // (corrects any stone position desync from missed sweep msgs)
+                        if (gameState._pendingAuthState) {
+                            const auth = gameState._pendingAuthState;
+                            gameState._pendingAuthState = null;
+                            if (auth.stones && auth.stones.length > 0) {
+                                gameState.stones = auth.stones.map(s => {
+                                    const stone = CurlingPhysics.createStone(s.team, s.x, s.y, 0, 0, 0);
+                                    stone.active = true;
+                                    stone.moving = false;
+                                    return stone;
+                                });
+                            }
+                            if (auth.redThrown !== undefined) gameState.redThrown = auth.redThrown;
+                            if (auth.yellowThrown !== undefined) gameState.yellowThrown = auth.yellowThrown;
+                        }
+
                         setTimeout(() => {
                             if (gameState.phase === 'waitingNextTurn') {
                                 nextTurn();
@@ -2145,6 +2196,7 @@ function drawStagedStones() {
             lastOpponentShot: null,
             lastOpponentShotStones: null,
             isReplaying: false,
+            _pendingAuthState: null,
         };
 
         fgzSnapshots = [];
@@ -2751,6 +2803,36 @@ function drawStagedStones() {
             gameState.isSweeping = false;
             document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
+        });
+
+        // Authoritative state from the thrower after their stone settles.
+        // This corrects any physics desync caused by missed sweep messages
+        // (e.g., when the connection dropped and reconnected mid-throw).
+        CurlingNetwork.onAuthoritativeState((data) => {
+            // Only apply if we're in aiming or waitingNextTurn phase
+            // (the throw has already settled on our side too, or we're waiting)
+            if (gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
+                // Correct stone positions to match the thrower's simulation
+                if (data.stones && data.stones.length > 0) {
+                    gameState.stones = data.stones.map(s => {
+                        const stone = CurlingPhysics.createStone(s.team, s.x, s.y, 0, 0, 0);
+                        stone.active = true;
+                        stone.moving = false;
+                        return stone;
+                    });
+                }
+                // Sync throw counts and team (in case they drifted)
+                if (data.currentTeam) gameState.currentTeam = data.currentTeam;
+                if (data.redThrown !== undefined) gameState.redThrown = data.redThrown;
+                if (data.yellowThrown !== undefined) gameState.yellowThrown = data.yellowThrown;
+                if (data.redScore !== undefined) gameState.redScore = data.redScore;
+                if (data.yellowScore !== undefined) gameState.yellowScore = data.yellowScore;
+                if (data.currentEnd !== undefined) gameState.currentEnd = data.currentEnd;
+                updateUI();
+            } else if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                // Our simulation hasn't finished yet — store and apply when it does
+                gameState._pendingAuthState = data;
+            }
         });
 
         CurlingNetwork.onOpponentDisconnected(() => {

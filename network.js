@@ -60,6 +60,8 @@ const CurlingNetwork = (() => {
         onGameInviteCancelled: null,
         // Search
         onSearchResults: null,
+        // Authoritative state
+        onAuthoritativeState: null,
         // Chat
         onChatMessage: null,
     };
@@ -303,6 +305,10 @@ const CurlingNetwork = (() => {
             case 'search_results':
                 if (callbacks.onSearchResults) callbacks.onSearchResults({ results: data.results || [] });
                 break;
+            // Authoritative state from thrower
+            case 'authoritative_state':
+                if (callbacks.onAuthoritativeState) callbacks.onAuthoritativeState(data);
+                break;
         }
     }
 
@@ -511,6 +517,8 @@ const CurlingNetwork = (() => {
 
         // Game state sync (for reconnection)
         sendGameStateSync(snapshot) { send({ type: 'game_state_sync', snapshot }); },
+        // Authoritative throw result (thrower sends after stone settles)
+        sendThrowSettled(data) { send({ type: 'throw_settled', ...data }); },
 
         // Game over (record result)
         sendGameOver(redScore, yellowScore, endCount) {
@@ -587,6 +595,8 @@ const CurlingNetwork = (() => {
         onGameInviteCancelled(cb) { callbacks.onGameInviteCancelled = cb; },
         // Search
         onSearchResults(cb) { callbacks.onSearchResults = cb; },
+        // Authoritative state
+        onAuthoritativeState(cb) { callbacks.onAuthoritativeState = cb; },
         // Chat
         onChatMessage(cb) { callbacks.onChatMessage = cb; },
 

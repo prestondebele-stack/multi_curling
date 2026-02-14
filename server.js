@@ -998,6 +998,34 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        // Authoritative stone positions after a throw settles.
+        // The thrower's client is the source of truth — relay to opponent.
+        case 'throw_settled': {
+            const code = playerRooms.get(ws);
+            if (!code) return;
+            const room = rooms.get(code);
+            if (!room) return;
+
+            // Store as latest snapshot too
+            if (data.snapshot) room.gameSnapshot = data.snapshot;
+
+            // Relay final stone positions to the opponent
+            const opponent = getOpponent(room, ws);
+            if (opponent && opponent.readyState === WebSocket.OPEN) {
+                send(opponent, {
+                    type: 'authoritative_state',
+                    stones: data.stones,
+                    currentTeam: data.currentTeam,
+                    redThrown: data.redThrown,
+                    yellowThrown: data.yellowThrown,
+                    redScore: data.redScore,
+                    yellowScore: data.yellowScore,
+                    currentEnd: data.currentEnd,
+                });
+            }
+            break;
+        }
+
         // ---- GAME OVER (record result) ----
         case 'game_over': {
             const code = playerRooms.get(ws);
