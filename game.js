@@ -703,7 +703,7 @@
         if (auth.yellowScore !== undefined) gameState.yellowScore = auth.yellowScore;
         if (auth.currentEnd !== undefined) gameState.currentEnd = auth.currentEnd;
         updateUI();
-        console.log('[AUTH] Applied authoritative state: ' + auth.stones.length + ' stones');
+        console.log('[AUTH] Applied authoritative state: ' + (auth.stones ? auth.stones.length : 0) + ' stones, currentTeam=' + gameState.currentTeam);
 
         // Re-send corrected positions to server so the snapshot is accurate
         CurlingNetwork.sendGameStateSync({
@@ -779,15 +779,13 @@
             if (isMyTurn()) {
                 enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
+                document.getElementById('throw-btn').style.display = '';
                 TabNotify.notify();
                 // Show replay button if opponent just threw
                 if (gameState.lastOpponentShot) {
                     showReplayButton();
                 }
-                // DON'T send game_state_sync here — our local stone positions
-                // may be wrong (opponent threw, we simulated independently).
-                // The thrower's throw_settled already set the server snapshot,
-                // and applyAuthoritativeState() will re-sync corrected positions.
+                console.log('[NEXT-TURN] My turn! Controls enabled. phase=' + gameState.phase);
             } else {
                 disableControlsForBot();
                 document.getElementById('throw-btn').disabled = true;
@@ -2889,48 +2887,54 @@ function drawStagedStones() {
         });
 
         CurlingNetwork.onOpponentThrow(({ aim, weight, spinDir, spinAmount }) => {
-            // If we're mid-replay, cancel it and restore real state first
-            if (gameState.isReplaying && gameState._replayRestore) {
-                gameState._replayRestore();
-            }
-            hideReplayButton();
+            try {
+                console.log('[OPP-THROW] Received: currentTeam=' + gameState.currentTeam + ' phase=' + gameState.phase);
+                // If we're mid-replay, cancel it and restore real state first
+                if (gameState.isReplaying && gameState._replayRestore) {
+                    gameState._replayRestore();
+                }
+                hideReplayButton();
 
-            // Store last opponent shot for replay feature
-            gameState.lastOpponentShot = { aim, weight, spinDir, spinAmount };
-            gameState.lastOpponentShotStones = gameState.stones
-                .filter(s => s.active)
-                .map(s => ({ team: s.team, x: s.x, y: s.y, vx: 0, vy: 0, omega: 0, active: true, moving: false }));
+                // Store last opponent shot for replay feature
+                gameState.lastOpponentShot = { aim, weight, spinDir, spinAmount };
+                gameState.lastOpponentShotStones = gameState.stones
+                    .filter(s => s.active)
+                    .map(s => ({ team: s.team, x: s.x, y: s.y, vx: 0, vy: 0, omega: 0, active: true, moving: false }));
 
-            // SINGLE-AUTHORITY PHYSICS: Do NOT run local physics for opponent's throw.
-            // Create a visual-only stone; its position will be driven by
-            // stone_positions messages streamed from the thrower's client.
-            const startX = 0;
-            const startY = P.hack + 1.0;
-            const stone = createStone(gameState.currentTeam, startX, startY, 0, 0, 0);
-            stone.moving = true; // so camera follows it
-            stoneTrail = [{ x: startX, y: startY }];
-            gameState.stones.push(stone);
-            gameState.deliveredStone = stone;
+                // SINGLE-AUTHORITY PHYSICS: Do NOT run local physics for opponent's throw.
+                // Create a visual-only stone; its position will be driven by
+                // stone_positions messages streamed from the thrower's client.
+                const startX = 0;
+                const startY = P.hack + 1.0;
+                const stone = createStone(gameState.currentTeam, startX, startY, 0, 0, 0);
+                stone.moving = true; // so camera follows it
+                stoneTrail = [{ x: startX, y: startY }];
+                gameState.stones.push(stone);
+                gameState.deliveredStone = stone;
 
-            // Update throw count (must match thrower's count)
-            if (gameState.currentTeam === TEAMS.RED) {
-                gameState.redThrown++;
-            } else {
-                gameState.yellowThrown++;
-            }
+                // Update throw count (must match thrower's count)
+                if (gameState.currentTeam === TEAMS.RED) {
+                    gameState.redThrown++;
+                } else {
+                    gameState.yellowThrown++;
+                }
 
-            gameState.phase = 'delivering';
-            gameState._remoteDelivery = true;
-            gameState._latestStonePositions = null;
-            document.getElementById('throw-btn').disabled = true;
-            document.getElementById('throw-btn').style.display = 'none';
-            document.getElementById('sweep-toggle-btn').style.display = 'block';
-            document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
-            VIEW.followStone = true;
+                gameState.phase = 'delivering';
+                gameState._remoteDelivery = true;
+                gameState._latestStonePositions = null;
+                document.getElementById('throw-btn').disabled = true;
+                document.getElementById('throw-btn').style.display = 'none';
+                document.getElementById('sweep-toggle-btn').style.display = 'block';
+                document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
+                VIEW.followStone = true;
 
-            // Animate sliders for visual feedback (non-blocking)
-            if (!document.hidden) {
-                animateOpponentSliders(aim, weight, spinDir, spinAmount, () => {});
+                // Animate sliders for visual feedback (non-blocking)
+                if (!document.hidden) {
+                    animateOpponentSliders(aim, weight, spinDir, spinAmount, () => {});
+                }
+                console.log('[OPP-THROW] Set up: _remoteDelivery=true phase=delivering');
+            } catch (err) {
+                console.error('[OPP-THROW] ERROR:', err);
             }
         });
 
@@ -2978,56 +2982,90 @@ function drawStagedStones() {
 
         // Authoritative state from the thrower after their stone settles.
         CurlingNetwork.onAuthoritativeState((data) => {
-            console.log('[AUTH] authoritative_state received, phase=' + gameState.phase +
-                ' remoteDelivery=' + gameState._remoteDelivery +
-                ' stones=' + (data.stones ? data.stones.length : 0));
+            try {
+                console.log('[AUTH] authoritative_state received, phase=' + gameState.phase +
+                    ' remoteDelivery=' + gameState._remoteDelivery +
+                    ' currentTeam=' + gameState.currentTeam + ' dataTeam=' + data.currentTeam +
+                    ' stones=' + (data.stones ? data.stones.length : 0));
 
-            // SINGLE-AUTHORITY: opponent's throw just settled — apply and transition.
-            // DO NOT call nextTurn() here — it would double-switch currentTeam.
-            // The thrower already switched teams before sending throw_settled,
-            // so data.currentTeam is already correct (it's now our turn).
-            if (gameState._remoteDelivery) {
+                // Helper: set up controls after applying authoritative state
+                function setupTurnControls() {
+                    if (isMyTurn()) {
+                        enableControlsForHuman();
+                        document.getElementById('throw-btn').disabled = false;
+                        document.getElementById('throw-btn').style.display = '';
+                        TabNotify.notify();
+                        if (gameState.lastOpponentShot) {
+                            showReplayButton();
+                        }
+                        console.log('[AUTH] Controls ENABLED (my turn)');
+                    } else {
+                        disableControlsForBot();
+                        document.getElementById('throw-btn').disabled = true;
+                        console.log('[AUTH] Controls DISABLED (opponent turn)');
+                    }
+                }
+
+                // SINGLE-AUTHORITY: opponent's throw just settled — apply and transition.
+                // DO NOT call nextTurn() here — it would double-switch currentTeam.
+                // The thrower already switched teams before sending throw_settled,
+                // so data.currentTeam is already correct (it's now our turn).
+                if (gameState._remoteDelivery) {
+                    gameState._remoteDelivery = false;
+                    gameState._latestStonePositions = null;
+                    gameState._lastPositionSendTime = 0;
+                    applyAuthoritativeState(data);
+
+                    gameState.phase = 'aiming';
+                    gameState.isSweeping = false;
+                    gameState.deliveredStone = null;
+                    document.getElementById('sweep-toggle-btn').style.display = 'none';
+                    document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
+                    document.getElementById('aim-slider').value = 0;
+                    document.getElementById('aim-value').textContent = '0.0°';
+                    VIEW.followStone = false;
+                    updateUI();
+
+                    console.log('[AUTH] Remote delivery settled: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn() +
+                        ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
+
+                    setupTurnControls();
+
+                    // Safety: verify UI state after a short delay
+                    setTimeout(() => {
+                        if (gameState.phase === 'aiming') {
+                            setupTurnControls();
+                        }
+                    }, 200);
+                    return;
+                }
+
+                // Non-remote cases: could be (a) reconnect correction, (b) late auth after
+                // reconnect cleared _remoteDelivery, or (c) my own throw's confirmation.
+                // In ALL cases, apply the state AND set up the turn properly.
+                if (gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
+                    applyAuthoritativeState(data);
+                    console.log('[AUTH] Non-remote apply: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn());
+                    setupTurnControls();
+                } else if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                    // My local simulation hasn't finished yet — store and apply when it does
+                    console.log('[AUTH] Deferring — local sim still running');
+                    gameState._pendingAuthState = data;
+                } else {
+                    console.log('[AUTH] Ignoring — unexpected phase: ' + gameState.phase);
+                }
+            } catch (err) {
+                console.error('[AUTH] ERROR in onAuthoritativeState handler:', err);
+                // Emergency recovery: try to put the game in a usable state
                 gameState._remoteDelivery = false;
-                gameState._latestStonePositions = null;
-                gameState._lastPositionSendTime = 0;
-                applyAuthoritativeState(data);
-
                 gameState.phase = 'aiming';
-                gameState.isSweeping = false;
                 gameState.deliveredStone = null;
-                document.getElementById('sweep-toggle-btn').style.display = 'none';
-                document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
-                document.getElementById('aim-slider').value = 0;
-                document.getElementById('aim-value').textContent = '0.0°';
-                VIEW.followStone = false;
+                if (data.currentTeam) gameState.currentTeam = data.currentTeam;
                 updateUI();
-
-                console.log('[AUTH] Remote delivery settled: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn());
-
                 if (isMyTurn()) {
                     enableControlsForHuman();
                     document.getElementById('throw-btn').disabled = false;
-                    document.getElementById('throw-btn').style.display = '';
-                    TabNotify.notify();
-                    if (gameState.lastOpponentShot) {
-                        showReplayButton();
-                    }
-                } else {
-                    disableControlsForBot();
-                    document.getElementById('throw-btn').disabled = true;
                 }
-                return;
-            }
-
-            // Non-remote cases (my throw settled, or reconnect correction)
-            if (gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
-                applyAuthoritativeState(data);
-            } else if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
-                // My local simulation hasn't finished yet — store and apply when it does
-                console.log('[AUTH] Deferring — local sim still running');
-                gameState._pendingAuthState = data;
-            } else {
-                console.log('[AUTH] Ignoring — unexpected phase: ' + gameState.phase);
             }
         });
 
