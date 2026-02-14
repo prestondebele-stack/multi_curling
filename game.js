@@ -2970,14 +2970,19 @@ function drawStagedStones() {
         CurlingNetwork.onAuthSuccess(({ token, username, rank }) => {
             localStorage.setItem('curling_token', token);
             localStorage.setItem('curling_username', username);
-            document.getElementById('auth-panel').style.display = 'none';
             document.getElementById('user-info-bar').style.display = 'flex';
             document.getElementById('logged-in-as').textContent = username;
             // Show rank badge
             if (rank) {
                 updateRankBadge(rank);
             }
-            showLobbyPanel('lobby-menu');
+            // Only show lobby UI if we're NOT in an active game.
+            // During reconnect, token_login triggers auth_success — we must
+            // NOT overwrite the game screen with the lobby menu.
+            if (!gameState.onlineMode || gameState.phase === 'gameOver') {
+                document.getElementById('auth-panel').style.display = 'none';
+                showLobbyPanel('lobby-menu');
+            }
             CurlingNetwork.sendGetProfile();
             // Set up push notifications for logged-in users
             PushSetup.setup();
@@ -2990,15 +2995,20 @@ function drawStagedStones() {
         });
 
         CurlingNetwork.onAuthError(({ error }) => {
-            // If auto-login token expired, clear it and show login form
+            // If auto-login token expired, clear it
             localStorage.removeItem('curling_token');
             localStorage.removeItem('curling_username');
             document.getElementById('user-info-bar').style.display = 'none';
-            document.getElementById('auth-panel').style.display = 'flex';
-            document.getElementById('lobby-menu').style.display = 'none';
-            const errEl = document.getElementById('auth-error');
-            errEl.textContent = error === 'Session expired' ? 'Session expired — please log in again.' : error;
-            errEl.style.display = 'block';
+            // Only show login form if NOT in an active game.
+            // During reconnect, token_login may fail (server restarted) but
+            // the game reconnect itself already succeeded — don't nuke the game.
+            if (!gameState.onlineMode || gameState.phase === 'gameOver') {
+                document.getElementById('auth-panel').style.display = 'flex';
+                document.getElementById('lobby-menu').style.display = 'none';
+                const errEl = document.getElementById('auth-error');
+                errEl.textContent = error === 'Session expired' ? 'Session expired — please log in again.' : error;
+                errEl.style.display = 'block';
+            }
         });
 
         CurlingNetwork.onProfileData(({ profile }) => {

@@ -1046,14 +1046,44 @@ async function handleMessage(ws, message) {
                 return;
             }
 
-            // Find the empty slot
-            const emptySlot = room.players[0] === null ? 0 : room.players[1] === null ? 1 : -1;
+            // Find the empty slot — first check for null, then check for dead sockets.
+            // Race condition: client reconnects with a new WebSocket before the server
+            // has detected that the old socket is dead (server heartbeat runs every 120s).
+            // The old socket may report readyState !== OPEN even though the server hasn't
+            // processed its close event yet.
+            let emptySlot = room.players[0] === null ? 0 : room.players[1] === null ? 1 : -1;
+
             if (emptySlot === -1) {
+                // Both slots occupied — check if either has a dead/stale socket
+                // that the server hasn't cleaned up yet
+                for (let i = 0; i < 2; i++) {
+                    const existingWs = room.players[i];
+                    if (existingWs && existingWs !== ws && existingWs.readyState !== WebSocket.OPEN) {
+                        // This socket is dead — clean it up and take its slot
+                        console.log(`[RECONNECT] Replacing dead socket in slot ${i} (readyState=${existingWs.readyState})`);
+                        playerRooms.delete(existingWs);
+                        playerSessions.delete(existingWs);
+                        room.players[i] = null;
+                        emptySlot = i;
+                        break;
+                    }
+                    // Also check if this is the SAME player reconnecting (same ws object
+                    // shouldn't happen, but check by session identity)
+                    if (existingWs && existingWs === ws) {
+                        // Already in the room with this socket — just resync
+                        emptySlot = i;
+                        break;
+                    }
+                }
+            }
+
+            if (emptySlot === -1) {
+                // Both sockets genuinely alive — can't join
                 send(ws, { type: 'reconnect_failed' });
                 return;
             }
 
-            // Cancel disconnect timer
+            // Cancel disconnect timer (grace period or hard timer)
             if (room.disconnectTimers[emptySlot]) {
                 clearTimeout(room.disconnectTimers[emptySlot]);
                 room.disconnectTimers[emptySlot] = null;
