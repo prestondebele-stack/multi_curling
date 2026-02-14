@@ -11,6 +11,7 @@ const CurlingNetwork = (() => {
     let reconnectTimer = null;
     let heartbeatTimer = null;
     let intentionalClose = false;
+    let lastPongTime = Date.now();
 
     // Event callbacks
     const callbacks = {
@@ -67,9 +68,18 @@ const CurlingNetwork = (() => {
 
     function startHeartbeat() {
         stopHeartbeat();
+        lastPongTime = Date.now();
         heartbeatTimer = setInterval(() => {
+            // Check if we haven't heard back in a while (stale connection)
+            const sinceLastPong = Date.now() - lastPongTime;
+            if (sinceLastPong > 45000 && ws && ws.readyState === WebSocket.OPEN) {
+                // Connection is likely dead — force close to trigger reconnect
+                console.log('[HEARTBEAT] No response for 45s, forcing reconnect');
+                ws.close();
+                return;
+            }
             send({ type: 'ping' });
-        }, 15000); // every 15s — well within server's 120s tolerance
+        }, 10000); // every 10s — frequent enough to keep mobile connections alive
     }
 
     function stopHeartbeat() {
@@ -89,6 +99,7 @@ const CurlingNetwork = (() => {
 
         switch (data.type) {
             case 'pong':
+                lastPongTime = Date.now();
                 break;
 
             case 'room_created':
@@ -317,16 +328,25 @@ const CurlingNetwork = (() => {
 
     // --- Tab visibility handling ---
     // When the tab is backgrounded (e.g., switching to text messenger),
-    // browsers throttle/suspend timers. We keep heartbeat running
-    // (browser will throttle it naturally) and aggressively recover
+    // browsers throttle/suspend timers. We aggressively recover
     // when the tab becomes visible again.
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
             // Tab visible again — immediately check and recover connection
             if (ws && ws.readyState === WebSocket.OPEN) {
-                // Connection still alive — send immediate ping and restart heartbeat
-                send({ type: 'ping' });
-                startHeartbeat();
+                // Check if connection went stale while hidden
+                const sinceLastPong = Date.now() - lastPongTime;
+                if (sinceLastPong > 60000) {
+                    // Connection is probably dead — force reconnect
+                    console.log('[VISIBILITY] Connection stale for', Math.round(sinceLastPong / 1000), 's — forcing reconnect');
+                    ws.close();
+                    reconnectAttempts = 0;
+                    attemptReconnect();
+                } else {
+                    // Connection still alive — send immediate ping and restart heartbeat
+                    send({ type: 'ping' });
+                    startHeartbeat();
+                }
             } else if (ws && ws.readyState === WebSocket.CONNECTING) {
                 // Connection in progress, just wait
             } else if (roomCode && !intentionalClose) {

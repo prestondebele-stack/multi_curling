@@ -1913,6 +1913,24 @@ input[type="range"]::-moz-range-thumb {
     cursor: pointer;
 }
 
+#replay-btn {
+    font-size: 13px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 2px solid #fb8c00;
+    background: transparent;
+    color: #fb8c00;
+    cursor: pointer;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background 0.2s, color 0.2s;
+}
+
+#replay-btn:active {
+    background: #fb8c00;
+    color: #fff;
+}
+
 #chat-popup {
     position: absolute;
     bottom: 60px;

@@ -131,6 +131,9 @@
         roomCode: null,
         opponentConnected: true,
         opponentInfo: null, // { username, rank: { name, color, rating } }
+        lastOpponentShot: null,         // { aim, weight, spinDir, spinAmount }
+        lastOpponentShotStones: null,   // snapshot of stone positions before the shot
+        isReplaying: false,             // true during replay animation
     };
 
     // --------------------------------------------------------
@@ -442,6 +445,9 @@
         const spinAmount = parseFloat(document.getElementById('spin-amount-slider').value);
         const spinDir = document.getElementById('spin-cw').classList.contains('active') ? 1 : -1;
 
+        // Hide replay button when throwing
+        hideReplayButton();
+
         // If online mode, send to server
         if (gameState.onlineMode) {
             CurlingNetwork.sendThrow({ aim: aimDeg, weight: weightPct, spinDir, spinAmount });
@@ -709,6 +715,10 @@
                 enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
                 TabNotify.notify();
+                // Show replay button if opponent just threw
+                if (gameState.lastOpponentShot) {
+                    showReplayButton();
+                }
                 // Send a game state snapshot so server can resync reconnecting players
                 CurlingNetwork.sendGameStateSync({
                     currentTeam: gameState.currentTeam,
@@ -1449,6 +1459,76 @@
         }
     }
 
+    // --------------------------------------------------------
+    // REPLAY LAST SHOT
+    // --------------------------------------------------------
+    function showReplayButton() {
+        const btn = document.getElementById('replay-btn');
+        if (btn) btn.style.display = '';
+    }
+
+    function hideReplayButton() {
+        const btn = document.getElementById('replay-btn');
+        if (btn) btn.style.display = 'none';
+    }
+
+    function replayLastShot() {
+        if (!gameState.lastOpponentShot || !gameState.lastOpponentShotStones || gameState.isReplaying) return;
+
+        const shot = gameState.lastOpponentShot;
+        const savedStones = gameState.lastOpponentShotStones;
+
+        // Save current real stone positions and game phase
+        const realStones = gameState.stones;
+        const realPhase = gameState.phase;
+        const realDeliveredStone = gameState.deliveredStone;
+
+        // Restore the board to the snapshot before the shot
+        gameState.stones = savedStones.map(s => ({
+            ...s, vx: 0, vy: 0, omega: 0, angle: 0, moving: false,
+        }));
+
+        // Deliver the shot on the snapshot board
+        gameState.isReplaying = true;
+        hideReplayButton();
+
+        // Determine the team that threw (opponent)
+        const replayTeam = gameState.myTeam === 'red' ? 'yellow' : 'red';
+        const prevTeam = gameState.currentTeam;
+        gameState.currentTeam = replayTeam;
+
+        // Create the stone with correct physics
+        const speed = CurlingPhysics.weightToSpeed(shot.weight);
+        const aimRad = shot.aim * Math.PI / 180;
+        const startX = 0;
+        const startY = P.hack + 1.0;
+        const vx = speed * Math.sin(aimRad);
+        const vy = speed * Math.cos(aimRad);
+        const omega = CurlingPhysics.rotationsToAngularVelocity(shot.spinAmount, speed) * shot.spinDir;
+
+        const stone = createStone(replayTeam, startX, startY, vx, vy, omega);
+        stone.moving = true;
+        gameState.stones.push(stone);
+        gameState.deliveredStone = stone;
+        stoneTrail = [{ x: startX, y: startY }];
+        gameState.phase = 'delivering';
+        VIEW.followStone = true;
+
+        // Wait for replay to finish via the gameLoop — it will detect
+        // no more moving stones and transition to waitingNextTurn.
+        // We intercept that with a check: if isReplaying, restore real state.
+        gameState._replayRestore = () => {
+            gameState.stones = realStones;
+            gameState.phase = realPhase;
+            gameState.deliveredStone = realDeliveredStone;
+            gameState.currentTeam = prevTeam;
+            gameState.isReplaying = false;
+            gameState._replayRestore = null;
+            VIEW.followStone = false;
+            updateUI();
+        };
+    }
+
     // When tab becomes visible again in online mode, fast-forward any in-flight stones
     // so the game catches up (requestAnimationFrame is throttled/paused in background tabs)
     document.addEventListener('visibilitychange', () => {
@@ -1460,6 +1540,12 @@
                 gameState.phase = 'waitingNextTurn';
                 gameState.isSweeping = false;
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
+
+                // Show replay button since the player missed seeing the shot
+                if (gameState.lastOpponentShot) {
+                    showReplayButton();
+                }
+
                 setTimeout(() => {
                     if (gameState.phase === 'waitingNextTurn') {
                         nextTurn();
@@ -1524,6 +1610,14 @@
                 if (!anyMoving) {
                     physicsAccumulator = 0;
                     if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                        // If replaying, restore the real game state instead of advancing
+                        if (gameState.isReplaying && gameState._replayRestore) {
+                            setTimeout(() => {
+                                if (gameState._replayRestore) gameState._replayRestore();
+                            }, 600);
+                            break;
+                        }
+
                         // Check FGZ violation before advancing turn
                         checkFGZViolation();
 
@@ -2024,12 +2118,16 @@ function drawStagedStones() {
             myTeam: preserveMyTeam,
             roomCode: preserveRoomCode,
             opponentConnected: true,
+            lastOpponentShot: null,
+            lastOpponentShotStones: null,
+            isReplaying: false,
         };
 
         fgzSnapshots = [];
         fgzViolation = null;
         extraEndNotice = null;
         hogLineViolation = null;
+        hideReplayButton();
 
         document.getElementById('zoom-btn').classList.remove('zoomed');
         document.getElementById('red-total').textContent = '0';
@@ -2081,6 +2179,7 @@ function drawStagedStones() {
         document.getElementById('online-team-badge').style.display = 'none';
         document.getElementById('chat-btn').style.display = 'none';
         document.getElementById('chat-popup').style.display = 'none';
+        hideReplayButton();
         // Clear player names from scoreboard
         document.getElementById('red-player-name').textContent = '';
         document.getElementById('yellow-player-name').textContent = '';
@@ -2428,6 +2527,11 @@ function drawStagedStones() {
         chatPopup.style.display = chatPopup.style.display === 'none' ? 'flex' : 'none';
     });
 
+    // Replay last shot button
+    document.getElementById('replay-btn').addEventListener('click', () => {
+        replayLastShot();
+    });
+
     // Preset message buttons
     document.querySelectorAll('.chat-preset').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -2568,9 +2672,27 @@ function drawStagedStones() {
         });
 
         CurlingNetwork.onOpponentThrow(({ aim, weight, spinDir, spinAmount }) => {
-            animateOpponentSliders(aim, weight, spinDir, spinAmount, () => {
+            // If we're mid-replay, cancel it and restore real state first
+            if (gameState.isReplaying && gameState._replayRestore) {
+                gameState._replayRestore();
+            }
+            hideReplayButton();
+
+            // Store last opponent shot for replay feature
+            gameState.lastOpponentShot = { aim, weight, spinDir, spinAmount };
+            gameState.lastOpponentShotStones = gameState.stones
+                .filter(s => s.active)
+                .map(s => ({ team: s.team, x: s.x, y: s.y, vx: 0, vy: 0, omega: 0, active: true, moving: false }));
+
+            if (document.hidden) {
+                // Tab is hidden — deliver stone immediately, skip animation.
+                // Physics will be fast-forwarded when tab becomes visible.
                 deliverStoneWithParams(aim, weight, spinDir, spinAmount);
-            });
+            } else {
+                animateOpponentSliders(aim, weight, spinDir, spinAmount, () => {
+                    deliverStoneWithParams(aim, weight, spinDir, spinAmount);
+                });
+            }
         });
 
         CurlingNetwork.onOpponentSweepChange(({ level }) => {
