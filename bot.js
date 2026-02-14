@@ -230,8 +230,8 @@ const CurlingBot = (() => {
 
         // MID STONES (3-4): Guards and draws — build the house
         if (n <= 4) {
-            // Replace removed guards if needed
-            if (board.centerGuards.filter(s => s.team === 'yellow').length === 0 && !board.fgzActive) {
+            // Replace removed guards or add more if we don't have enough
+            if (board.centerGuards.filter(s => s.team === 'yellow').length === 0) {
                 return makeCenterGuard(board, n);
             }
             // Have guards? Come-around behind them into the house
@@ -463,8 +463,12 @@ const CurlingBot = (() => {
     }
 
     function makeTakeout(board) {
+        // FGZ safety: never attempt takeouts during free guard zone
+        if (board.fgzActive) {
+            return makeDrawToHouse(board);
+        }
+
         // Hit an opponent stone, preferring targets that won't knock into our own stones
-        const P = CurlingPhysics.POSITIONS;
         const oppInHouse = board.inHouseSorted.filter(s => s.team === 'red');
         if (oppInHouse.length > 0) {
             // Try to find a safe target first (no friendly behind)
@@ -490,7 +494,6 @@ const CurlingBot = (() => {
         // No opponent stone in house — only hit guards if they're protecting house stones
         if (board.oppGuards.length > 0 && board.oppInHouse.length > 0) {
             const guard = board.oppGuards[0];
-            // Check if our own stones are behind this guard too
             if (!hasFriendlyBehind(guard, board)) {
                 return {
                     targetX: guard.x,
@@ -509,6 +512,10 @@ const CurlingBot = (() => {
     }
 
     function makePeel(board) {
+        // FGZ safety: never peel guards during free guard zone
+        if (board.fgzActive) {
+            return makeDrawToHouse(board);
+        }
         // Hit and remove opponent's center guard with lots of weight.
         // Check for friendly stones behind the guard first.
         const centerOppGuards = board.centerGuards.filter(s => s.team === 'red');
@@ -553,6 +560,8 @@ const CurlingBot = (() => {
     }
 
     function makeHitAndRoll(board) {
+        // FGZ safety: during free guard zone, only target stones in the house
+        // (guards between hog line and house are protected)
         // Hit opponent stone with control weight so our stone
         // rolls to stay in the house after contact.
         // Avoids targets with friendly stones behind them.
@@ -850,9 +859,11 @@ const CurlingBot = (() => {
             }
         }
 
-        // Consider a takeout if opponent has stones in house
-        if (oppInHouse.length > 0 && primary.description !== 'Takeout' && primary.description !== 'Hit & Roll') {
-            candidates.push(makeTakeout(board));
+        // Only consider contact shots (takeout, hit-and-roll) when FGZ is NOT active
+        if (!board.fgzActive) {
+            if (oppInHouse.length > 0 && primary.description !== 'Takeout' && primary.description !== 'Hit & Roll') {
+                candidates.push(makeTakeout(board));
+            }
         }
 
         // Consider a freeze if opponent has shot stone
