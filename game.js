@@ -1667,37 +1667,73 @@
         if (gameState.phase === 'delivering') {
             if (gameState._remoteDelivery) {
                 // ---- OPPONENT IS THROWING (single-authority: no local physics) ----
-                // Apply latest stone positions streamed from the thrower's client.
-                if (gameState._latestStonePositions) {
-                    const posData = gameState._latestStonePositions;
-
-                    // Update each stone's position in-place where possible,
-                    // or rebuild the array from the thrower's authoritative data.
-                    const newStones = [];
-                    for (const sp of posData) {
-                        const stone = createStone(sp.team, sp.x, sp.y, sp.vx || 0, sp.vy || 0, 0);
-                        stone.active = true;
-                        stone.moving = !!sp.moving;
-                        newStones.push(stone);
+                // Smoothly interpolate stone positions toward the latest network data.
+                // Between updates (~80ms apart), predict using velocity for smooth motion.
+                const posData = gameState._latestStonePositions;
+                if (posData) {
+                    // Sync stone count if it changed (stone knocked out of play)
+                    if (gameState.stones.length !== posData.length) {
+                        const newStones = [];
+                        for (const sp of posData) {
+                            const stone = createStone(sp.team, sp.x, sp.y, sp.vx || 0, sp.vy || 0, 0);
+                            stone.active = true;
+                            stone.moving = !!sp.moving;
+                            // Store target positions for interpolation
+                            stone._targetX = sp.x;
+                            stone._targetY = sp.y;
+                            newStones.push(stone);
+                        }
+                        gameState.stones = newStones;
+                    } else {
+                        // Update targets and velocity on existing stones
+                        for (let i = 0; i < posData.length; i++) {
+                            const sp = posData[i];
+                            const stone = gameState.stones[i];
+                            stone._targetX = sp.x;
+                            stone._targetY = sp.y;
+                            stone.vx = sp.vx || 0;
+                            stone.vy = sp.vy || 0;
+                            stone.moving = !!sp.moving;
+                            stone.active = true;
+                            stone.team = sp.team;
+                        }
                     }
-                    gameState.stones = newStones;
 
                     // Identify the delivered stone (the one that's moving)
-                    const movingStone = newStones.find(s => s.moving);
+                    const movingStone = gameState.stones.find(s => s.moving);
                     if (movingStone) {
                         gameState.deliveredStone = movingStone;
                     }
+                }
 
-                    // Update trail for the delivered stone
-                    if (gameState.deliveredStone) {
-                        const ds = gameState.deliveredStone;
-                        const last = stoneTrail[stoneTrail.length - 1];
-                        if (last) {
-                            const dx = ds.x - last.x;
-                            const dy = ds.y - last.y;
-                            if (dx * dx + dy * dy > 0.04) {
-                                stoneTrail.push({ x: ds.x, y: ds.y });
-                            }
+                // Interpolate all stones toward their targets each frame
+                for (const stone of gameState.stones) {
+                    if (stone._targetX !== undefined) {
+                        if (stone.moving) {
+                            // Moving stones: predict with velocity + lerp toward target
+                            stone.x += stone.vx * frameTime;
+                            stone.y += stone.vy * frameTime;
+                            // Blend toward target to correct drift (fast lerp)
+                            const blend = Math.min(1, frameTime * 15);
+                            stone.x += (stone._targetX - stone.x) * blend;
+                            stone.y += (stone._targetY - stone.y) * blend;
+                        } else {
+                            // Settled stones: snap to target
+                            stone.x = stone._targetX;
+                            stone.y = stone._targetY;
+                        }
+                    }
+                }
+
+                // Update trail for the delivered stone
+                if (gameState.deliveredStone) {
+                    const ds = gameState.deliveredStone;
+                    const last = stoneTrail[stoneTrail.length - 1];
+                    if (last) {
+                        const dx = ds.x - last.x;
+                        const dy = ds.y - last.y;
+                        if (dx * dx + dy * dy > 0.04) {
+                            stoneTrail.push({ x: ds.x, y: ds.y });
                         }
                     }
                 }
@@ -2944,23 +2980,40 @@ function drawStagedStones() {
                 ' remoteDelivery=' + gameState._remoteDelivery +
                 ' stones=' + (data.stones ? data.stones.length : 0));
 
-            // SINGLE-AUTHORITY: opponent's throw just settled — apply and transition
+            // SINGLE-AUTHORITY: opponent's throw just settled — apply and transition.
+            // DO NOT call nextTurn() here — it would double-switch currentTeam.
+            // The thrower already switched teams before sending throw_settled,
+            // so data.currentTeam is already correct (it's now our turn).
             if (gameState._remoteDelivery) {
                 gameState._remoteDelivery = false;
                 gameState._latestStonePositions = null;
+                gameState._lastPositionSendTime = 0;
                 applyAuthoritativeState(data);
 
-                gameState.phase = 'waitingNextTurn';
+                gameState.phase = 'aiming';
                 gameState.isSweeping = false;
                 gameState.deliveredStone = null;
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
                 document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
+                document.getElementById('aim-slider').value = 0;
+                document.getElementById('aim-value').textContent = '0.0°';
+                VIEW.followStone = false;
+                updateUI();
 
-                setTimeout(() => {
-                    if (gameState.phase === 'waitingNextTurn') {
-                        nextTurn();
+                console.log('[AUTH] Remote delivery settled: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn());
+
+                if (isMyTurn()) {
+                    enableControlsForHuman();
+                    document.getElementById('throw-btn').disabled = false;
+                    document.getElementById('throw-btn').style.display = '';
+                    TabNotify.notify();
+                    if (gameState.lastOpponentShot) {
+                        showReplayButton();
                     }
-                }, 800);
+                } else {
+                    disableControlsForBot();
+                    document.getElementById('throw-btn').disabled = true;
+                }
                 return;
             }
 
