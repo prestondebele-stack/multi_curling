@@ -317,6 +317,49 @@ body {
     display: none;
 }
 
+#ends-selector-local {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+#ends-selector-local .ends-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #aaa;
+    margin-right: 2px;
+}
+
+.ends-local-btn {
+    flex: 1;
+    padding: 6px 4px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid #444;
+    background: #222;
+    color: #aaa;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+}
+
+.ends-local-btn:hover {
+    background: #333;
+    color: #ddd;
+}
+
+.ends-local-btn.active {
+    background: #1565c0;
+    color: #fff;
+    border-color: #1e88e5;
+}
+
+#ends-selector-local.hidden {
+    display: none;
+}
+
 /* ================================================
    BOT THINKING INDICATOR
    ================================================ */
@@ -845,6 +888,12 @@ input[type="range"]::-moz-range-thumb {
     }
 
     .diff-btn {
+        padding: 5px 3px;
+        font-size: 11px;
+        min-height: 32px;
+    }
+
+    .ends-local-btn {
         padding: 5px 3px;
         font-size: 11px;
         min-height: 32px;
@@ -1866,6 +1915,16 @@ input[type="range"]::-moz-range-thumb {
     }
 
     .diff-btn {
+        padding: 3px 2px;
+        font-size: 10px;
+        min-height: 24px;
+    }
+
+    #ends-selector-local {
+        gap: 3px;
+    }
+
+    .ends-local-btn {
         padding: 3px 2px;
         font-size: 10px;
         min-height: 24px;

@@ -695,6 +695,9 @@
         document.getElementById('throw-btn').style.display = 'block';
         document.getElementById('sweep-toggle-btn').style.display = 'none';
 
+        // Update total ends display
+        document.getElementById('total-ends-display').textContent = '/ ' + gameState.totalEnds;
+
         // Hammer indicator
         const redHammer = document.getElementById('red-hammer');
         const yellowHammer = document.getElementById('yellow-hammer');
@@ -2325,6 +2328,7 @@ function drawStagedStones() {
         const preserveOnlineMode = gameState.onlineMode;
         const preserveMyTeam = gameState.myTeam;
         const preserveRoomCode = gameState.roomCode;
+        const preserveTotalEnds = gameState.totalEnds;
         gameState = {
             stones: [],
             currentTeam: TEAMS.RED,
@@ -2332,7 +2336,7 @@ function drawStagedStones() {
             redThrown: 0,
             yellowThrown: 0,
             currentEnd: 1,
-            totalEnds: 6,
+            totalEnds: preserveTotalEnds,
             redScore: 0,
             yellowScore: 0,
             endScores: [],
@@ -2426,6 +2430,7 @@ function drawStagedStones() {
         document.getElementById('mode-2p').classList.remove('active');
         document.getElementById('mode-online').classList.remove('active');
         document.getElementById('difficulty-selector').classList.remove('hidden');
+        document.getElementById('ends-selector-local').classList.remove('hidden');
         // If it's now the bot's turn, trigger it
         if (isBotTurn() && gameState.phase === 'aiming') {
             triggerBotTurn();
@@ -2441,6 +2446,7 @@ function drawStagedStones() {
         document.getElementById('mode-1p').classList.remove('active');
         document.getElementById('mode-online').classList.remove('active');
         document.getElementById('difficulty-selector').classList.add('hidden');
+        document.getElementById('ends-selector-local').classList.remove('hidden');
         enableControlsForHuman();
         if (gameState.phase === 'aiming') {
             document.getElementById('throw-btn').disabled = false;
@@ -2455,6 +2461,19 @@ function drawStagedStones() {
             btn.classList.add('active');
             const level = btn.id.replace('diff-', '');
             CurlingBot.setDifficulty(level);
+            settingsDropdown.classList.remove('open');
+            settingsToggle.classList.remove('active');
+        });
+    });
+
+    // Ends selector for local/bot games
+    document.querySelectorAll('.ends-local-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.ends-local-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            gameState.totalEnds = parseInt(btn.dataset.ends);
+            resetGame();
+            updateUI();
             settingsDropdown.classList.remove('open');
             settingsToggle.classList.remove('active');
         });
@@ -3476,6 +3495,7 @@ function drawStagedStones() {
         document.getElementById('mode-1p').classList.remove('active');
         document.getElementById('mode-2p').classList.remove('active');
         document.getElementById('difficulty-selector').classList.add('hidden');
+        document.getElementById('ends-selector-local').classList.add('hidden');
         settingsDropdown.classList.remove('open');
         settingsToggle.classList.remove('active');
 
