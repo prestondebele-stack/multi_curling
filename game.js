@@ -648,9 +648,33 @@
     }
 
     // --------------------------------------------------------
+    // END-OF-END SAFETY NET
+    // --------------------------------------------------------
+    // Detects if the game is stuck with all 16 stones thrown but not in scoring.
+    // This catches edge cases from reconnects, cached code, or timing issues.
+    function checkEndOfEndStuck() {
+        if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8 &&
+            gameState.phase !== 'scoring' && gameState.phase !== 'gameover') {
+            console.log('[SAFETY] End-of-end stuck detected! phase=' + gameState.phase +
+                ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown +
+                ' — forcing scoring');
+            gameState.phase = 'scoring';
+            gameState._remoteDelivery = false;
+            gameState.deliveredStone = null;
+            VIEW.followStone = false;
+            setTimeout(() => endEnd(), 1500);
+            return true;
+        }
+        return false;
+    }
+
+    // --------------------------------------------------------
     // UI
     // --------------------------------------------------------
     function updateUI() {
+        // Safety: catch stuck end-of-end before updating UI
+        if (gameState.onlineMode && checkEndOfEndStuck()) return;
+
         const teamLabel = document.getElementById('current-team-label');
         const stonesLabel = document.getElementById('stones-remaining');
 
@@ -669,7 +693,7 @@
         teamLabel.classList.add('team-change-pulse');
 
         const thrown = gameState.currentTeam === TEAMS.RED ? gameState.redThrown : gameState.yellowThrown;
-        stonesLabel.textContent = `Stone ${thrown + 1} of 8`;
+        stonesLabel.textContent = `Stone ${Math.min(thrown + 1, 8)} of 8`;
 
         document.getElementById('throw-btn').style.display = 'block';
         document.getElementById('sweep-toggle-btn').style.display = 'none';
@@ -806,6 +830,7 @@
             } else {
                 disableControlsForBot();
                 document.getElementById('throw-btn').disabled = true;
+                // throw_settled was already sent at the top of nextTurn()
             }
         } else if (isBotTurn()) {
             triggerBotTurn();
@@ -2141,7 +2166,9 @@ function drawStagedStones() {
     // EVENT HANDLERS
     // --------------------------------------------------------
     document.getElementById('throw-btn').addEventListener('click', () => {
-        console.log('[THROW-BTN] Clicked! phase=' + gameState.phase + ' currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isOnlineOpponentTurn=' + isOnlineOpponentTurn() + ' remoteDelivery=' + gameState._remoteDelivery);
+        console.log('[THROW-BTN] Clicked! phase=' + gameState.phase + ' currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isOnlineOpponentTurn=' + isOnlineOpponentTurn() + ' remoteDelivery=' + gameState._remoteDelivery + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
+        // Safety: if all 16 stones thrown, force scoring instead of allowing throw
+        if (checkEndOfEndStuck()) return;
         if (gameState.phase === 'aiming') {
             if (isOnlineOpponentTurn()) return;
             deliverStone();
