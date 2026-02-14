@@ -282,47 +282,65 @@ const CurlingBot = (() => {
         return makeDrawToButton(board);
     }
 
-    // --- WITH HAMMER (offensive — draw for multiples, keep house busy) ---
+    // --- WITH HAMMER (offensive — corner guards, keep center open, draw last) ---
+    // Strategy: keep the center lane clear so we can draw to the button
+    // with our last stone. Use corner guards (not center guards) to build
+    // position on the sides. If opponent clogs the center, gently remove.
     function selectShotWithHammer(board) {
         const n = board.botStoneNum;
 
         // If well ahead, play to blank the end (keep hammer)
         const playBlank = board.scoreDiff >= 3 && n >= 6;
 
-        // EARLY STONES (1-2): Draws and corner guards — build position
+        // Opponent center guards blocking our path to the button
+        const oppCenterGuards = board.centerGuards.filter(s => s.team === 'red');
+
+        // EARLY STONES (1-2): Corner guards and draws to the sides
         if (n <= 2) {
-            // Mostly draw, sometimes corner guard
-            if (Math.random() < 0.5) {
-                return makeDrawToHouse(board);
+            // If opponent put up a center guard, gently remove it to keep center open
+            if (oppCenterGuards.length > 0 && !board.fgzActive) {
+                return makeHitAndRoll(board); // remove guard, roll into the house
             }
-            return makeCornerGuard(board);
+            // Corner guard or draw to the side of the house
+            if (Math.random() < 0.5) {
+                return makeCornerGuard(board); // build position off-center
+            }
+            return makeDrawToHouse(board); // draw to the side of the house
         }
 
-        // MID STONES (3-4): Draw-heavy, build position in the house
+        // MID STONES (3-4): Draws to house, corner guards, keep center clear
         if (n <= 4) {
-            // Guard our scoring stones if we have them
+            // Remove opponent center guards — we need that lane open
+            if (oppCenterGuards.length > 0 && !board.fgzActive) {
+                return makeHitAndRoll(board);
+            }
+            // Corner guard to protect our scoring stones
             if (board.botScoring > 0 && board.botGuards.length < 1) {
                 return makeCornerGuard(board);
             }
-            // Draw for more position
+            // Draw for more position in the house
             return makeDrawToHouse(board);
         }
 
-        // LATE STONES (5-6): Draw for scoring, occasional guard
+        // LATE STONES (5-6): Draw for scoring position, guard what we have
         if (n <= 6) {
-            // Guard our scoring stones
+            // Remove opponent center guards — still need center open for last stone
+            if (oppCenterGuards.length > 0 && !board.fgzActive) {
+                return makeHitAndRoll(board);
+            }
+            // Guard our scoring stones off to the side
             if (board.botScoring > 0 && board.botGuards.length < 1) {
                 return makeGuardOwnStone(board);
             }
-            // Opponent scoring a lot — still draw, small chance of tap
+            // Opponent scoring a lot — draw to beat them, small chance of tap
             if (board.oppScoring >= 3) {
                 return Math.random() < 0.3 ? makeTap(board) : makeDrawToButton(board);
             }
-            // Draw closer to the button
+            // Draw closer to the button or to the house
             return Math.random() < 0.4 ? makeDrawToButton(board) : makeDrawToHouse(board);
         }
 
-        // FINAL STONES (7-8): Precision draw to score big
+        // FINAL STONES (7-8): Precision draw to the button — this is why we have hammer
         if (playBlank) {
             return makeBlank(board);
         }
