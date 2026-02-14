@@ -2908,8 +2908,8 @@ function drawStagedStones() {
             showLobbyPanel('lobby-menu');
         });
 
-        CurlingNetwork.onReconnected(({ yourTeam, gameSnapshot, opponent }) => {
-            console.log('[GAME] onReconnected received, team:', yourTeam, 'snapshot:', !!gameSnapshot, 'phase:', gameState.phase);
+        CurlingNetwork.onReconnected(({ yourTeam, currentTeam: serverCurrentTeam, gameSnapshot, opponent }) => {
+            console.log('[GAME] onReconnected: myTeam=' + yourTeam + ' serverCurrentTeam=' + serverCurrentTeam + ' snapshot=' + !!gameSnapshot + ' phase=' + gameState.phase);
             gameState._awaitingConnectionVerify = false;
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
@@ -2920,18 +2920,13 @@ function drawStagedStones() {
             updateScoreboardNames();
 
             // If a stone is currently in-flight (opponent threw just before we
-            // disconnected), fast-forward the physics to completion FIRST so we
-            // don't leave a ghost stone mid-ice.
-            let hadActiveDelivery = false;
+            // disconnected), fast-forward the physics to completion FIRST.
             if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
                 console.log('[GAME] onReconnected — fast-forwarding in-flight stone');
-                hadActiveDelivery = true;
                 fastForwardPhysics();
                 checkFGZViolation();
                 gameState.isSweeping = false;
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
-                gameState.deliveredStone = null;
-                VIEW.followStone = false;
             }
 
             // Cancel any pending replay state
@@ -2939,8 +2934,23 @@ function drawStagedStones() {
                 gameState._replayRestore();
             }
 
+            // Apply snapshot stone positions if available
+            if (gameSnapshot && gameSnapshot.stones && gameSnapshot.stones.length > 0) {
+                gameState.stones = gameSnapshot.stones.map(s => {
+                    const stone = CurlingPhysics.createStone(s.team, s.x, s.y, 0, 0, 0);
+                    stone.active = true;
+                    stone.moving = false;
+                    return stone;
+                });
+            } else {
+                // No snapshot stones — ensure no ghost stones moving
+                for (const s of gameState.stones) {
+                    if (s.active && s.moving) s.moving = false;
+                }
+            }
+
+            // Apply snapshot scores/counters if available
             if (gameSnapshot) {
-                // Server has a snapshot — use it to resync
                 gameState.redScore = gameSnapshot.redScore || 0;
                 gameState.yellowScore = gameSnapshot.yellowScore || 0;
                 gameState.currentEnd = gameSnapshot.currentEnd || 1;
@@ -2948,61 +2958,41 @@ function drawStagedStones() {
                 gameState.yellowThrown = gameSnapshot.yellowThrown || 0;
                 gameState.hammer = gameSnapshot.hammer || TEAMS.YELLOW;
                 gameState.endScores = gameSnapshot.endScores || [];
-                gameState.currentTeam = gameSnapshot.currentTeam || TEAMS.RED;
-                gameState.phase = 'aiming';
-
-                // Rebuild stones from snapshot positions
-                if (gameSnapshot.stones && gameSnapshot.stones.length > 0) {
-                    gameState.stones = gameSnapshot.stones.map(s => {
-                        const stone = CurlingPhysics.createStone(s.team, s.x, s.y, 0, 0, 0);
-                        stone.active = true;
-                        stone.moving = false;
-                        return stone;
-                    });
-                }
-
-                // Update UI
                 document.getElementById('red-total').textContent = gameState.redScore;
                 document.getElementById('yellow-total').textContent = gameState.yellowScore;
                 document.getElementById('current-end').textContent = gameState.currentEnd;
-                updateUI();
-            } else {
-                // No server snapshot — use client state after fast-forward.
-                if (gameState.phase !== 'gameOver') {
-                    // Ensure no ghost stones are left moving
-                    for (const s of gameState.stones) {
-                        if (s.active && s.moving) s.moving = false;
-                    }
-
-                    if (hadActiveDelivery) {
-                        // We just fast-forwarded a delivery. The throw count was
-                        // already incremented by deliverStoneWithParams but the
-                        // team wasn't switched yet. Call nextTurn to advance.
-                        gameState.phase = 'waitingNextTurn';
-                        nextTurn();
-                    } else {
-                        gameState.phase = 'aiming';
-                    }
-                }
-                CurlingNetwork.sendGameStateSync({
-                    currentTeam: gameState.currentTeam,
-                    redScore: gameState.redScore,
-                    yellowScore: gameState.yellowScore,
-                    currentEnd: gameState.currentEnd,
-                    redThrown: gameState.redThrown,
-                    yellowThrown: gameState.yellowThrown,
-                    hammer: gameState.hammer,
-                    endScores: gameState.endScores,
-                    stones: gameState.stones.filter(s => s.active).map(s => ({
-                        team: s.team, x: s.x, y: s.y,
-                    })),
-                });
-                updateUI();
             }
 
-            // Reset delivery state
+            // ALWAYS use the server's authoritative currentTeam.
+            // This is the single source of truth for whose turn it is.
+            if (serverCurrentTeam) {
+                gameState.currentTeam = serverCurrentTeam;
+            }
+
+            // Set phase and clean up delivery state
+            gameState.phase = 'aiming';
             gameState.deliveredStone = null;
+            gameState._pendingAuthState = null;
             VIEW.followStone = false;
+
+            // Push our state to server for future reconnects
+            CurlingNetwork.sendGameStateSync({
+                currentTeam: gameState.currentTeam,
+                redScore: gameState.redScore,
+                yellowScore: gameState.yellowScore,
+                currentEnd: gameState.currentEnd,
+                redThrown: gameState.redThrown,
+                yellowThrown: gameState.yellowThrown,
+                hammer: gameState.hammer,
+                endScores: gameState.endScores,
+                stones: gameState.stones.filter(s => s.active).map(s => ({
+                    team: s.team, x: s.x, y: s.y,
+                })),
+            });
+
+            updateUI();
+
+            console.log('[GAME] onReconnected final: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn());
 
             if (isMyTurn()) {
                 enableControlsForHuman();

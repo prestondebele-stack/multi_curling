@@ -1197,9 +1197,12 @@ async function handleMessage(ws, message) {
                 snapshot = { ...snapshot, currentTeam: room.state.currentTeam };
             }
 
+            console.log(`[RECONNECT] Sending reconnected to slot ${emptySlot} (${team}): serverCurrentTeam=${room.state.currentTeam}, snapshotHas=${!!snapshot}, snapshotCurrentTeam=${snapshot?.currentTeam}, snapshotStones=${snapshot?.stones?.length || 0}`);
+
             send(ws, {
                 type: 'reconnected',
                 yourTeam: team,
+                currentTeam: room.state.currentTeam, // authoritative turn from server
                 gameSnapshot: snapshot,
                 opponent: opponentInfo,
             });

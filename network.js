@@ -209,6 +209,7 @@ const CurlingNetwork = (() => {
                 hasActiveGame = true;
                 if (callbacks.onReconnected) callbacks.onReconnected({
                     yourTeam: data.yourTeam,
+                    currentTeam: data.currentTeam || null, // server's authoritative turn
                     gameSnapshot: data.gameSnapshot || null,
                     opponent: data.opponent || null,
                 });
