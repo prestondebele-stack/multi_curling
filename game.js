@@ -672,9 +672,6 @@
     // UI
     // --------------------------------------------------------
     function updateUI() {
-        // Safety: catch stuck end-of-end before updating UI
-        if (gameState.onlineMode && checkEndOfEndStuck()) return;
-
         const teamLabel = document.getElementById('current-team-label');
         const stonesLabel = document.getElementById('stones-remaining');
 

@@ -1,5 +1,5 @@
 // Service Worker for Capital Curling Club PWA
-const CACHE_NAME = 'curling-v60';
+const CACHE_NAME = 'curling-v61';
 const ASSETS = [
     './',
     './index.html',
@@ -58,7 +58,21 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // Assets (JS, CSS, images): cache first, then network
+    // JS/CSS: network first, fall back to cache (ensures fresh code)
+    if (url.pathname.endsWith('.js') || url.pathname.endsWith('.css')) {
+        event.respondWith(
+            fetch(event.request).then((response) => {
+                const clone = response.clone();
+                caches.open(CACHE_NAME).then((cache) => {
+                    cache.put(event.request, clone);
+                });
+                return response;
+            }).catch(() => caches.match(event.request))
+        );
+        return;
+    }
+
+    // Other assets (images, etc.): cache first, then network
     event.respondWith(
         caches.match(event.request).then((cached) => {
             if (cached) {
