@@ -3595,6 +3595,43 @@ function drawStagedStones() {
         showLobbyPanel('lobby-menu');
     });
 
+    // Share invite link button
+    document.getElementById('share-invite-btn').addEventListener('click', () => {
+        const roomCode = document.getElementById('room-code-display').textContent.trim();
+        if (!roomCode || roomCode === '----') return;
+        const shareUrl = window.location.origin + window.location.pathname + '?join=' + roomCode;
+        const shareText = 'Join my curling game! ' + shareUrl;
+        const copiedMsg = document.getElementById('share-copied-msg');
+
+        if (navigator.share) {
+            navigator.share({
+                title: 'Capital Curling Club',
+                text: 'Join my curling game!',
+                url: shareUrl
+            }).catch(() => {
+                // User cancelled share — no action needed
+            });
+        } else {
+            // Desktop fallback: copy to clipboard
+            navigator.clipboard.writeText(shareUrl).then(() => {
+                copiedMsg.style.display = 'block';
+                setTimeout(() => { copiedMsg.style.display = 'none'; }, 2500);
+            }).catch(() => {
+                // Fallback for older browsers without clipboard API
+                const ta = document.createElement('textarea');
+                ta.value = shareUrl;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                copiedMsg.style.display = 'block';
+                setTimeout(() => { copiedMsg.style.display = 'none'; }, 2500);
+            });
+        }
+    });
+
     document.getElementById('lobby-cancel-join').addEventListener('click', () => {
         showLobbyPanel('lobby-menu');
     });
@@ -3880,8 +3917,58 @@ function drawStagedStones() {
     });
 
     // --------------------------------------------------------
+    // URL AUTO-JOIN (?join=XXXX)
+    // --------------------------------------------------------
+    (function checkAutoJoin() {
+        const params = new URLSearchParams(window.location.search);
+        const joinCode = params.get('join');
+        if (!joinCode || joinCode.length !== 4) return;
+
+        // Clean the URL so refresh doesn't re-join
+        history.replaceState({}, '', window.location.pathname);
+
+        // Dismiss welcome screen if present
+        dismissWelcome();
+
+        // Switch UI to online mode
+        document.getElementById('mode-online').classList.add('active');
+        document.getElementById('mode-1p').classList.remove('active');
+        document.getElementById('mode-2p').classList.remove('active');
+        document.getElementById('difficulty-selector').classList.add('hidden');
+        document.getElementById('ends-selector-local').classList.add('hidden');
+
+        // Connect and auto-join the room
+        CurlingNetwork.connect(SERVER_URL).then(() => {
+            showLobbyScreen();
+            // Skip auth — go straight to join
+            document.getElementById('auth-panel').style.display = 'none';
+            showLobbyPanel('lobby-join-panel');
+            document.getElementById('join-error').style.display = 'none';
+            document.getElementById('room-code-input').value = joinCode.toUpperCase();
+
+            // Auto-submit the join
+            CurlingNetwork.joinRoom(joinCode);
+        }).catch(() => {
+            alert('Could not connect to server. Please try again.');
+        });
+    })();
+
+    // --------------------------------------------------------
     // INIT
     // --------------------------------------------------------
+
+    // Auto-set beta version from service worker cache name (single source of truth: sw.js)
+    if ('caches' in window) {
+        caches.keys().then(names => {
+            const curlingCache = names.find(n => n.startsWith('curling-v'));
+            if (curlingCache) {
+                const ver = curlingCache.replace('curling-', '');
+                const el = document.getElementById('beta-version');
+                if (el) el.textContent = ver;
+            }
+        }).catch(() => {});
+    }
+
     resizeCanvas();
     updateUI();
     // Deferred resize to catch mobile layout after UI panel is measured
