@@ -216,7 +216,7 @@ const CurlingBot = (() => {
         }
     }
 
-    // --- WITHOUT HAMMER (defensive — protect position, build guards) ---
+    // --- WITHOUT HAMMER (defensive — build guards, draw, finesse) ---
     function selectShotWithoutHammer(board) {
         const n = board.botStoneNum;
         const P = CurlingPhysics.POSITIONS;
@@ -229,7 +229,7 @@ const CurlingBot = (() => {
         const preferConservative = board.isEarlyGame && board.scoreDiff >= 0;
         const aggressiveLate = board.isLateGame && board.scoreDiff < 0;
 
-        // EARLY STONES (1-2): Center guards
+        // EARLY STONES (1-2): Center guards — build a wall
         if (n <= 2) {
             if (!board.centerBlocked || board.centerGuards.length < 2) {
                 return makeCenterGuard(board, n);
@@ -237,51 +237,71 @@ const CurlingBot = (() => {
             return makeDrawBehindGuard(board);
         }
 
-        // MID STONES (3-4): Come-arounds, replace guards, freeze option
+        // MID STONES (3-4): Come-arounds, draws, freeze — build position
         if (n <= 4) {
             if (board.centerGuards.filter(s => s.team === 'yellow').length === 0 && !board.fgzActive) {
                 // Our guards were removed and FGZ is off — replace them
                 return makeCenterGuard(board, n);
             }
             if (board.shotTeam === 'red') {
-                // Freeze against their shot stone if we have a guard protecting us
-                if (board.botGuards.length > 0 && Math.random() < 0.4) {
-                    return makeFreeze(board);
+                // They have shot stone — freeze or come-around behind our guards
+                if (board.botGuards.length > 0) {
+                    return Math.random() < 0.5 ? makeFreeze(board) : makeDrawBehindGuard(board);
                 }
                 return makeDrawBehindGuard(board);
             }
+            // We're in good shape — draw for more position
+            if (board.botScoring > 0 && board.botGuards.length < 2) {
+                return makeGuardOwnStone(board); // protect what we have
+            }
             return makeDrawToHouse(board);
         }
 
-        // LATE STONES (5-6): Controlled responses to threats
+        // LATE STONES (5-6): Finesse responses — prefer taps, freezes, draws over takeouts
         if (n <= 6) {
+            if (board.oppScoring >= 3 && board.isDesperateTrailing) {
+                return makeTakeout(board); // only takeout when truly desperate
+            }
             if (board.oppScoring >= 2) {
-                return makeTakeout(board); // major threat: full takeout
+                // Opponent scoring 2+ — try a tap or freeze first, takeout only as last resort
+                if (Math.random() < 0.6) {
+                    return makeTap(board); // gentle nudge to displace
+                }
+                return makeFreeze(board); // crowd their stone
             }
             if (board.oppScoring === 1) {
                 if (preferConservative) {
-                    return makeTap(board); // early game: gentle nudge
+                    return makeDrawToHouse(board); // early game: just draw for position
                 }
-                if (aggressiveLate) {
-                    return makeTakeout(board); // late game trailing: remove it
-                }
-                return makeHitAndRoll(board); // default: hit and stay in house
+                // Try a tap to nudge them off, or freeze beside them
+                return Math.random() < 0.5 ? makeTap(board) : makeFreeze(board);
             }
-            if (board.botScoring > 0 && aggressive) {
-                return makeGuardOwnStone(board);
+            if (board.botScoring > 0) {
+                if (board.botGuards.length < 2) {
+                    return makeGuardOwnStone(board); // protect our scoring stones
+                }
+                return makeDrawToHouse(board); // add more scoring stones
             }
             return makeDrawToHouse(board);
         }
 
-        // FINAL STONES (7-8): Protect or respond to threats
-        if (board.oppScoring >= 2) {
-            return makeTakeout(board);
+        // FINAL STONES (7-8): Protect position or respond with finesse
+        if (board.oppScoring >= 3) {
+            return makeTakeout(board); // 3+ is critical — must remove
+        }
+        if (board.oppScoring === 2) {
+            // Try a tap first to displace, only takeout if desperate
+            if (board.isDesperateTrailing) {
+                return makeTakeout(board);
+            }
+            return Math.random() < 0.6 ? makeTap(board) : makeHitAndRoll(board);
         }
         if (board.oppScoring === 1) {
-            if (board.isDesperateTrailing) {
-                return makeTakeout(board); // desperate: don't risk finesse
+            // Single stone threat — freeze beside it or draw closer to button
+            if (board.botScoring >= 1) {
+                return makeFreeze(board); // crowd them, hard to remove both
             }
-            return makeHitAndRoll(board); // hit and roll preferred over hard takeout
+            return makeDrawToButton(board); // draw closer than their stone
         }
         if (board.botScoring > 0) {
             if (board.botScoring >= 2) {
@@ -292,10 +312,10 @@ const CurlingBot = (() => {
             }
             return makeDrawToHouse(board);
         }
-        return makeDrawToHouse(board);
+        return makeDrawToButton(board);
     }
 
-    // --- WITH HAMMER (offensive — keep center open, draw for multiple) ---
+    // --- WITH HAMMER (offensive — draw for multiples, use finesse) ---
     function selectShotWithHammer(board) {
         const n = board.botStoneNum;
         const P = CurlingPhysics.POSITIONS;
@@ -307,63 +327,79 @@ const CurlingBot = (() => {
         const preferDraws = board.isEarlyGame && board.scoreDiff >= 0;
         const aggressiveLate = board.isLateGame && board.scoreDiff < 0;
 
-        // EARLY STONES (1-2): Keep it simple, open play
+        // EARLY STONES (1-2): Draws and corner guards — build position
         if (n <= 2) {
             const oppCenterGuards = board.centerGuards.filter(s => s.team === 'red');
             if (oppCenterGuards.length > 0 && !board.fgzActive) {
-                // FGZ is OFF — can remove guard
-                if (preferDraws) {
-                    return makeHitAndRoll(board); // early game: gentle removal
+                // FGZ is OFF — gently tap their guard or draw around it
+                if (Math.random() < 0.5) {
+                    return makeDrawToHouse(board); // ignore guard, draw for position
                 }
-                if (aggressiveLate) {
-                    return makePeel(board); // late game trailing: peel hard
-                }
-                return makeHitAndRoll(board); // default: remove guard, stay in play
+                return makeHitAndRoll(board); // gentle removal, stay in play
             }
-            if (preferDraws) {
-                return makeDrawToHouse(board); // early game: draw for position
+            // Default: draw or corner guard for position
+            if (Math.random() < 0.6) {
+                return makeDrawToHouse(board);
             }
             return makeCornerGuard(board);
         }
 
-        // MID STONES (3-4): Develop position, handle opponent guards
+        // MID STONES (3-4): Draw-focused, handle guards with finesse
         if (n <= 4) {
             const oppCenterGuards = board.centerGuards.filter(s => s.team === 'red');
             if (oppCenterGuards.length > 0 && !board.fgzActive) {
-                if (aggressiveLate) {
-                    return makePeel(board); // late game: remove it hard
+                // Tap the guard gently or draw around it
+                if (Math.random() < 0.4) {
+                    return makeHitAndRoll(board); // stay in play after removing guard
                 }
-                return makeHitAndRoll(board); // stay in play after removing guard
+                return makeDrawToHouse(board); // draw around the guard
             }
-            if (board.oppScoring > 0) {
-                if (board.oppScoring === 1 && !aggressiveLate) {
-                    return makeHitAndRoll(board); // gentle response to minor threat
-                }
-                return makeTakeout(board); // opponent scoring 2+: takeout
-            }
-            return makeDrawToHouse(board);
-        }
-
-        // LATE STONES (5-6): Position scoring stones, remove threats
-        if (n <= 6) {
             if (board.oppScoring >= 2) {
-                return makeTakeout(board); // serious threat: full takeout
+                // Opponent scoring multiple — tap or freeze, not hard takeout
+                return Math.random() < 0.5 ? makeTap(board) : makeFreeze(board);
             }
             if (board.oppScoring === 1) {
-                return makeHitAndRoll(board); // remove AND stay in house
+                // Single stone — draw closer to beat it, or freeze beside it
+                return Math.random() < 0.6 ? makeDrawToButton(board) : makeFreeze(board);
             }
             return makeDrawToHouse(board);
         }
 
-        // FINAL STONES (7-8): Close out the end
+        // LATE STONES (5-6): Draw for scoring position, tap threats
+        if (n <= 6) {
+            if (board.oppScoring >= 3) {
+                // Critical threat — need to remove
+                return Math.random() < 0.5 ? makeTakeout(board) : makeTap(board);
+            }
+            if (board.oppScoring >= 2) {
+                // Try a tap or freeze before considering takeout
+                return Math.random() < 0.6 ? makeTap(board) : makeFreeze(board);
+            }
+            if (board.oppScoring === 1) {
+                // Opponent has one — draw closer or freeze beside
+                return Math.random() < 0.5 ? makeDrawToButton(board) : makeFreeze(board);
+            }
+            // No threats — draw for extra scoring stones
+            return makeDrawToHouse(board);
+        }
+
+        // FINAL STONES (7-8): Close out the end with precision draws
         if (playBlank) {
             return makeBlank(board);
         }
+        if (board.oppScoring >= 3) {
+            return makeTakeout(board); // critical: must remove
+        }
         if (board.oppScoring > board.botScoring) {
             if (board.oppScoring === 1 && board.botScoring === 0) {
-                return makeHitAndRoll(board); // trade positions
+                // Just draw to button to beat them
+                return makeDrawToButton(board);
             }
-            return makeTakeout(board);
+            if (board.oppScoring >= 2) {
+                // Try a tap to displace, or draw to beat them
+                return Math.random() < 0.5 ? makeTap(board) : makeDrawToButton(board);
+            }
+            return makeDrawToButton(board);
         }
         return makeDrawToButton(board);
     }
