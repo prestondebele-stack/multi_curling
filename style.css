@@ -542,7 +542,7 @@ body {
 .player-name {
     font-size: 10px;
     color: #999;
-    max-width: 70px;
+    max-width: 95px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

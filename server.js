@@ -263,10 +263,11 @@ async function getPlayerInfo(ws) {
         return {
             username: session.username,
             rank: profile ? profile.rank : auth.getRank(1200),
+            country: profile ? (profile.country || '') : '',
         };
     } catch (e) {
         console.error('getPlayerInfo error:', e.message);
-        return { username: session.username, rank: auth.getRank(1200) };
+        return { username: session.username, rank: auth.getRank(1200), country: '' };
     }
 }
 

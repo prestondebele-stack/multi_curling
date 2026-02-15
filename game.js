@@ -2572,8 +2572,22 @@ function drawStagedStones() {
         badge.style.display = 'block';
     }
 
+    // Convert 2-letter ISO country code to Unicode flag emoji
+    function countryToFlag(code) {
+        if (!code || code.length !== 2) return '';
+        const c = code.toUpperCase();
+        // Scotland uses non-standard "SC" — map to the Scotland flag emoji
+        if (c === 'SC') return '\uD83C\uDFF4\uDB40\uDC67\uDB40\uDC62\uDB40\uDC73\uDB40\uDC63\uDB40\uDC74\uDB40\uDC7F';
+        // Standard: convert each letter to regional indicator symbol
+        return String.fromCodePoint(
+            0x1F1E6 + c.charCodeAt(0) - 65,
+            0x1F1E6 + c.charCodeAt(1) - 65
+        );
+    }
+
     function updateScoreboardNames() {
         const myName = localStorage.getItem('curling_username') || null;
+        const myCountry = localStorage.getItem('curling_country') || '';
         const oppInfo = gameState.opponentInfo;
         const myTeam = gameState.myTeam;
 
@@ -2587,12 +2601,17 @@ function drawStagedStones() {
             return;
         }
 
+        const myFlag = countryToFlag(myCountry);
+        const oppFlag = countryToFlag(oppInfo ? oppInfo.country : '');
+        const myLabel = myFlag + (myName ? ' ' + myName + ' (you)' : ' You');
+        const oppLabel = oppFlag + (oppInfo ? ' ' + oppInfo.username : ' Guest');
+
         if (myTeam === TEAMS.RED) {
-            redNameEl.textContent = myName ? myName + ' (you)' : 'You';
-            yellowNameEl.textContent = oppInfo ? oppInfo.username : 'Guest';
+            redNameEl.textContent = myLabel;
+            yellowNameEl.textContent = oppLabel;
         } else {
-            yellowNameEl.textContent = myName ? myName + ' (you)' : 'You';
-            redNameEl.textContent = oppInfo ? oppInfo.username : 'Guest';
+            yellowNameEl.textContent = myLabel;
+            redNameEl.textContent = oppLabel;
         }
     }
 
@@ -2608,7 +2627,8 @@ function drawStagedStones() {
             return;
         }
 
-        nameLabel.textContent = opponent.username;
+        const flag = countryToFlag(opponent.country || '');
+        nameLabel.textContent = flag + (flag ? ' ' : '') + opponent.username;
         if (opponent.rank) {
             rankBadge.textContent = opponent.rank.name;
             rankBadge.style.background = opponent.rank.color;
@@ -2627,10 +2647,13 @@ function drawStagedStones() {
         }
 
         const myName = localStorage.getItem('curling_username') || 'You';
+        const myCountry = localStorage.getItem('curling_country') || '';
         const oppInfo = gameState.opponentInfo;
         const oppName = oppInfo ? oppInfo.username : 'Guest';
+        const myFlag = countryToFlag(myCountry);
+        const oppFlag = countryToFlag(oppInfo ? oppInfo.country : '');
 
-        let html = `<span style="color:#fff">${myName}</span> <span>vs</span> <span style="color:#fff">${oppName}</span>`;
+        let html = `<span style="color:#fff">${myFlag} ${myName}</span> <span>vs</span> <span style="color:#fff">${oppFlag} ${oppName}</span>`;
         if (oppInfo && oppInfo.rank) {
             html += ` <span class="rank-badge" style="background:${oppInfo.rank.color}">${oppInfo.rank.name}</span>`;
         }
@@ -3435,6 +3458,7 @@ function drawStagedStones() {
             // If auto-login token expired, clear it
             localStorage.removeItem('curling_token');
             localStorage.removeItem('curling_username');
+            localStorage.removeItem('curling_country');
             document.getElementById('user-info-bar').style.display = 'none';
             // Only show login form if NOT in an active game.
             // During reconnect, token_login may fail (server restarted) but
@@ -3454,6 +3478,9 @@ function drawStagedStones() {
                     `${profile.wins}W / ${profile.losses}L / ${profile.draws}D`;
                 if (profile.rank) {
                     updateRankBadge(profile.rank);
+                }
+                if (profile.country) {
+                    localStorage.setItem('curling_country', profile.country);
                 }
             }
         });
@@ -3875,6 +3902,7 @@ function drawStagedStones() {
     document.getElementById('auth-logout').addEventListener('click', () => {
         localStorage.removeItem('curling_token');
         localStorage.removeItem('curling_username');
+        localStorage.removeItem('curling_country');
         document.getElementById('user-info-bar').style.display = 'none';
         document.getElementById('auth-panel').style.display = 'flex';
         document.getElementById('lobby-menu').style.display = 'none';
