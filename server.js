@@ -153,6 +153,8 @@ function createRoom(hostWs, totalEnds) {
         createdAt: Date.now(),
         disconnectTimers: [null, null],
         pendingMessages: [[], []], // queued messages per slot when opponent is offline
+        throwSettleTimer: null,    // timeout: auto-advance if throw_settled never arrives
+        lastThrowBy: null,         // index of player who threw (0 or 1)
     };
     rooms.set(code, room);
     playerRooms.set(hostWs, code);
@@ -418,6 +420,7 @@ function destroyRoom(code) {
     const room = rooms.get(code);
     if (!room) return;
 
+    if (room.throwSettleTimer) clearTimeout(room.throwSettleTimer);
     for (let i = 0; i < 2; i++) {
         if (room.disconnectTimers[i]) clearTimeout(room.disconnectTimers[i]);
         if (room.players[i]) playerRooms.delete(room.players[i]);
@@ -956,6 +959,9 @@ async function handleMessage(ws, message) {
             // Acknowledge the throw to the thrower so client knows it was received
             send(ws, { type: 'throw_ack' });
 
+            // Track who threw for the settle timeout
+            room.lastThrowBy = getPlayerIndex(room, ws);
+
             const opponent = getOpponent(room, ws);
             const throwMsg = {
                 type: 'opponent_throw',
@@ -972,6 +978,28 @@ async function handleMessage(ws, message) {
                 room.pendingMessages[opponentIdx].push(throwMsg);
                 console.log(`[THROW WARN] opponent not connected — queued for slot ${opponentIdx} (room ${code})`);
             }
+
+            // Start throw settle timeout: if the thrower's client doesn't send
+            // throw_settled within 45s (e.g. tab backgrounded, physics frozen),
+            // nudge them with a settle_nudge so they fast-forward and send it.
+            if (room.throwSettleTimer) clearTimeout(room.throwSettleTimer);
+            room.throwSettleTimer = setTimeout(() => {
+                room.throwSettleTimer = null;
+                // Only nudge if the room still exists and the thrower is connected
+                const throwerWs = room.players[room.lastThrowBy];
+                if (throwerWs && throwerWs.readyState === WebSocket.OPEN) {
+                    console.log(`[SETTLE_TIMEOUT] No throw_settled in 45s — nudging thrower (room ${code})`);
+                    send(throwerWs, { type: 'settle_nudge' });
+                } else {
+                    console.log(`[SETTLE_TIMEOUT] No throw_settled in 45s and thrower disconnected (room ${code})`);
+                    // Thrower is gone — tell opponent to apply whatever state they have
+                    const oppIdx = room.lastThrowBy === 0 ? 1 : 0;
+                    const oppWs = room.players[oppIdx];
+                    if (oppWs && oppWs.readyState === WebSocket.OPEN) {
+                        send(oppWs, { type: 'settle_nudge' });
+                    }
+                }
+            }, 45000);
 
             // Send push notification to the player whose turn it now is
             const nextIdx = room.state.currentTeam === 'red' ? 0 : 1;
@@ -1077,6 +1105,12 @@ async function handleMessage(ws, message) {
             if (!code) return;
             const room = rooms.get(code);
             if (!room) return;
+
+            // Clear the settle timeout — thrower reported in time
+            if (room.throwSettleTimer) {
+                clearTimeout(room.throwSettleTimer);
+                room.throwSettleTimer = null;
+            }
 
             // Store as latest snapshot too
             if (data.snapshot) room.gameSnapshot = data.snapshot;

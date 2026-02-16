@@ -87,6 +87,8 @@ const CurlingNetwork = (() => {
         onConnectionVerified: null,
         // Chat
         onChatMessage: null,
+        // Server settle nudge (throw_settled timeout)
+        onSettleNudge: null,
     };
 
     function send(data) {
@@ -373,6 +375,9 @@ const CurlingNetwork = (() => {
             // Authoritative state from thrower
             case 'authoritative_state':
                 if (callbacks.onAuthoritativeState) callbacks.onAuthoritativeState(data);
+                break;
+            case 'settle_nudge':
+                if (callbacks.onSettleNudge) callbacks.onSettleNudge();
                 break;
         }
     }
@@ -692,6 +697,8 @@ const CurlingNetwork = (() => {
         onSearchResults(cb) { callbacks.onSearchResults = cb; },
         // Authoritative state
         onAuthoritativeState(cb) { callbacks.onAuthoritativeState = cb; },
+        // Settle nudge (server timeout)
+        onSettleNudge(cb) { callbacks.onSettleNudge = cb; },
         // Connection verified
         onConnectionVerified(cb) { callbacks.onConnectionVerified = cb; },
         // Chat
