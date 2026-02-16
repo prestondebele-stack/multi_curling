@@ -15,6 +15,24 @@ const CurlingNetwork = (() => {
     let isReconnecting = false;       // Guard against parallel reconnect cycles
     let hasActiveGame = false;        // True once game_start or reconnected received
 
+    // Persist active game session to sessionStorage so page refresh/back swipe can rejoin
+    function saveActiveSession() {
+        try {
+            if (roomCode) {
+                sessionStorage.setItem('curling_active_room', roomCode);
+            }
+            if (myTeam) {
+                sessionStorage.setItem('curling_active_team', myTeam);
+            }
+        } catch (e) { /* sessionStorage unavailable */ }
+    }
+    function clearActiveSession() {
+        try {
+            sessionStorage.removeItem('curling_active_room');
+            sessionStorage.removeItem('curling_active_team');
+        } catch (e) { /* sessionStorage unavailable */ }
+    }
+
     // Event callbacks
     const callbacks = {
         onGameStart: null,
@@ -125,11 +143,13 @@ const CurlingNetwork = (() => {
 
             case 'room_created':
                 roomCode = data.code;
+                saveActiveSession();
                 if (callbacks.onRoomCreated) callbacks.onRoomCreated({ code: data.code });
                 break;
 
             case 'room_joined':
                 roomCode = data.code;
+                saveActiveSession();
                 if (callbacks.onRoomJoined) callbacks.onRoomJoined({ code: data.code });
                 break;
 
@@ -151,6 +171,7 @@ const CurlingNetwork = (() => {
                 reconnectAttempts = 0;
                 isReconnecting = false;
                 hasActiveGame = true;
+                saveActiveSession();
                 if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6 });
                 break;
 
@@ -195,6 +216,7 @@ const CurlingNetwork = (() => {
 
             case 'opponent_left':
                 hasActiveGame = false;
+                clearActiveSession();
                 if (callbacks.onOpponentLeft) callbacks.onOpponentLeft();
                 break;
 
@@ -205,6 +227,7 @@ const CurlingNetwork = (() => {
             case 'rematch_accepted':
                 myTeam = data.yourTeam;
                 hasActiveGame = true;
+                saveActiveSession();
                 if (callbacks.onRematchAccepted) callbacks.onRematchAccepted({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6 });
                 break;
 
@@ -213,6 +236,7 @@ const CurlingNetwork = (() => {
                 reconnectAttempts = 0;
                 isReconnecting = false;
                 hasActiveGame = true;
+                saveActiveSession();
                 if (callbacks.onReconnected) callbacks.onReconnected({
                     yourTeam: data.yourTeam,
                     currentTeam: data.currentTeam || null, // server's authoritative turn
@@ -232,6 +256,7 @@ const CurlingNetwork = (() => {
                 } else {
                     isReconnecting = false;
                     hasActiveGame = false;
+                    clearActiveSession();
                     if (callbacks.onReconnectFailed) callbacks.onReconnectFailed();
                 }
                 break;
@@ -524,10 +549,18 @@ const CurlingNetwork = (() => {
             myTeam = null;
             roomCode = null;
             reconnectAttempts = 0;
+            clearActiveSession();
         },
 
         isConnected() {
             return ws && ws.readyState === WebSocket.OPEN;
+        },
+
+        // Rejoin active game after page refresh / back swipe
+        sendReconnect(code) {
+            roomCode = code;
+            hasActiveGame = true;
+            send({ type: 'reconnect', code: code.toUpperCase() });
         },
 
         // Lobby
@@ -641,5 +674,16 @@ const CurlingNetwork = (() => {
         // State
         getMyTeam() { return myTeam; },
         getRoomCode() { return roomCode; },
+
+        // Active game session persistence (for page refresh / back swipe recovery)
+        getActiveSession() {
+            try {
+                const code = sessionStorage.getItem('curling_active_room');
+                const team = sessionStorage.getItem('curling_active_team');
+                if (code) return { roomCode: code, myTeam: team || null };
+            } catch (e) { /* sessionStorage unavailable */ }
+            return null;
+        },
+        clearActiveSession() { clearActiveSession(); },
     };
 })();

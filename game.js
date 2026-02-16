@@ -573,6 +573,9 @@
     }
 
     function showGameOver() {
+        // Game is over — clear the active session so page refresh doesn't try to rejoin
+        CurlingNetwork.clearActiveSession();
+
         const screen = document.getElementById('game-over-screen');
         const winnerText = document.getElementById('winner-text');
         const finalScores = document.getElementById('final-scores');
@@ -4028,6 +4031,44 @@ function drawStagedStones() {
             CurlingNetwork.joinRoom(joinCode);
         }).catch(() => {
             alert('Could not connect to server. Please try again.');
+        });
+    })();
+
+    // --------------------------------------------------------
+    // AUTO-REJOIN ACTIVE GAME (page refresh / back swipe recovery)
+    // --------------------------------------------------------
+    (function checkActiveGameSession() {
+        // Skip if URL auto-join already handled
+        if (new URLSearchParams(window.location.search).get('join')) return;
+
+        const session = CurlingNetwork.getActiveSession();
+        if (!session || !session.roomCode) return;
+
+        console.log('[REJOIN] Found active session: room=' + session.roomCode + ' team=' + session.myTeam);
+
+        // Dismiss welcome screen if present
+        dismissWelcome();
+
+        // Switch UI to online mode
+        document.getElementById('mode-online').classList.add('active');
+        document.getElementById('mode-1p').classList.remove('active');
+        document.getElementById('mode-2p').classList.remove('active');
+        document.getElementById('difficulty-selector').classList.add('hidden');
+        document.getElementById('ends-selector-local').classList.add('hidden');
+
+        // Connect and send reconnect
+        CurlingNetwork.connect(SERVER_URL).then(() => {
+            // Re-authenticate with saved token
+            const savedToken = localStorage.getItem('curling_token');
+            if (savedToken) {
+                CurlingNetwork.sendTokenLogin(savedToken);
+            }
+            // The reconnect message is sent by network.js attemptReconnect automatically,
+            // but since this is a fresh page load (not a WS reconnect), we need to send it manually.
+            CurlingNetwork.sendReconnect(session.roomCode);
+        }).catch(() => {
+            console.log('[REJOIN] Connection failed — clearing session');
+            CurlingNetwork.clearActiveSession();
         });
     })();
 
