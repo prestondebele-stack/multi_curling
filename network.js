@@ -250,9 +250,20 @@ const CurlingNetwork = (() => {
                 // If we have an active game, DON'T give up — retry.
                 // The server may still be processing the old socket's close.
                 if (hasActiveGame && reconnectAttempts < 30) {
-                    console.log('[RECONNECT] Server returned reconnect_failed but game active — retrying');
-                    isReconnecting = false;
-                    attemptReconnect();
+                    reconnectAttempts++;
+                    const retryDelay = Math.min(500 * Math.pow(2, reconnectAttempts - 1), 8000);
+                    console.log('[RECONNECT] Server returned reconnect_failed but game active — retrying in ' + retryDelay + 'ms (attempt ' + reconnectAttempts + ')');
+                    // If ws is still open, just re-send the reconnect message after a delay
+                    // (no need to open a new ws — the connection is fine, slot just isn't free yet)
+                    if (ws && ws.readyState === WebSocket.OPEN && roomCode) {
+                        setTimeout(() => {
+                            send({ type: 'reconnect', code: roomCode, team: myTeam || undefined });
+                        }, retryDelay);
+                    } else {
+                        // Connection is dead — use the full reconnect cycle
+                        isReconnecting = false;
+                        attemptReconnect();
+                    }
                 } else {
                     isReconnecting = false;
                     hasActiveGame = false;

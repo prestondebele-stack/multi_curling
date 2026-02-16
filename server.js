@@ -326,29 +326,50 @@ function removeFromQueue(ws) {
 function cleanupPlayer(ws) {
     removeFromQueue(ws);
 
-    // Track presence before removing session
     const session = playerSessions.get(ws);
-    if (session && session.userId) {
-        onlineUsers.delete(session.userId);
-        cleanupInvitesForUser(session.userId);
-        broadcastPresenceToFriends(session.userId, 'offline');
-    }
-    playerSessions.delete(ws);
-
     const code = playerRooms.get(ws);
-    if (!code) return;
+
+    // If the player is NOT in a room, clean up fully (offline presence, etc.)
+    if (!code) {
+        if (session && session.userId) {
+            onlineUsers.delete(session.userId);
+            cleanupInvitesForUser(session.userId);
+            broadcastPresenceToFriends(session.userId, 'offline');
+        }
+        playerSessions.delete(ws);
+        return;
+    }
 
     const room = rooms.get(code);
     if (!room) {
+        if (session && session.userId) {
+            onlineUsers.delete(session.userId);
+            cleanupInvitesForUser(session.userId);
+            broadcastPresenceToFriends(session.userId, 'offline');
+        }
+        playerSessions.delete(ws);
         playerRooms.delete(ws);
         return;
     }
 
     const playerIdx = getPlayerIndex(room, ws);
     if (playerIdx === -1) {
+        if (session && session.userId) {
+            onlineUsers.delete(session.userId);
+            broadcastPresenceToFriends(session.userId, 'offline');
+        }
+        playerSessions.delete(ws);
         playerRooms.delete(ws);
         return;
     }
+
+    // Player IS in a room — DON'T delete their session or presence yet.
+    // Keep room.sessions[idx] cached so reconnect can restore it.
+    // Only delete the ws->session mapping (ws is dead), but preserve the session data.
+    room.sessions[playerIdx] = session || room.sessions[playerIdx];
+    playerSessions.delete(ws);
+    // DON'T delete from onlineUsers yet — wait for grace period to expire.
+    // This prevents the brief "offline" flash to friends during reconnect.
 
     // DON'T notify the opponent immediately — give the player a 45-second
     // grace period to reconnect (common when sending a text on mobile).
@@ -367,10 +388,21 @@ function cleanupPlayer(ws) {
             send(opponent, { type: 'opponent_disconnected' });
         }
 
+        // NOW broadcast offline to friends (grace period expired without reconnect)
+        if (session && session.userId) {
+            broadcastPresenceToFriends(session.userId, 'offline');
+        }
+
         // Now start the 5-minute hard timer for room destruction
         room.disconnectTimers[playerIdx] = setTimeout(() => {
             // Check again — they may have reconnected after the notification
             if (room.players[playerIdx] !== null) return;
+
+            // Clean up fully — player gave up
+            if (session && session.userId) {
+                onlineUsers.delete(session.userId);
+                cleanupInvitesForUser(session.userId);
+            }
 
             if (opponent && opponent.readyState === WebSocket.OPEN) {
                 send(opponent, { type: 'opponent_left' });
@@ -1209,14 +1241,20 @@ async function handleMessage(ws, message) {
                 return;
             }
 
-            // Cancel disconnect timer (grace period or hard timer)
+            // Duplicate reconnect guard: if this ws is already in this slot, just resend state
+            if (room.players[emptySlot] === ws && playerRooms.get(ws) === code) {
+                console.log(`[RECONNECT] Duplicate reconnect from same ws in slot ${emptySlot} — resending state`);
+                // Fall through to resend reconnected state (no slot changes needed)
+            } else {
+                room.players[emptySlot] = ws;
+                playerRooms.set(ws, code);
+            }
+
+            // Cancel disconnect timers for THIS slot (grace + hard timer)
             if (room.disconnectTimers[emptySlot]) {
                 clearTimeout(room.disconnectTimers[emptySlot]);
                 room.disconnectTimers[emptySlot] = null;
             }
-
-            room.players[emptySlot] = ws;
-            playerRooms.set(ws, code);
 
             // Restore cached session to this ws if available
             // (token_login may not have fired yet — it's sent after reconnect)

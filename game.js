@@ -2442,13 +2442,22 @@ function drawStagedStones() {
     function clearOnlineMode(reason) {
         console.log('[CLEAR_ONLINE] reason=' + (reason || 'unknown'));
         if (gameState.onlineMode) {
-            CurlingNetwork.sendLeave();
+            // Don't send 'leave' if we're clearing because opponent left or reconnect failed
+            // — the room is already gone / being destroyed server-side.
+            if (reason !== 'opponent-left' && reason !== 'reconnect-failed') {
+                CurlingNetwork.sendLeave();
+            }
             CurlingNetwork.disconnect();
         }
+        // Always clear the session so page refresh doesn't try to rejoin a dead room
+        CurlingNetwork.clearActiveSession();
         gameState.onlineMode = false;
         gameState.myTeam = null;
         gameState.roomCode = null;
         gameState.opponentInfo = null;
+        gameState._remoteDelivery = false;
+        gameState._latestStonePositions = null;
+        gameState._pendingAuthState = null;
         document.getElementById('online-team-badge').style.display = 'none';
         document.getElementById('chat-btn').style.display = 'none';
         document.getElementById('chat-popup').style.display = 'none';
@@ -3290,26 +3299,53 @@ function drawStagedStones() {
             showOnlineTeamBadge();
             updateScoreboardNames();
 
-            // If a stone is currently in-flight, handle based on delivery type.
-            if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
-                if (gameState._remoteDelivery) {
-                    // Remote delivery: no local physics to fast-forward.
-                    // authoritative_state will arrive when thrower's stone settles.
-                    console.log('[GAME] onReconnected — remote delivery, skipping fast-forward');
-                } else {
-                    console.log('[GAME] onReconnected — fast-forwarding in-flight stone');
-                    fastForwardPhysics();
-                    checkFGZViolation();
-                }
-                gameState.isSweeping = false;
-                gameState._remoteDelivery = false;
-                document.getElementById('sweep-toggle-btn').style.display = 'none';
-            }
+            // Reset the end-of-end safety net timer so it doesn't fire immediately
+            _endOfEndStuckTimer = 0;
 
             // Cancel any pending replay state
             if (gameState.isReplaying && gameState._replayRestore) {
                 gameState._replayRestore();
             }
+
+            // ---- Handle in-flight stones based on delivery type ----
+            // KEY PRINCIPLE: If MY stone is currently being delivered locally,
+            // DON'T clobber it with the snapshot. Let physics finish, then
+            // nextTurn() will send throw_settled. The snapshot is stale (pre-throw).
+            const myThrowInFlight = (gameState.phase === 'delivering' || gameState.phase === 'settling') && !gameState._remoteDelivery;
+
+            if (myThrowInFlight) {
+                // My stone is in-flight with local physics — let it finish naturally.
+                // The snapshot is from BEFORE this throw, so applying it would erase the stone.
+                // Only update metadata that won't affect the active throw.
+                console.log('[GAME] onReconnected — my throw in-flight, preserving local physics');
+                if (serverCurrentTeam) gameState.currentTeam = serverCurrentTeam;
+                // Don't overwrite stones, scores, throw counts — they're live
+                return;
+            }
+
+            if ((gameState.phase === 'delivering' || gameState.phase === 'settling') && gameState._remoteDelivery) {
+                // Opponent's throw is in-flight (remote delivery).
+                // The authoritative_state from their side will arrive when their stone settles.
+                // Clean up the visual delivery state — it will restart from position stream.
+                console.log('[GAME] onReconnected — remote delivery in progress, waiting for auth state');
+                gameState.isSweeping = false;
+                document.getElementById('sweep-toggle-btn').style.display = 'none';
+                // Apply snapshot scores but keep _remoteDelivery active
+                if (gameSnapshot) {
+                    gameState.redScore = gameSnapshot.redScore || 0;
+                    gameState.yellowScore = gameSnapshot.yellowScore || 0;
+                    gameState.currentEnd = gameSnapshot.currentEnd || 1;
+                    gameState.hammer = gameSnapshot.hammer || TEAMS.YELLOW;
+                    gameState.endScores = gameSnapshot.endScores || [];
+                    document.getElementById('red-total').textContent = gameState.redScore;
+                    document.getElementById('yellow-total').textContent = gameState.yellowScore;
+                    document.getElementById('current-end').textContent = gameState.currentEnd;
+                }
+                if (serverCurrentTeam) gameState.currentTeam = serverCurrentTeam;
+                return;
+            }
+
+            // ---- No active delivery — safe to fully restore from snapshot ----
 
             // Apply snapshot stone positions if available
             if (gameSnapshot && gameSnapshot.stones && gameSnapshot.stones.length > 0) {
@@ -3341,16 +3377,34 @@ function drawStagedStones() {
             }
 
             // ALWAYS use the server's authoritative currentTeam.
-            // This is the single source of truth for whose turn it is.
             if (serverCurrentTeam) {
                 gameState.currentTeam = serverCurrentTeam;
             }
 
-            // Set phase and clean up delivery state
-            gameState.phase = 'aiming';
+            // Clean up delivery state
             gameState.deliveredStone = null;
             gameState._pendingAuthState = null;
+            gameState._remoteDelivery = false;
+            gameState._latestStonePositions = null;
             VIEW.followStone = false;
+
+            // Handle game-over state: if the snapshot says the game ended, don't go to aiming
+            if (gameState.phase === 'gameover') {
+                console.log('[GAME] onReconnected — game already over, keeping gameover phase');
+                return;
+            }
+
+            // Check if all 16 stones were thrown — need to enter scoring
+            if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8 &&
+                gameState.phase !== 'scoring') {
+                console.log('[GAME] onReconnected — all 16 thrown, entering scoring');
+                gameState.phase = 'scoring';
+                setTimeout(() => endEnd(), 1500);
+                return;
+            }
+
+            // Normal case: set to aiming phase
+            gameState.phase = 'aiming';
 
             // Push our state to server for future reconnects
             CurlingNetwork.sendGameStateSync({
@@ -4049,12 +4103,16 @@ function drawStagedStones() {
         // Dismiss welcome screen if present
         dismissWelcome();
 
-        // Switch UI to online mode
+        // Switch UI to online mode and set gameState EARLY so the reconnect
+        // handler and isMyTurn() work correctly before onReconnected fires
         document.getElementById('mode-online').classList.add('active');
         document.getElementById('mode-1p').classList.remove('active');
         document.getElementById('mode-2p').classList.remove('active');
         document.getElementById('difficulty-selector').classList.add('hidden');
         document.getElementById('ends-selector-local').classList.add('hidden');
+        gameState.onlineMode = true;
+        gameState.botMode = false;
+        if (session.myTeam) gameState.myTeam = session.myTeam;
 
         // Connect and send reconnect
         CurlingNetwork.connect(SERVER_URL).then(() => {
@@ -4069,6 +4127,7 @@ function drawStagedStones() {
         }).catch(() => {
             console.log('[REJOIN] Connection failed — clearing session');
             CurlingNetwork.clearActiveSession();
+            gameState.onlineMode = false;
         });
     })();
 
