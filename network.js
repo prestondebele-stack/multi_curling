@@ -143,7 +143,11 @@ const CurlingNetwork = (() => {
                     clearTimeout(pongVerifyTimer);
                     pongVerifyTimer = null;
                     // Notify game that connection is confirmed alive after refocus
-                    if (callbacks.onConnectionVerified) callbacks.onConnectionVerified();
+                    // Pass server's authoritative state so client can sync before enabling controls
+                    if (callbacks.onConnectionVerified) callbacks.onConnectionVerified({
+                        currentTeam: data.currentTeam,
+                        throwSeq: data.throwSeq
+                    });
                 }
                 break;
 

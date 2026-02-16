@@ -3313,10 +3313,23 @@ function drawStagedStones() {
         });
 
         // Connection verified alive after tab refocus (pong received)
-        CurlingNetwork.onConnectionVerified(() => {
+        // Server now includes authoritative currentTeam in pong so we can
+        // sync before enabling controls — prevents stale-turn throw rejections.
+        CurlingNetwork.onConnectionVerified(({ currentTeam, throwSeq } = {}) => {
             gameState._awaitingConnectionVerify = false;
-            console.log('[CONN_VERIFIED] pong received — phase=' + gameState.phase + ' isMyTurn=' + isMyTurn());
-            // Re-enable throw if it's our turn.
+            console.log('[CONN_VERIFIED] pong received — phase=' + gameState.phase
+                + ' localTeam=' + gameState.currentTeam
+                + ' serverTeam=' + currentTeam);
+
+            // Sync currentTeam with server's authoritative value BEFORE enabling controls
+            if (currentTeam && currentTeam !== gameState.currentTeam) {
+                console.log('[CONN_VERIFIED] Correcting stale currentTeam: '
+                    + gameState.currentTeam + ' -> ' + currentTeam);
+                gameState.currentTeam = currentTeam;
+                updateUI();
+            }
+
+            // Re-enable throw if it's our turn (now using synced currentTeam).
             // Handle aiming AND waitingNextTurn — the pong may arrive during the
             // 300-800ms gap before scheduleNextTurn fires nextTurn().
             // Also handle scoring (don't enable) and delivering (don't interfere).

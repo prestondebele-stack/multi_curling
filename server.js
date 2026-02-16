@@ -447,9 +447,21 @@ async function handleMessage(ws, message) {
     }
 
     switch (data.type) {
-        case 'ping':
-            send(ws, { type: 'pong' });
+        case 'ping': {
+            // Include authoritative game state so client can sync after tab switch
+            const pingCode = playerRooms.get(ws);
+            const pingRoom = pingCode ? rooms.get(pingCode) : null;
+            if (pingRoom) {
+                send(ws, {
+                    type: 'pong',
+                    currentTeam: pingRoom.state.currentTeam,
+                    throwSeq: pingRoom.throwSeq
+                });
+            } else {
+                send(ws, { type: 'pong' });
+            }
             break;
+        }
 
         // ---- AUTH ----
         case 'register': {
