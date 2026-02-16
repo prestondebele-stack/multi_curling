@@ -140,6 +140,7 @@
         _lastPositionSendTime: 0,       // throttle for position sends (~80ms)
         _nextTurnScheduled: false,      // guard: prevents double nextTurn() calls from visibility + auth handlers
         _awaitingConnectionVerify: false, // true while waiting for pong after tab refocus
+        _deferredOpponentThrow: null,    // opponent_throw received while my stone in-flight; process after settle
     };
 
     // --------------------------------------------------------
@@ -568,20 +569,33 @@
         gameState.stones = [];
         gameState.phase = 'aiming';
         gameState.deliveredStone = null;
+        gameState._pendingAuthState = null;
+        gameState._remoteDelivery = false;
+        gameState._nextTurnScheduled = false;
+        gameState._awaitingConnectionVerify = false;
 
         updateUI();
+
+        // Sync the new end state with the server so both players
+        // and the server agree on scores, throw counts, and currentTeam.
+        if (gameState.onlineMode) {
+            CurlingNetwork.sendGameStateSync({
+                currentTeam: gameState.currentTeam,
+                redScore: gameState.redScore,
+                yellowScore: gameState.yellowScore,
+                currentEnd: gameState.currentEnd,
+                redThrown: 0,
+                yellowThrown: 0,
+                hammer: gameState.hammer,
+                endScores: gameState.endScores,
+                stones: [],
+            });
+        }
 
         // Delay briefly so player sees the score, then enable controls
         setTimeout(() => {
             if (gameState.onlineMode) {
-                if (isMyTurn()) {
-                    enableControlsForHuman();
-                    document.getElementById('throw-btn').disabled = false;
-                    TabNotify.notify();
-                } else {
-                    disableControlsForBot();
-                    document.getElementById('throw-btn').disabled = true;
-                }
+                setupTurnControls();
             } else if (isBotTurn()) {
                 triggerBotTurn();
             } else {
@@ -770,6 +784,12 @@
         if (auth.redScore !== undefined) gameState.redScore = auth.redScore;
         if (auth.yellowScore !== undefined) gameState.yellowScore = auth.yellowScore;
         if (auth.currentEnd !== undefined) gameState.currentEnd = auth.currentEnd;
+
+        // Auth state is the latest truth — if a deferred opponent throw exists,
+        // the auth state already accounts for it (it's from after that throw settled).
+        // Clear it to prevent double-processing.
+        gameState._deferredOpponentThrow = null;
+
         updateUI();
         console.log('[AUTH] Applied authoritative state: ' + (auth.stones ? auth.stones.length : 0) + ' stones, currentTeam=' + gameState.currentTeam);
 
@@ -891,6 +911,28 @@
                 disableControlsForBot();
                 document.getElementById('throw-btn').disabled = true;
                 // throw_settled was already sent at the top of nextTurn()
+            }
+
+            // Process deferred opponent throw that arrived while my stone was in-flight.
+            // Now that my throw has settled and nextTurn switched teams, it's safe to
+            // replay the opponent's throw without clobbering local physics.
+            if (gameState._deferredOpponentThrow && !isMyTurn()) {
+                const deferred = gameState._deferredOpponentThrow;
+                gameState._deferredOpponentThrow = null;
+                console.log('[NEXT-TURN] Processing deferred opponent throw');
+                // Use setTimeout(0) to let the current nextTurn() finish before
+                // the opponent throw handler modifies game state
+                setTimeout(() => {
+                    if (gameState.phase === 'aiming' && !gameState._remoteDelivery) {
+                        // Re-trigger the handler by calling the callback directly
+                        // We simulate receiving the opponent_throw message
+                        CurlingNetwork._triggerOpponentThrow(deferred);
+                    }
+                }, 50);
+            } else if (gameState._deferredOpponentThrow && isMyTurn()) {
+                // It's my turn now — the deferred throw is stale (already accounted for)
+                console.log('[NEXT-TURN] Clearing stale deferred opponent throw (it\'s my turn)');
+                gameState._deferredOpponentThrow = null;
             }
         } else if (isBotTurn()) {
             triggerBotTurn();
@@ -1737,6 +1779,12 @@
                 // this, but run it now for instant responsiveness.
                 console.log('[VISIBILITY] Returned to aiming phase — syncing controls');
                 updateUI();
+                setupTurnControls();
+            } else if (gameState.phase === 'waitingNextTurn') {
+                // Stone settled while tab was hidden but nextTurn hasn't fired yet.
+                // Make sure it's scheduled.
+                console.log('[VISIBILITY] Returned during waitingNextTurn — ensuring nextTurn scheduled');
+                scheduleNextTurn(200);
             } else if (gameState.phase === 'scoring') {
                 // Returned during scoring — let it play out
                 console.log('[VISIBILITY] Returned during scoring phase');
@@ -2436,6 +2484,7 @@ function drawStagedStones() {
             _lastPositionSendTime: 0,
             _nextTurnScheduled: false,
             _awaitingConnectionVerify: false,
+            _deferredOpponentThrow: null,
         };
 
         fgzSnapshots = [];
@@ -3045,6 +3094,16 @@ function drawStagedStones() {
                     return;
                 }
 
+                // GUARD: If MY throw is still in-flight (local physics active),
+                // defer the opponent's throw until my stone settles and nextTurn() fires.
+                // Without this, the opponent's throw clobbers our active delivery,
+                // sets _remoteDelivery=true, and the visibility handler gets confused.
+                if ((gameState.phase === 'delivering' || gameState.phase === 'settling' || gameState.phase === 'waitingNextTurn') && !gameState._remoteDelivery) {
+                    console.log('[OPP-THROW] My throw still in-flight/settling — deferring opponent throw');
+                    gameState._deferredOpponentThrow = { aim, weight, spinDir, spinAmount };
+                    return;
+                }
+
                 // GUARD: If it's currently MY turn (not opponent's), this opponent_throw
                 // is stale — the snapshot already advanced past this throw. Ignore it.
                 if (isMyTurn() && gameState.phase === 'aiming') {
@@ -3254,14 +3313,13 @@ function drawStagedStones() {
         // Connection verified alive after tab refocus (pong received)
         CurlingNetwork.onConnectionVerified(() => {
             gameState._awaitingConnectionVerify = false;
-            // Re-enable throw if it's our turn and we're in aiming phase.
-            // MUST also call enableControlsForHuman() to remove the
-            // pointer-events:none CSS that disableControlsForBot() applies.
-            // Without this, the throw button is enabled but can't be clicked.
-            if (gameState.phase === 'aiming' && isMyTurn()) {
-                enableControlsForHuman();
-                document.getElementById('throw-btn').disabled = false;
-                document.getElementById('throw-btn').style.display = '';
+            console.log('[CONN_VERIFIED] pong received — phase=' + gameState.phase + ' isMyTurn=' + isMyTurn());
+            // Re-enable throw if it's our turn.
+            // Handle aiming AND waitingNextTurn — the pong may arrive during the
+            // 300-800ms gap before scheduleNextTurn fires nextTurn().
+            // Also handle scoring (don't enable) and delivering (don't interfere).
+            if (gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
+                setupTurnControls();
             }
         });
 

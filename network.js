@@ -704,6 +704,11 @@ const CurlingNetwork = (() => {
         // Chat
         onChatMessage(cb) { callbacks.onChatMessage = cb; },
 
+        // Re-trigger opponent throw callback (for deferred throws)
+        _triggerOpponentThrow(data) {
+            if (callbacks.onOpponentThrow) callbacks.onOpponentThrow(data);
+        },
+
         // State
         getMyTeam() { return myTeam; },
         getRoomCode() { return roomCode; },
