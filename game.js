@@ -3684,10 +3684,10 @@ function drawStagedStones() {
         const copiedMsg = document.getElementById('share-copied-msg');
 
         if (navigator.share) {
+            // Include URL in 'text' for maximum SMS/messaging compatibility.
+            // Some apps ignore the 'url' field entirely and only send 'text'.
             navigator.share({
-                title: 'Capital Curling Club',
-                text: 'Join my curling game!',
-                url: shareUrl
+                text: 'Join my curling game! ' + shareUrl,
             }).catch(() => {
                 // User cancelled share — no action needed
             });
