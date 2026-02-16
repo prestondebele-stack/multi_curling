@@ -654,7 +654,8 @@
     // This catches edge cases from reconnects, cached code, or timing issues.
     function checkEndOfEndStuck() {
         if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8 &&
-            gameState.phase !== 'scoring' && gameState.phase !== 'gameover') {
+            gameState.phase !== 'scoring' && gameState.phase !== 'gameover' &&
+            gameState.phase !== 'delivering' && gameState.phase !== 'settling') {
             console.log('[SAFETY] End-of-end stuck detected! phase=' + gameState.phase +
                 ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown +
                 ' remoteDelivery=' + gameState._remoteDelivery + ' — forcing scoring');
@@ -669,13 +670,15 @@
     }
 
     // Periodic safety: auto-detect stuck end-of-end in the game loop.
-    // If all 16 stones are thrown and 3 seconds pass without scoring, force it.
+    // Only triggers when the game is in a PASSIVE phase (aiming/waitingNextTurn)
+    // with all 16 stones thrown — never during active delivery or settling.
     let _endOfEndStuckTimer = 0;
     function checkEndOfEndStuckPeriodic(dt) {
         if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8 &&
-            gameState.phase !== 'scoring' && gameState.phase !== 'gameover') {
+            gameState.phase !== 'scoring' && gameState.phase !== 'gameover' &&
+            gameState.phase !== 'delivering' && gameState.phase !== 'settling') {
             _endOfEndStuckTimer += dt;
-            if (_endOfEndStuckTimer > 3.0) {
+            if (_endOfEndStuckTimer > 5.0) {
                 _endOfEndStuckTimer = 0;
                 checkEndOfEndStuck();
             }
@@ -3143,19 +3146,27 @@ function drawStagedStones() {
                 // Non-remote cases: could be (a) reconnect correction, (b) late auth after
                 // reconnect cleared _remoteDelivery, or (c) my own throw's confirmation.
 
-                // CRITICAL: If the data says all 16 stones are thrown, ALWAYS enter
-                // scoring immediately, regardless of current phase. This prevents the
-                // game getting stuck if _remoteDelivery was cleared mid-throw (e.g.
-                // reconnect or visibility change) and the auth state arrives late.
+                // CRITICAL: If the data says all 16 stones are thrown, enter scoring.
+                // But only if local physics isn't actively running (no moving stones).
+                // This fixes the case where _remoteDelivery was cleared mid-throw
+                // and the auth state arrives while phase is stuck in 'delivering'.
                 if (data.redThrown >= 8 && data.yellowThrown >= 8 &&
                     gameState.phase !== 'scoring' && gameState.phase !== 'gameover') {
-                    console.log('[AUTH] Non-remote: end complete (all 16 thrown) — forcing scoring. phase=' + gameState.phase);
-                    applyAuthoritativeState(data);
-                    gameState.phase = 'scoring';
-                    gameState._remoteDelivery = false;
-                    gameState.deliveredStone = null;
-                    VIEW.followStone = false;
-                    setTimeout(() => endEnd(), 1500);
+                    // Check if any stones are actually moving (local physics active)
+                    const anyMoving = gameState.stones.some(s => s.active && s.moving);
+                    if (!anyMoving) {
+                        console.log('[AUTH] Non-remote: end complete (all 16 thrown, none moving) — forcing scoring. phase=' + gameState.phase);
+                        applyAuthoritativeState(data);
+                        gameState.phase = 'scoring';
+                        gameState._remoteDelivery = false;
+                        gameState.deliveredStone = null;
+                        VIEW.followStone = false;
+                        setTimeout(() => endEnd(), 1500);
+                        return;
+                    }
+                    // Stones still moving — defer to _pendingAuthState for when they settle
+                    console.log('[AUTH] Non-remote: all 16 thrown but stones still moving — deferring');
+                    gameState._pendingAuthState = data;
                     return;
                 }
 
