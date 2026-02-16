@@ -16,22 +16,31 @@ const CurlingNetwork = (() => {
     let hasActiveGame = false;        // True once game_start or reconnected received
     let lastThrowSeq = 0;            // Sequence number from last throw_ack (for throw_settled validation)
 
-    // Persist active game session to sessionStorage so page refresh/back swipe can rejoin
+    // Persist active game session to sessionStorage + localStorage so page refresh,
+    // back swipe, AND full tab close/reopen can rejoin.
+    // sessionStorage = same-tab only (survives refresh, lost on tab close)
+    // localStorage  = persists across tabs/closes (uses timestamp for 6-min TTL)
     function saveActiveSession() {
         try {
             if (roomCode) {
                 sessionStorage.setItem('curling_active_room', roomCode);
+                localStorage.setItem('curling_active_room', roomCode);
             }
             if (myTeam) {
                 sessionStorage.setItem('curling_active_team', myTeam);
+                localStorage.setItem('curling_active_team', myTeam);
             }
-        } catch (e) { /* sessionStorage unavailable */ }
+            localStorage.setItem('curling_session_ts', String(Date.now()));
+        } catch (e) { /* storage unavailable */ }
     }
     function clearActiveSession() {
         try {
             sessionStorage.removeItem('curling_active_room');
             sessionStorage.removeItem('curling_active_team');
-        } catch (e) { /* sessionStorage unavailable */ }
+            localStorage.removeItem('curling_active_room');
+            localStorage.removeItem('curling_active_team');
+            localStorage.removeItem('curling_session_ts');
+        } catch (e) { /* storage unavailable */ }
     }
 
     // Event callbacks
@@ -110,8 +119,8 @@ const CurlingNetwork = (() => {
             // The server has its own generous 6-minute heartbeat — let it decide.
             if (!document.hidden) {
                 const sinceLastPong = Date.now() - lastPongTime;
-                if (sinceLastPong > 45000 && ws && ws.readyState === WebSocket.OPEN) {
-                    console.log('[HEARTBEAT] No response for 45s (tab visible), forcing reconnect');
+                if (sinceLastPong > 25000 && ws && ws.readyState === WebSocket.OPEN) {
+                    console.log('[HEARTBEAT] No response for 25s (tab visible), forcing reconnect');
                     ws.close();
                     return;
                 }
@@ -542,6 +551,56 @@ const CurlingNetwork = (() => {
         }
     });
 
+    // --- Network online/offline handling ---
+    // These fire INSTANTLY when the device loses/gains connectivity (WiFi drop,
+    // airplane mode toggle). visibilitychange does NOT fire for network changes.
+    window.addEventListener('offline', () => {
+        console.log('[NETWORK] Device went offline');
+        if (roomCode && !intentionalClose) {
+            if (callbacks.onDisconnect) callbacks.onDisconnect();
+        }
+    });
+
+    window.addEventListener('online', () => {
+        console.log('[NETWORK] Device came back online');
+        if (!roomCode || intentionalClose) return;
+
+        // Connection may have died while offline. Verify with ping/pong
+        // (same 3s zombie-check pattern as visibilitychange).
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            if (pongVerifyTimer) { clearTimeout(pongVerifyTimer); pongVerifyTimer = null; }
+            lastPongTime = Date.now();
+            send({ type: 'ping' });
+            startHeartbeat();
+
+            pongVerifyTimer = setTimeout(() => {
+                pongVerifyTimer = null;
+                const elapsed = Date.now() - lastPongTime;
+                if (elapsed >= 2900 && ws && ws.readyState === WebSocket.OPEN && roomCode) {
+                    console.log('[NETWORK] No pong after coming online — forcing reconnect');
+                    ws.close();
+                    reconnectAttempts = 0;
+                    isReconnecting = false;
+                    attemptReconnect();
+                }
+            }, 3000);
+        } else if (roomCode && !intentionalClose) {
+            // WebSocket already dead — reconnect immediately
+            console.log('[NETWORK] Online but WebSocket dead — reconnecting');
+            reconnectAttempts = 0;
+            isReconnecting = false;
+            attemptReconnect();
+        }
+    });
+
+    // --- Tab close / navigation away ---
+    // pagehide is reliable on all platforms (including iOS Safari).
+    // beforeunload is unreliable on iOS and blocks bfcache.
+    window.addEventListener('pagehide', () => {
+        // Persist session so a full tab close + reopen can rejoin
+        saveActiveSession();
+    });
+
     // Public API
     return {
         connect(url) {
@@ -727,13 +786,29 @@ const CurlingNetwork = (() => {
         getMyTeam() { return myTeam; },
         getRoomCode() { return roomCode; },
 
-        // Active game session persistence (for page refresh / back swipe recovery)
+        // Active game session persistence (for page refresh / back swipe / tab close recovery)
         getActiveSession() {
+            // 1) Try sessionStorage first (same-tab, survives refresh)
             try {
                 const code = sessionStorage.getItem('curling_active_room');
                 const team = sessionStorage.getItem('curling_active_team');
                 if (code) return { roomCode: code, myTeam: team || null };
             } catch (e) { /* sessionStorage unavailable */ }
+            // 2) Fall back to localStorage (survives tab close, 6-minute TTL)
+            try {
+                const code = localStorage.getItem('curling_active_room');
+                const team = localStorage.getItem('curling_active_team');
+                const ts = parseInt(localStorage.getItem('curling_session_ts') || '0', 10);
+                if (code && (Date.now() - ts) < 360000) {
+                    return { roomCode: code, myTeam: team || null };
+                }
+                // Stale — clean up
+                if (code) {
+                    localStorage.removeItem('curling_active_room');
+                    localStorage.removeItem('curling_active_team');
+                    localStorage.removeItem('curling_session_ts');
+                }
+            } catch (e) { /* localStorage unavailable */ }
             return null;
         },
         clearActiveSession() { clearActiveSession(); },

@@ -3702,7 +3702,9 @@ function drawStagedStones() {
         });
 
         CurlingNetwork.onDisconnect(() => {
-            // Network disconnected - reconnection is handled by network.js
+            // Network disconnected — immediately disable throw so stale input can't fire
+            console.log('[GAME] onDisconnect — disabling throw button');
+            document.getElementById('throw-btn').disabled = true;
         });
 
         CurlingNetwork.onReconnectFailed(() => {
