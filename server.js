@@ -1153,20 +1153,42 @@ async function handleMessage(ws, message) {
                 return;
             }
 
-            // Find the empty slot — first check for null, then check for dead sockets.
-            // Race condition: client reconnects with a new WebSocket before the server
-            // has detected that the old socket is dead (server heartbeat runs every 120s).
-            // The old socket may report readyState !== OPEN even though the server hasn't
-            // processed its close event yet.
-            let emptySlot = room.players[0] === null ? 0 : room.players[1] === null ? 1 : -1;
+            // Client sends a team hint (from sessionStorage) so we can place them
+            // back in their ORIGINAL slot and avoid swapping team colors.
+            const teamHint = data.team; // 'red' or 'yellow' or undefined
+            const hintSlot = teamHint === 'red' ? 0 : teamHint === 'yellow' ? 1 : -1;
 
+            // Find the correct slot — prefer the hinted slot if it's available.
+            let emptySlot = -1;
+
+            // 1) If client gave a team hint and that slot is empty, use it
+            if (hintSlot !== -1 && room.players[hintSlot] === null) {
+                emptySlot = hintSlot;
+            }
+            // 2) If hint slot is occupied by a dead socket, reclaim it
+            else if (hintSlot !== -1 && room.players[hintSlot] &&
+                     room.players[hintSlot] !== ws &&
+                     room.players[hintSlot].readyState !== WebSocket.OPEN) {
+                console.log(`[RECONNECT] Reclaiming hinted slot ${hintSlot} (dead socket)`);
+                playerRooms.delete(room.players[hintSlot]);
+                playerSessions.delete(room.players[hintSlot]);
+                room.players[hintSlot] = null;
+                emptySlot = hintSlot;
+            }
+            // 3) If hint slot is this same ws, resync
+            else if (hintSlot !== -1 && room.players[hintSlot] === ws) {
+                emptySlot = hintSlot;
+            }
+            // 4) Fallback: find any empty slot
+            else {
+                emptySlot = room.players[0] === null ? 0 : room.players[1] === null ? 1 : -1;
+            }
+
+            // 5) If still no slot, check for dead sockets in any slot
             if (emptySlot === -1) {
-                // Both slots occupied — check if either has a dead/stale socket
-                // that the server hasn't cleaned up yet
                 for (let i = 0; i < 2; i++) {
                     const existingWs = room.players[i];
                     if (existingWs && existingWs !== ws && existingWs.readyState !== WebSocket.OPEN) {
-                        // This socket is dead — clean it up and take its slot
                         console.log(`[RECONNECT] Replacing dead socket in slot ${i} (readyState=${existingWs.readyState})`);
                         playerRooms.delete(existingWs);
                         playerSessions.delete(existingWs);
@@ -1174,10 +1196,7 @@ async function handleMessage(ws, message) {
                         emptySlot = i;
                         break;
                     }
-                    // Also check if this is the SAME player reconnecting (same ws object
-                    // shouldn't happen, but check by session identity)
                     if (existingWs && existingWs === ws) {
-                        // Already in the room with this socket — just resync
                         emptySlot = i;
                         break;
                     }

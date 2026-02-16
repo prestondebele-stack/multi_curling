@@ -4065,7 +4065,7 @@ function drawStagedStones() {
             }
             // The reconnect message is sent by network.js attemptReconnect automatically,
             // but since this is a fresh page load (not a WS reconnect), we need to send it manually.
-            CurlingNetwork.sendReconnect(session.roomCode);
+            CurlingNetwork.sendReconnect(session.roomCode, session.myTeam);
         }).catch(() => {
             console.log('[REJOIN] Connection failed — clearing session');
             CurlingNetwork.clearActiveSession();

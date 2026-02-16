@@ -414,8 +414,8 @@ const CurlingNetwork = (() => {
                 ws.onerror = () => {};
                 isReconnecting = false;
                 startHeartbeat();
-                // Try to rejoin room
-                send({ type: 'reconnect', code: roomCode });
+                // Try to rejoin room (include team hint to preserve original slot)
+                send({ type: 'reconnect', code: roomCode, team: myTeam || undefined });
                 // Re-auth with saved token if available
                 const savedToken = localStorage.getItem('curling_token');
                 if (savedToken) {
@@ -557,10 +557,11 @@ const CurlingNetwork = (() => {
         },
 
         // Rejoin active game after page refresh / back swipe
-        sendReconnect(code) {
+        sendReconnect(code, team) {
             roomCode = code;
+            if (team) myTeam = team;
             hasActiveGame = true;
-            send({ type: 'reconnect', code: code.toUpperCase() });
+            send({ type: 'reconnect', code: code.toUpperCase(), team: myTeam || undefined });
         },
 
         // Lobby
