@@ -141,6 +141,7 @@
         _nextTurnScheduled: false,      // guard: prevents double nextTurn() calls from visibility + auth handlers
         _awaitingConnectionVerify: false, // true while waiting for pong after tab refocus
         _deferredOpponentThrow: null,    // opponent_throw received while my stone in-flight; process after settle
+        _serverSyncedTeam: null,         // server's currentTeam from pong; used by nextTurn() to avoid double-toggle
     };
 
     // --------------------------------------------------------
@@ -573,6 +574,7 @@
         gameState._remoteDelivery = false;
         gameState._nextTurnScheduled = false;
         gameState._awaitingConnectionVerify = false;
+        gameState._serverSyncedTeam = null;
 
         updateUI();
 
@@ -835,11 +837,20 @@
         gameState._lastPositionSendTime = 0;
 
         const prevTeam = gameState.currentTeam;
-        // Switch teams (alternating throws)
-        if (gameState.currentTeam === TEAMS.RED) {
-            gameState.currentTeam = TEAMS.YELLOW;
+        // Switch teams. If the server already told us the authoritative currentTeam
+        // (via pong sync after tab switch), use that instead of blindly toggling.
+        // This prevents double-toggling when the server already advanced the turn
+        // on receiving our throw message.
+        if (gameState._serverSyncedTeam) {
+            gameState.currentTeam = gameState._serverSyncedTeam;
+            gameState._serverSyncedTeam = null;
+            console.log('[NEXT-TURN] Using server-synced team: ' + prevTeam + ' -> ' + gameState.currentTeam);
         } else {
-            gameState.currentTeam = TEAMS.RED;
+            if (gameState.currentTeam === TEAMS.RED) {
+                gameState.currentTeam = TEAMS.YELLOW;
+            } else {
+                gameState.currentTeam = TEAMS.RED;
+            }
         }
         console.log('[NEXT-TURN] Switched ' + prevTeam + ' -> ' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn() + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
 
@@ -3321,11 +3332,19 @@ function drawStagedStones() {
                 + ' serverTeam=' + currentTeam);
 
             // Sync currentTeam with server's authoritative value BEFORE enabling controls
-            if (currentTeam && currentTeam !== gameState.currentTeam) {
-                console.log('[CONN_VERIFIED] Correcting stale currentTeam: '
-                    + gameState.currentTeam + ' -> ' + currentTeam);
-                gameState.currentTeam = currentTeam;
-                updateUI();
+            if (currentTeam) {
+                if (currentTeam !== gameState.currentTeam) {
+                    console.log('[CONN_VERIFIED] Correcting stale currentTeam: '
+                        + gameState.currentTeam + ' -> ' + currentTeam);
+                    gameState.currentTeam = currentTeam;
+                    updateUI();
+                }
+                // If nextTurn() hasn't fired yet (waitingNextTurn), store the
+                // server's value so nextTurn() uses it instead of blind-toggling.
+                // This prevents the double-toggle bug after tab switch during throw.
+                if (gameState.phase === 'waitingNextTurn') {
+                    gameState._serverSyncedTeam = currentTeam;
+                }
             }
 
             // Re-enable throw if it's our turn (now using synced currentTeam).
