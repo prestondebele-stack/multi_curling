@@ -152,6 +152,7 @@ function createRoom(hostWs, totalEnds) {
         resultRecorded: false,   // prevent duplicate game result recording
         createdAt: Date.now(),
         disconnectTimers: [null, null],
+        pendingMessages: [[], []], // queued messages per slot when opponent is offline
     };
     rooms.set(code, room);
     playerRooms.set(hostWs, code);
@@ -928,14 +929,22 @@ async function handleMessage(ws, message) {
         // ---- GAMEPLAY ----
         case 'throw': {
             const code = playerRooms.get(ws);
-            if (!code) return;
+            if (!code) {
+                console.log('[THROW REJECTED] ws not in any room — sending throw_rejected');
+                send(ws, { type: 'throw_rejected', reason: 'not_in_room' });
+                return;
+            }
             const room = rooms.get(code);
-            if (!room) return;
+            if (!room) {
+                send(ws, { type: 'throw_rejected', reason: 'room_gone' });
+                return;
+            }
 
             const team = getPlayerTeam(room, ws);
             if (team !== room.state.currentTeam) {
                 console.log(`[THROW REJECTED] ${team} tried to throw but currentTeam is ${room.state.currentTeam} (room ${code})`);
-                return; // not your turn
+                send(ws, { type: 'throw_rejected', reason: 'not_your_turn', serverCurrentTeam: room.state.currentTeam });
+                return;
             }
 
             const prevTeam = room.state.currentTeam;
@@ -944,17 +953,24 @@ async function handleMessage(ws, message) {
             room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
             console.log(`[THROW OK] ${team} threw, turn switched ${prevTeam} -> ${room.state.currentTeam} (room ${code})`);
 
+            // Acknowledge the throw to the thrower so client knows it was received
+            send(ws, { type: 'throw_ack' });
+
             const opponent = getOpponent(room, ws);
+            const throwMsg = {
+                type: 'opponent_throw',
+                aim: data.aim,
+                weight: data.weight,
+                spinDir: data.spinDir,
+                spinAmount: data.spinAmount,
+            };
             if (opponent && opponent.readyState === WebSocket.OPEN) {
-                send(opponent, {
-                    type: 'opponent_throw',
-                    aim: data.aim,
-                    weight: data.weight,
-                    spinDir: data.spinDir,
-                    spinAmount: data.spinAmount,
-                });
+                send(opponent, throwMsg);
             } else {
-                console.log(`[THROW WARN] opponent not connected for relay (room ${code})`);
+                // Opponent is offline — queue for replay when they reconnect
+                const opponentIdx = getPlayerIndex(room, ws) === 0 ? 1 : 0;
+                room.pendingMessages[opponentIdx].push(throwMsg);
+                console.log(`[THROW WARN] opponent not connected — queued for slot ${opponentIdx} (room ${code})`);
             }
 
             // Send push notification to the player whose turn it now is
@@ -1074,17 +1090,23 @@ async function handleMessage(ws, message) {
 
             // Relay final stone positions to the opponent
             const opponent = getOpponent(room, ws);
+            const authMsg = {
+                type: 'authoritative_state',
+                stones: data.stones,
+                currentTeam: data.currentTeam,
+                redThrown: data.redThrown,
+                yellowThrown: data.yellowThrown,
+                redScore: data.redScore,
+                yellowScore: data.yellowScore,
+                currentEnd: data.currentEnd,
+            };
             if (opponent && opponent.readyState === WebSocket.OPEN) {
-                send(opponent, {
-                    type: 'authoritative_state',
-                    stones: data.stones,
-                    currentTeam: data.currentTeam,
-                    redThrown: data.redThrown,
-                    yellowThrown: data.yellowThrown,
-                    redScore: data.redScore,
-                    yellowScore: data.yellowScore,
-                    currentEnd: data.currentEnd,
-                });
+                send(opponent, authMsg);
+            } else {
+                // Opponent is offline — queue for replay when they reconnect
+                const opponentIdx = getPlayerIndex(room, ws) === 0 ? 1 : 0;
+                room.pendingMessages[opponentIdx].push(authMsg);
+                console.log(`[THROW_SETTLED] opponent not connected — queued auth state for slot ${opponentIdx} (room ${code})`);
             }
             break;
         }
@@ -1284,6 +1306,19 @@ async function handleMessage(ws, message) {
                 gameSnapshot: snapshot,
                 opponent: opponentInfo,
             });
+
+            // Replay any messages that were queued while this player was offline
+            // (e.g., opponent_throw, authoritative_state that they missed)
+            if (room.pendingMessages[emptySlot].length > 0) {
+                console.log(`[RECONNECT] Replaying ${room.pendingMessages[emptySlot].length} queued messages to slot ${emptySlot}`);
+                // Small delay so the client processes 'reconnected' first
+                setTimeout(() => {
+                    for (const msg of room.pendingMessages[emptySlot]) {
+                        send(ws, msg);
+                    }
+                    room.pendingMessages[emptySlot] = [];
+                }, 500);
+            }
 
             // Notify opponent — wait briefly for token_login to register our session
             if (opponentWs && opponentWs.readyState === WebSocket.OPEN) {

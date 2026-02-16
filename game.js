@@ -277,6 +277,23 @@
         document.getElementById('controls-panel').classList.remove('bot-disabled');
     }
 
+    // Set up throw controls based on whose turn it is.
+    // Called after reconnect, visibility change, authoritative state, etc.
+    function setupTurnControls() {
+        if (isMyTurn()) {
+            enableControlsForHuman();
+            document.getElementById('throw-btn').disabled = false;
+            document.getElementById('throw-btn').style.display = '';
+            TabNotify.notify();
+            if (gameState.lastOpponentShot) {
+                showReplayButton();
+            }
+        } else {
+            disableControlsForBot();
+            document.getElementById('throw-btn').disabled = true;
+        }
+    }
+
     function triggerBotTurn() {
         if (!isBotTurn()) return;
         disableControlsForBot();
@@ -1695,6 +1712,17 @@
                         nextTurn();
                     }
                 }, 300);
+            } else if (gameState.phase === 'aiming') {
+                // Tab came back during aiming phase — opponent's throw may have
+                // fully settled while we were backgrounded. Run full setupTurnControls
+                // to ensure the right player has control (enableControlsForHuman
+                // removes pointer-events:none CSS). The pong verify will also call
+                // this, but run it now for instant responsiveness.
+                console.log('[VISIBILITY] Returned to aiming phase — syncing controls');
+                updateUI();
+            } else if (gameState.phase === 'scoring') {
+                // Returned during scoring — let it play out
+                console.log('[VISIBILITY] Returned during scoring phase');
             }
         }
     });
@@ -3093,23 +3121,7 @@ function drawStagedStones() {
                     ' currentTeam=' + gameState.currentTeam + ' dataTeam=' + data.currentTeam +
                     ' stones=' + (data.stones ? data.stones.length : 0));
 
-                // Helper: set up controls after applying authoritative state
-                function setupTurnControls() {
-                    if (isMyTurn()) {
-                        enableControlsForHuman();
-                        document.getElementById('throw-btn').disabled = false;
-                        document.getElementById('throw-btn').style.display = '';
-                        TabNotify.notify();
-                        if (gameState.lastOpponentShot) {
-                            showReplayButton();
-                        }
-                        console.log('[AUTH] Controls ENABLED (my turn)');
-                    } else {
-                        disableControlsForBot();
-                        document.getElementById('throw-btn').disabled = true;
-                        console.log('[AUTH] Controls DISABLED (opponent turn)');
-                    }
-                }
+                // setupTurnControls is defined at module level (near enableControlsForHuman)
 
                 // SINGLE-AUTHORITY: opponent's throw just settled — apply and transition.
                 // DO NOT call nextTurn() here — it would double-switch currentTeam.
@@ -3212,10 +3224,49 @@ function drawStagedStones() {
         // Connection verified alive after tab refocus (pong received)
         CurlingNetwork.onConnectionVerified(() => {
             gameState._awaitingConnectionVerify = false;
-            // Re-enable throw if it's our turn and we're in aiming phase
+            // Re-enable throw if it's our turn and we're in aiming phase.
+            // MUST also call enableControlsForHuman() to remove the
+            // pointer-events:none CSS that disableControlsForBot() applies.
+            // Without this, the throw button is enabled but can't be clicked.
             if (gameState.phase === 'aiming' && isMyTurn()) {
+                enableControlsForHuman();
                 document.getElementById('throw-btn').disabled = false;
+                document.getElementById('throw-btn').style.display = '';
             }
+        });
+
+        // If the server rejects our throw (not our turn, not in room, etc.),
+        // undo the local delivery and go back to aiming.
+        CurlingNetwork.onThrowRejected(({ reason, serverCurrentTeam }) => {
+            console.log('[THROW_REJECTED] reason=' + reason + ' serverCurrentTeam=' + serverCurrentTeam + ' phase=' + gameState.phase);
+
+            // If we're mid-delivery, undo it
+            if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                // Remove the stone we just launched
+                if (gameState.deliveredStone) {
+                    gameState.deliveredStone.active = false;
+                    gameState.deliveredStone = null;
+                }
+                gameState.phase = 'aiming';
+                VIEW.followStone = false;
+                gameState.isSweeping = false;
+                document.getElementById('sweep-toggle-btn').style.display = 'none';
+            }
+
+            // Sync currentTeam with server's authoritative value
+            if (serverCurrentTeam) {
+                gameState.currentTeam = serverCurrentTeam;
+            }
+
+            // Revert the throw count that was incremented when deliverStone ran
+            if (gameState.myTeam === 'red' && gameState.redThrown > 0) {
+                gameState.redThrown--;
+            } else if (gameState.myTeam === 'yellow' && gameState.yellowThrown > 0) {
+                gameState.yellowThrown--;
+            }
+
+            updateUI();
+            setupTurnControls();
         });
 
         CurlingNetwork.onOpponentDisconnected(() => {

@@ -36,6 +36,7 @@ const CurlingNetwork = (() => {
     // Event callbacks
     const callbacks = {
         onGameStart: null,
+        onThrowRejected: null,
         onOpponentThrow: null,
         onOpponentSweepChange: null,
         onOpponentSweepStart: null,
@@ -173,6 +174,18 @@ const CurlingNetwork = (() => {
                 hasActiveGame = true;
                 saveActiveSession();
                 if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6 });
+                break;
+
+            case 'throw_ack':
+                console.log('[NET] Throw acknowledged by server');
+                break;
+
+            case 'throw_rejected':
+                console.log('[NET] Throw REJECTED by server: ' + data.reason + ' serverCurrentTeam=' + data.serverCurrentTeam);
+                if (callbacks.onThrowRejected) callbacks.onThrowRejected({
+                    reason: data.reason,
+                    serverCurrentTeam: data.serverCurrentTeam,
+                });
                 break;
 
             case 'opponent_throw':
@@ -633,6 +646,7 @@ const CurlingNetwork = (() => {
 
         // Event registration
         onGameStart(cb) { callbacks.onGameStart = cb; },
+        onThrowRejected(cb) { callbacks.onThrowRejected = cb; },
         onOpponentThrow(cb) { callbacks.onOpponentThrow = cb; },
         onOpponentSweepChange(cb) { callbacks.onOpponentSweepChange = cb; },
         onOpponentSweepStart(cb) { callbacks.onOpponentSweepStart = cb; },
