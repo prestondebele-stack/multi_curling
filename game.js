@@ -1774,14 +1774,13 @@
 
                 scheduleNextTurn(300);
             } else if (gameState.phase === 'aiming') {
-                // Tab came back during aiming phase — opponent's throw may have
-                // fully settled while we were backgrounded. Run full setupTurnControls
-                // to ensure the right player has control (enableControlsForHuman
-                // removes pointer-events:none CSS). The pong verify will also call
-                // this, but run it now for instant responsiveness.
-                console.log('[VISIBILITY] Returned to aiming phase — syncing controls');
+                // Tab came back during aiming phase. Do NOT call setupTurnControls()
+                // here — our local currentTeam may be stale if the opponent threw
+                // while we were away. Wait for the pong response which carries the
+                // server's authoritative currentTeam, then onConnectionVerified
+                // will sync and call setupTurnControls() with correct state.
+                console.log('[VISIBILITY] Returned to aiming phase — waiting for pong to sync');
                 updateUI();
-                setupTurnControls();
             } else if (gameState.phase === 'waitingNextTurn') {
                 // Stone settled while tab was hidden but nextTurn hasn't fired yet.
                 // Make sure it's scheduled.
