@@ -3274,10 +3274,19 @@ function drawStagedStones() {
             // Game will start via onGameStart
         });
 
-        CurlingNetwork.onRoomError(({ error }) => {
+        CurlingNetwork.onRoomError(({ error, code }) => {
             const joinError = document.getElementById('join-error');
-            joinError.textContent = error;
+            // Friendlier messages for share link users
+            if (error === 'Room not found') {
+                joinError.textContent = 'This game room no longer exists. Ask your friend for a new link.';
+            } else if (error === 'Room is full') {
+                joinError.textContent = 'This game already has two players.';
+            } else {
+                joinError.textContent = error;
+            }
             joinError.style.display = 'block';
+            // Make sure the join panel is visible so they see the error
+            showLobbyPanel('lobby-join-panel');
         });
 
         CurlingNetwork.onQueueWaiting(() => {
@@ -3548,7 +3557,12 @@ function drawStagedStones() {
             // NOT overwrite the game screen with the lobby menu.
             if (!gameState.onlineMode || gameState.phase === 'gameOver') {
                 document.getElementById('auth-panel').style.display = 'none';
-                showLobbyPanel('lobby-menu');
+                // If there's a pending join code (from share link), auto-join now
+                if (_pendingJoinCode) {
+                    executePendingJoin();
+                } else {
+                    showLobbyPanel('lobby-menu');
+                }
             }
             CurlingNetwork.sendGetProfile();
             // Set up push notifications for logged-in users
@@ -3576,6 +3590,10 @@ function drawStagedStones() {
                 const errEl = document.getElementById('auth-error');
                 errEl.textContent = error === 'Session expired' ? 'Session expired — please log in again.' : error;
                 errEl.style.display = 'block';
+                // Show invite banner if there's a pending join (token expired for share link user)
+                if (_pendingJoinCode) {
+                    document.getElementById('join-invite-banner').style.display = 'block';
+                }
             }
         });
 
@@ -3939,7 +3957,12 @@ function drawStagedStones() {
     document.getElementById('auth-skip').addEventListener('click', () => {
         document.getElementById('auth-panel').style.display = 'none';
         document.getElementById('lobby-friends').style.display = 'none';
-        showLobbyPanel('lobby-menu');
+        // If there's a pending join code (from share link), auto-join now
+        if (_pendingJoinCode) {
+            executePendingJoin();
+        } else {
+            showLobbyPanel('lobby-menu');
+        }
     });
 
     // ---- PASSWORD RECOVERY ----
@@ -4054,6 +4077,25 @@ function drawStagedStones() {
     // --------------------------------------------------------
     // URL AUTO-JOIN (?join=XXXX)
     // --------------------------------------------------------
+    // When a friend opens a share link, we store the join code and give them
+    // a chance to login/register/play as guest. Once they auth (or skip),
+    // we auto-join the room. If they already have a saved token, it joins
+    // immediately after token login succeeds.
+    let _pendingJoinCode = null;
+
+    function executePendingJoin() {
+        if (!_pendingJoinCode) return;
+        const code = _pendingJoinCode;
+        _pendingJoinCode = null;
+        // Hide the invite banner now that we're joining
+        document.getElementById('join-invite-banner').style.display = 'none';
+        document.getElementById('join-error').style.display = 'none';
+        CurlingNetwork.joinRoom(code);
+        // Show a brief "joining..." state so they know something is happening
+        showLobbyPanel('lobby-join-panel');
+        document.getElementById('room-code-input').value = code.toUpperCase();
+    }
+
     (function checkAutoJoin() {
         const params = new URLSearchParams(window.location.search);
         const joinCode = params.get('join');
@@ -4061,6 +4103,9 @@ function drawStagedStones() {
 
         // Clean the URL so refresh doesn't re-join
         history.replaceState({}, '', window.location.pathname);
+
+        // Store the code — it will be used after auth or guest skip
+        _pendingJoinCode = joinCode.toUpperCase();
 
         // Dismiss welcome screen if present
         dismissWelcome();
@@ -4072,18 +4117,37 @@ function drawStagedStones() {
         document.getElementById('difficulty-selector').classList.add('hidden');
         document.getElementById('ends-selector-local').classList.add('hidden');
 
-        // Connect and auto-join the room
+        // Connect to server
         CurlingNetwork.connect(SERVER_URL).then(() => {
             showLobbyScreen();
-            // Skip auth — go straight to join
-            document.getElementById('auth-panel').style.display = 'none';
-            showLobbyPanel('lobby-join-panel');
-            document.getElementById('join-error').style.display = 'none';
-            document.getElementById('room-code-input').value = joinCode.toUpperCase();
 
-            // Auto-submit the join
-            CurlingNetwork.joinRoom(joinCode);
+            // Check if user is already logged in (saved token)
+            const savedToken = localStorage.getItem('curling_token');
+            const savedUsername = localStorage.getItem('curling_username');
+            if (savedToken) {
+                // Already logged in — send token login, auto-join will happen
+                // in onAuthSuccess when it detects _pendingJoinCode
+                CurlingNetwork.sendTokenLogin(savedToken);
+                if (savedUsername) {
+                    document.getElementById('auth-panel').style.display = 'none';
+                    document.getElementById('user-info-bar').style.display = 'flex';
+                    document.getElementById('logged-in-as').textContent = savedUsername;
+                }
+                // Show a waiting state while token login processes
+                showLobbyPanel('lobby-join-panel');
+                document.getElementById('room-code-input').value = joinCode.toUpperCase();
+                document.getElementById('join-error').style.display = 'none';
+            } else {
+                // Not logged in — show auth panel so they can login/register/play as guest
+                document.getElementById('auth-panel').style.display = 'flex';
+                document.getElementById('user-info-bar').style.display = 'none';
+                document.getElementById('lobby-menu').style.display = 'none';
+                document.getElementById('auth-error').style.display = 'none';
+                // Show the invite banner so they know why they're here
+                document.getElementById('join-invite-banner').style.display = 'block';
+            }
         }).catch(() => {
+            _pendingJoinCode = null;
             alert('Could not connect to server. Please try again.');
         });
     })();
