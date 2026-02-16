@@ -14,6 +14,7 @@ const CurlingNetwork = (() => {
     let lastPongTime = Date.now();
     let isReconnecting = false;       // Guard against parallel reconnect cycles
     let hasActiveGame = false;        // True once game_start or reconnected received
+    let lastThrowSeq = 0;            // Sequence number from last throw_ack (for throw_settled validation)
 
     // Persist active game session to sessionStorage so page refresh/back swipe can rejoin
     function saveActiveSession() {
@@ -89,6 +90,8 @@ const CurlingNetwork = (() => {
         onChatMessage: null,
         // Server settle nudge (throw_settled timeout)
         onSettleNudge: null,
+        // Server turn correction (stale throw_settled detected)
+        onTurnCorrection: null,
     };
 
     function send(data) {
@@ -179,7 +182,8 @@ const CurlingNetwork = (() => {
                 break;
 
             case 'throw_ack':
-                console.log('[NET] Throw acknowledged by server');
+                if (data.throwSeq) lastThrowSeq = data.throwSeq;
+                console.log('[NET] Throw acknowledged by server, throwSeq=' + lastThrowSeq);
                 break;
 
             case 'throw_rejected':
@@ -378,6 +382,10 @@ const CurlingNetwork = (() => {
                 break;
             case 'settle_nudge':
                 if (callbacks.onSettleNudge) callbacks.onSettleNudge();
+                break;
+            case 'turn_correction':
+                console.log('[NET] Turn correction from server: currentTeam=' + data.currentTeam);
+                if (callbacks.onTurnCorrection) callbacks.onTurnCorrection(data);
                 break;
         }
     }
@@ -616,7 +624,7 @@ const CurlingNetwork = (() => {
         // Game state sync (for reconnection)
         sendGameStateSync(snapshot) { send({ type: 'game_state_sync', snapshot }); },
         // Authoritative throw result (thrower sends after stone settles)
-        sendThrowSettled(data) { send({ type: 'throw_settled', ...data }); },
+        sendThrowSettled(data) { send({ type: 'throw_settled', throwSeq: lastThrowSeq, ...data }); },
 
         // Game over (record result)
         sendGameOver(redScore, yellowScore, endCount) {
@@ -699,6 +707,8 @@ const CurlingNetwork = (() => {
         onAuthoritativeState(cb) { callbacks.onAuthoritativeState = cb; },
         // Settle nudge (server timeout)
         onSettleNudge(cb) { callbacks.onSettleNudge = cb; },
+        // Turn correction (stale throw_settled detected)
+        onTurnCorrection(cb) { callbacks.onTurnCorrection = cb; },
         // Connection verified
         onConnectionVerified(cb) { callbacks.onConnectionVerified = cb; },
         // Chat

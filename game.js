@@ -843,11 +843,13 @@
         }
         console.log('[NEXT-TURN] Switched ' + prevTeam + ' -> ' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn() + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
 
-        // In online mode, ALWAYS send throw_settled before doing anything else.
-        // This ensures the opponent gets the authoritative stone positions for
-        // scoring, end-of-end transitions, etc. (Without this, the opponent
-        // would be stuck in _remoteDelivery forever if we enter scoring.)
-        if (gameState.onlineMode && !isMyTurn()) {
+        // In online mode, send throw_settled so the opponent gets authoritative
+        // stone positions. BUT skip this if a deferred opponent throw exists —
+        // that means the opponent already threw while we were away, the server
+        // has already advanced past our throw, and our throw_settled would be
+        // stale (wrong currentTeam). The server would reject it via throwSeq
+        // validation anyway, but skipping avoids the round-trip.
+        if (gameState.onlineMode && !isMyTurn() && !gameState._deferredOpponentThrow) {
             const settledStones = gameState.stones.filter(s => s.active).map(s => ({
                 team: s.team, x: s.x, y: s.y,
             }));
@@ -3379,6 +3381,18 @@ function drawStagedStones() {
                     document.getElementById('sweep-toggle-btn').style.display = 'none';
                     scheduleNextTurn(300);
                 }
+            }
+        });
+
+        // Server detected our throw_settled was stale (opponent already threw,
+        // advancing the sequence number). Correct our local turn state.
+        CurlingNetwork.onTurnCorrection(({ currentTeam }) => {
+            console.log('[TURN_CORRECTION] Server corrected currentTeam to ' + currentTeam + ' (was ' + gameState.currentTeam + ')');
+            gameState.currentTeam = currentTeam;
+            updateUI();
+            // Only adjust controls if we're in a phase where it matters
+            if (gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
+                setupTurnControls();
             }
         });
 

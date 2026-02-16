@@ -155,6 +155,7 @@ function createRoom(hostWs, totalEnds) {
         pendingMessages: [[], []], // queued messages per slot when opponent is offline
         throwSettleTimer: null,    // timeout: auto-advance if throw_settled never arrives
         lastThrowBy: null,         // index of player who threw (0 or 1)
+        throwSeq: 0,               // sequence number: increments on each throw, validates throw_settled freshness
     };
     rooms.set(code, room);
     playerRooms.set(hostWs, code);
@@ -956,8 +957,11 @@ async function handleMessage(ws, message) {
             room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
             console.log(`[THROW OK] ${team} threw, turn switched ${prevTeam} -> ${room.state.currentTeam} (room ${code})`);
 
+            // Increment throw sequence — used to detect stale throw_settled messages
+            room.throwSeq++;
+
             // Acknowledge the throw to the thrower so client knows it was received
-            send(ws, { type: 'throw_ack' });
+            send(ws, { type: 'throw_ack', throwSeq: room.throwSeq });
 
             // Track who threw for the settle timeout
             room.lastThrowBy = getPlayerIndex(room, ws);
@@ -980,18 +984,20 @@ async function handleMessage(ws, message) {
             }
 
             // Start throw settle timeout: if the thrower's client doesn't send
-            // throw_settled within 45s (e.g. tab backgrounded, physics frozen),
+            // throw_settled within 15s (e.g. tab backgrounded, physics frozen),
             // nudge them with a settle_nudge so they fast-forward and send it.
+            // 15s is generous — stones take ~8s max to settle, and mobile browsers
+            // throttle background tabs within 5-10s.
             if (room.throwSettleTimer) clearTimeout(room.throwSettleTimer);
             room.throwSettleTimer = setTimeout(() => {
                 room.throwSettleTimer = null;
                 // Only nudge if the room still exists and the thrower is connected
                 const throwerWs = room.players[room.lastThrowBy];
                 if (throwerWs && throwerWs.readyState === WebSocket.OPEN) {
-                    console.log(`[SETTLE_TIMEOUT] No throw_settled in 45s — nudging thrower (room ${code})`);
+                    console.log(`[SETTLE_TIMEOUT] No throw_settled in 15s — nudging thrower (room ${code})`);
                     send(throwerWs, { type: 'settle_nudge' });
                 } else {
-                    console.log(`[SETTLE_TIMEOUT] No throw_settled in 45s and thrower disconnected (room ${code})`);
+                    console.log(`[SETTLE_TIMEOUT] No throw_settled in 15s and thrower disconnected (room ${code})`);
                     // Thrower is gone — tell opponent to apply whatever state they have
                     const oppIdx = room.lastThrowBy === 0 ? 1 : 0;
                     const oppWs = room.players[oppIdx];
@@ -999,7 +1005,7 @@ async function handleMessage(ws, message) {
                         send(oppWs, { type: 'settle_nudge' });
                     }
                 }
-            }, 45000);
+            }, 15000);
 
             // Send push notification to the player whose turn it now is
             const nextIdx = room.state.currentTeam === 'red' ? 0 : 1;
@@ -1112,6 +1118,42 @@ async function handleMessage(ws, message) {
                 room.throwSettleTimer = null;
             }
 
+            // Validate throwSeq to detect stale throw_settled messages.
+            // If the opponent already threw (advancing throwSeq), this message
+            // has an old sequence number and its currentTeam is stale.
+            const isStale = data.throwSeq && data.throwSeq !== room.throwSeq;
+            if (isStale) {
+                console.log(`[THROW_SETTLED] STALE: msg throwSeq=${data.throwSeq} vs room throwSeq=${room.throwSeq} — ignoring currentTeam, keeping server's ${room.state.currentTeam} (room ${code})`);
+                // Still store snapshot and relay stone positions (they're valid),
+                // but do NOT overwrite currentTeam
+                if (data.snapshot) {
+                    // Update snapshot but preserve server's currentTeam in it
+                    const correctedSnapshot = { ...data.snapshot, currentTeam: room.state.currentTeam };
+                    room.gameSnapshot = correctedSnapshot;
+                }
+                // Send turn_correction to the sender so their client resyncs
+                send(ws, { type: 'turn_correction', currentTeam: room.state.currentTeam });
+                // Still relay stone positions to opponent (the positions are accurate)
+                const opponent = getOpponent(room, ws);
+                const authMsg = {
+                    type: 'authoritative_state',
+                    stones: data.stones,
+                    currentTeam: room.state.currentTeam, // Use SERVER's authoritative team
+                    redThrown: data.redThrown,
+                    yellowThrown: data.yellowThrown,
+                    redScore: data.redScore,
+                    yellowScore: data.yellowScore,
+                    currentEnd: data.currentEnd,
+                };
+                if (opponent && opponent.readyState === WebSocket.OPEN) {
+                    send(opponent, authMsg);
+                } else {
+                    const opponentIdx = getPlayerIndex(room, ws) === 0 ? 1 : 0;
+                    room.pendingMessages[opponentIdx].push(authMsg);
+                }
+                break;
+            }
+
             // Store as latest snapshot too
             if (data.snapshot) room.gameSnapshot = data.snapshot;
 
@@ -1120,7 +1162,7 @@ async function handleMessage(ws, message) {
             if (data.currentTeam) {
                 room.state.currentTeam = data.currentTeam;
             }
-            console.log(`[THROW_SETTLED] currentTeam: ${prevTeam} -> ${room.state.currentTeam} redThrown=${data.redThrown} yellowThrown=${data.yellowThrown} (room ${code})`);
+            console.log(`[THROW_SETTLED] currentTeam: ${prevTeam} -> ${room.state.currentTeam} seq=${data.throwSeq} redThrown=${data.redThrown} yellowThrown=${data.yellowThrown} (room ${code})`);
 
             // Relay final stone positions to the opponent
             const opponent = getOpponent(room, ws);
