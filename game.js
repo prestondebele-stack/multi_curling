@@ -657,7 +657,7 @@
             gameState.phase !== 'scoring' && gameState.phase !== 'gameover') {
             console.log('[SAFETY] End-of-end stuck detected! phase=' + gameState.phase +
                 ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown +
-                ' — forcing scoring');
+                ' remoteDelivery=' + gameState._remoteDelivery + ' — forcing scoring');
             gameState.phase = 'scoring';
             gameState._remoteDelivery = false;
             gameState.deliveredStone = null;
@@ -666,6 +666,22 @@
             return true;
         }
         return false;
+    }
+
+    // Periodic safety: auto-detect stuck end-of-end in the game loop.
+    // If all 16 stones are thrown and 3 seconds pass without scoring, force it.
+    let _endOfEndStuckTimer = 0;
+    function checkEndOfEndStuckPeriodic(dt) {
+        if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8 &&
+            gameState.phase !== 'scoring' && gameState.phase !== 'gameover') {
+            _endOfEndStuckTimer += dt;
+            if (_endOfEndStuckTimer > 3.0) {
+                _endOfEndStuckTimer = 0;
+                checkEndOfEndStuck();
+            }
+        } else {
+            _endOfEndStuckTimer = 0;
+        }
     }
 
     // --------------------------------------------------------
@@ -1829,6 +1845,14 @@
                                 const auth = gameState._pendingAuthState;
                                 gameState._pendingAuthState = null;
                                 applyAuthoritativeState(auth);
+
+                                // If the deferred state says all 16 thrown, enter scoring now
+                                if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
+                                    console.log('[AUTH] Deferred state: end complete — entering scoring');
+                                    gameState.phase = 'scoring';
+                                    setTimeout(() => endEnd(), 1500);
+                                    break;
+                                }
                             }
 
                             setTimeout(() => {
@@ -1869,6 +1893,11 @@
 
         // Camera
         updateCamera();
+
+        // Safety: periodic check for stuck end-of-end
+        if (gameState.onlineMode) {
+            checkEndOfEndStuckPeriodic(frameTime);
+        }
 
         // Tick stone animations (settle bounce + fade-out)
         const frameDeltaMs = frameTime * 1000;
@@ -3113,21 +3142,31 @@ function drawStagedStones() {
 
                 // Non-remote cases: could be (a) reconnect correction, (b) late auth after
                 // reconnect cleared _remoteDelivery, or (c) my own throw's confirmation.
+
+                // CRITICAL: If the data says all 16 stones are thrown, ALWAYS enter
+                // scoring immediately, regardless of current phase. This prevents the
+                // game getting stuck if _remoteDelivery was cleared mid-throw (e.g.
+                // reconnect or visibility change) and the auth state arrives late.
+                if (data.redThrown >= 8 && data.yellowThrown >= 8 &&
+                    gameState.phase !== 'scoring' && gameState.phase !== 'gameover') {
+                    console.log('[AUTH] Non-remote: end complete (all 16 thrown) — forcing scoring. phase=' + gameState.phase);
+                    applyAuthoritativeState(data);
+                    gameState.phase = 'scoring';
+                    gameState._remoteDelivery = false;
+                    gameState.deliveredStone = null;
+                    VIEW.followStone = false;
+                    setTimeout(() => endEnd(), 1500);
+                    return;
+                }
+
                 // In ALL cases, apply the state AND set up the turn properly.
                 if (gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
                     applyAuthoritativeState(data);
                     console.log('[AUTH] Non-remote apply: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn());
-                    // Check if end is complete (all 16 stones thrown)
-                    if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
-                        console.log('[AUTH] Non-remote: end complete — entering scoring');
-                        gameState.phase = 'scoring';
-                        setTimeout(() => endEnd(), 1500);
-                        return;
-                    }
                     setupTurnControls();
                 } else if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
                     // My local simulation hasn't finished yet — store and apply when it does
-                    console.log('[AUTH] Deferring — local sim still running');
+                    console.log('[AUTH] Deferring — local sim still running, phase=' + gameState.phase);
                     gameState._pendingAuthState = data;
                 } else {
                     console.log('[AUTH] Ignoring — unexpected phase: ' + gameState.phase);
