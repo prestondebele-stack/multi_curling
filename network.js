@@ -273,6 +273,7 @@ const CurlingNetwork = (() => {
                     gameSnapshot: data.gameSnapshot || null,
                     opponent: data.opponent || null,
                     lastThrowParams: data.lastThrowParams || null, // for replay on reconnect
+                    lastSweepTimeline: data.lastSweepTimeline || null, // for replay on reconnect
                 });
                 break;
 

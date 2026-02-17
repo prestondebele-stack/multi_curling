@@ -139,6 +139,8 @@
         _opponentThrowPending: false,   // true while waiting for opponent's throw to settle
         _preThrowSnapshot: null,        // snapshot of stones before MY throw (sent with throw_settled for replay)
         _throwSweepLevel: 'none',       // sweep level used during MY throw (for replay on opponent's side)
+        _sweepTimeline: [],             // [{step, sweeping, level}] events during MY throw (for accurate replay)
+        _simStepCount: 0,               // physics step counter during throw (indexes into sweep timeline)
     };
 
     // --------------------------------------------------------
@@ -493,6 +495,8 @@
 
         // Reset sweep tracking for this throw
         gameState._throwSweepLevel = 'none';
+        gameState._sweepTimeline = [];
+        gameState._simStepCount = 0;
 
         // If online mode, send throw to server (which relays to opponent).
         if (gameState.onlineMode) {
@@ -595,6 +599,9 @@
         gameState._opponentThrowPending = false;
         gameState._preThrowSnapshot = null;
         gameState._throwSweepLevel = 'none';
+        gameState._sweepTimeline = [];
+        gameState._simStepCount = 0;
+        gameState._replaySweepTimeline = null;
 
         updateUI();
 
@@ -879,6 +886,7 @@
                 currentEnd: gameState.currentEnd,
                 preThrowStones: gameState._preThrowSnapshot || null,
                 sweepLevel: gameState._throwSweepLevel || 'none',
+                sweepTimeline: gameState._sweepTimeline.length > 0 ? gameState._sweepTimeline : null,
                 snapshot: syncPayload,
             });
             gameState._preThrowSnapshot = null;
@@ -1684,14 +1692,18 @@
         gameState.phase = 'delivering';
         VIEW.followStone = true;
 
-        // Don't apply sweep to PHYSICS (we don't know exact timing, so it would
-        // make the stone travel too far). But DO show the sweep indicator visually
-        // so the opponent can see that sweeping was used during the shot.
-        gameState.isSweeping = false; // no physics effect
-        if (shot.sweepLevel && shot.sweepLevel !== 'none') {
+        // Apply sweep timeline during replay for accurate physics.
+        // The timeline records exactly when sweep was toggled on/off during the original throw,
+        // so the replay stone follows the same path.
+        gameState.isSweeping = false; // starts off — timeline events will toggle it
+        gameState._simStepCount = 0;  // reset step counter for replay
+        if (shot.sweepTimeline && shot.sweepTimeline.length > 0) {
+            gameState._replaySweepTimeline = shot.sweepTimeline;
+            // Show sweep indicator if sweep was used at all
             document.getElementById('sweep-toggle-btn').style.display = 'block';
-            document.getElementById('sweep-toggle-btn').classList.add('sweeping');
-            document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
+            document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
+        } else {
+            gameState._replaySweepTimeline = null;
         }
 
         // Wait for replay to finish via the gameLoop — it will detect
@@ -1704,7 +1716,12 @@
             gameState.currentTeam = prevTeam;
             gameState.isReplaying = false;
             gameState._replayRestore = null;
+            gameState._replaySweepTimeline = null;
+            gameState.isSweeping = false;
             VIEW.followStone = false;
+            // Reset sweep UI
+            document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
+            document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
             updateUI();
         };
     }
@@ -1797,8 +1814,38 @@
             physicsAccumulator += frameTime * gameState.simSpeed;
 
             while (physicsAccumulator >= PHYSICS_DT) {
+                // During replay, consult the sweep timeline to apply correct sweep at this step
+                if (gameState.isReplaying && gameState._replaySweepTimeline) {
+                    const timeline = gameState._replaySweepTimeline;
+                    const wasSweeping = gameState.isSweeping;
+                    // Find the latest event at or before this step
+                    for (let i = timeline.length - 1; i >= 0; i--) {
+                        if (timeline[i].step <= gameState._simStepCount) {
+                            gameState.isSweeping = timeline[i].sweeping;
+                            if (timeline[i].sweeping) {
+                                gameState.sweepLevel = timeline[i].level;
+                            }
+                            break;
+                        }
+                    }
+                    // Update sweep button visual during replay
+                    if (gameState.isSweeping !== wasSweeping) {
+                        const sweepBtn = document.getElementById('sweep-toggle-btn');
+                        if (gameState.isSweeping) {
+                            sweepBtn.classList.add('sweeping');
+                            sweepBtn.textContent = 'SWEEPING!';
+                        } else {
+                            sweepBtn.classList.remove('sweeping');
+                            sweepBtn.textContent = 'SWEEP';
+                        }
+                    }
+                }
+
                 const sweep = gameState.isSweeping ? gameState.sweepLevel : 'none';
                 const anyMoving = CurlingPhysics.simulate(gameState.stones, PHYSICS_DT, sweep);
+
+                // Increment sim step counter (indexes sweep timeline for recording & replay)
+                gameState._simStepCount++;
 
                 // Record trail for the delivered stone
                 if (gameState.deliveredStone && gameState.deliveredStone.moving) {
@@ -2243,9 +2290,13 @@ function drawStagedStones() {
 
     function setSweepLevel(level) {
         gameState.sweepLevel = level;
-        // Track highest sweep level during my throw for opponent's replay
+        // Track sweep level during my throw for opponent's replay
         if (gameState.phase === 'delivering' && gameState.isSweeping) {
             gameState._throwSweepLevel = level;
+            // Record level change in timeline
+            if (!gameState.isReplaying) {
+                gameState._sweepTimeline.push({ step: gameState._simStepCount, sweeping: true, level: level });
+            }
         }
         document.querySelectorAll('.sweep-btn').forEach(b => b.classList.remove('active'));
         document.getElementById('sweep-' + level).classList.add('active');
@@ -2296,6 +2347,10 @@ function drawStagedStones() {
             }
             // Track that sweep was used during this throw (for opponent's replay)
             gameState._throwSweepLevel = gameState.sweepLevel;
+            // Record sweep ON event in timeline (with current sim step)
+            if (!gameState.isReplaying) {
+                gameState._sweepTimeline.push({ step: gameState._simStepCount, sweeping: true, level: gameState.sweepLevel });
+            }
             document.getElementById('sweep-toggle-btn').classList.add('sweeping');
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
             if (gameState.onlineMode) CurlingNetwork.sendSweepStart();
@@ -2305,6 +2360,10 @@ function drawStagedStones() {
     function stopSweeping() {
         const wasSweeping = gameState.isSweeping;
         gameState.isSweeping = false;
+        // Record sweep OFF event in timeline
+        if (wasSweeping && gameState.phase === 'delivering' && !gameState.isReplaying) {
+            gameState._sweepTimeline.push({ step: gameState._simStepCount, sweeping: false, level: 'none' });
+        }
         document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
         document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
         if (gameState.onlineMode && wasSweeping) CurlingNetwork.sendSweepStop();
@@ -2388,6 +2447,9 @@ function drawStagedStones() {
             _opponentThrowPending: false,
             _preThrowSnapshot: null,
             _throwSweepLevel: 'none',
+            _sweepTimeline: [],
+            _simStepCount: 0,
+            _replaySweepTimeline: null,
         };
 
         fgzSnapshots = [];
@@ -3066,10 +3128,11 @@ function drawStagedStones() {
                     }));
                 }
 
-                // Store throw params and sweep level for replay
+                // Store throw params, sweep level, and sweep timeline for replay
                 if (data.throwParams) {
                     gameState.lastOpponentShot = data.throwParams;
                     gameState.lastOpponentShot.sweepLevel = data.sweepLevel || 'none';
+                    gameState.lastOpponentShot.sweepTimeline = data.sweepTimeline || null;
                 }
 
                 // Clean up delivery state
@@ -3301,7 +3364,7 @@ function drawStagedStones() {
         });
 
         // v88: Simplified onReconnected — no more remote delivery branching.
-        CurlingNetwork.onReconnected(({ yourTeam, currentTeam: serverCurrentTeam, gameSnapshot, opponent, lastThrowParams }) => {
+        CurlingNetwork.onReconnected(({ yourTeam, currentTeam: serverCurrentTeam, gameSnapshot, opponent, lastThrowParams, lastSweepTimeline }) => {
             console.log('[GAME] onReconnected: myTeam=' + yourTeam + ' serverCurrentTeam=' + serverCurrentTeam + ' snapshot=' + !!gameSnapshot + ' phase=' + gameState.phase);
             gameState._awaitingConnectionVerify = false;
             gameState.myTeam = yourTeam;
@@ -3369,6 +3432,7 @@ function drawStagedStones() {
             // Store last throw params for replay if provided
             if (lastThrowParams) {
                 gameState.lastOpponentShot = lastThrowParams;
+                gameState.lastOpponentShot.sweepTimeline = lastSweepTimeline || null;
                 // Use current stones as post-throw state (snapshot already applied)
             }
 

@@ -978,6 +978,7 @@ async function handleMessage(ws, message) {
             // Store throw params so we can include them in authoritative_state for replay
             room.lastThrowParams = { aim: data.aim, weight: data.weight, spinDir: data.spinDir, spinAmount: data.spinAmount };
             room.lastSweepLevel = 'none'; // Will be updated when throw_settled arrives
+            room.lastSweepTimeline = null; // Will be updated when throw_settled arrives
 
             // Track who threw for the settle timeout
             room.lastThrowBy = getPlayerIndex(room, ws);
@@ -1153,6 +1154,7 @@ async function handleMessage(ws, message) {
                     throwParams: room.lastThrowParams || null,
                     preThrowStones: data.preThrowStones || null,
                     sweepLevel: data.sweepLevel || 'none',
+                    sweepTimeline: data.sweepTimeline || null,
                 };
                 if (opponent && opponent.readyState === WebSocket.OPEN) {
                     send(opponent, authMsg);
@@ -1166,8 +1168,9 @@ async function handleMessage(ws, message) {
             // Store as latest snapshot too
             if (data.snapshot) room.gameSnapshot = data.snapshot;
 
-            // Store sweep level for reconnect replay
+            // Store sweep level and timeline for reconnect replay
             room.lastSweepLevel = data.sweepLevel || 'none';
+            room.lastSweepTimeline = data.sweepTimeline || null;
 
             // Keep server's currentTeam in sync with the thrower's authoritative state.
             const prevTeam = room.state.currentTeam;
@@ -1190,6 +1193,7 @@ async function handleMessage(ws, message) {
                 throwParams: room.lastThrowParams || null,
                 preThrowStones: data.preThrowStones || null,
                 sweepLevel: data.sweepLevel || 'none',
+                sweepTimeline: data.sweepTimeline || null,
             };
             if (opponent && opponent.readyState === WebSocket.OPEN) {
                 send(opponent, authMsg);
@@ -1397,6 +1401,7 @@ async function handleMessage(ws, message) {
                 gameSnapshot: snapshot,
                 opponent: opponentInfo,
                 lastThrowParams: room.lastThrowParams || null, // for replay on reconnect
+                lastSweepTimeline: room.lastSweepTimeline || null, // for replay on reconnect
             });
 
             // Replay any messages that were queued while this player was offline
