@@ -728,19 +728,17 @@
 
         updateUI();
 
-        // Sync the new end state with the server so both players
-        // and the server agree on scores, throw counts, and currentTeam.
+        // Send a dedicated end_transition message so the server updates
+        // its authoritative currentTeam for the new end.
+        // (game_state_sync is deliberately distrusted for currentTeam.)
         if (gameState.onlineMode) {
-            CurlingNetwork.sendGameStateSync({
+            CurlingNetwork.sendEndTransition({
                 currentTeam: gameState.currentTeam,
+                hammer: gameState.hammer,
+                currentEnd: gameState.currentEnd,
                 redScore: gameState.redScore,
                 yellowScore: gameState.yellowScore,
-                currentEnd: gameState.currentEnd,
-                redThrown: 0,
-                yellowThrown: 0,
-                hammer: gameState.hammer,
                 endScores: gameState.endScores,
-                stones: [],
             });
         }
 
@@ -3390,6 +3388,24 @@ function drawStagedStones() {
                 console.log('[SETTLE_NUDGE] Sending deferred throw_settled');
                 gameState._throwSettledPending = false;
                 scheduleNextTurn(100);
+            }
+        });
+
+        // End transition from opponent (relayed via server after scoring).
+        // Ensures both players AND the server agree on who throws first.
+        CurlingNetwork.onEndTransition((data) => {
+            console.log('[END_TRANSITION] Received: currentTeam=' + data.currentTeam +
+                ' hammer=' + data.hammer + ' currentEnd=' + data.currentEnd);
+            if (data.currentTeam) gameState.currentTeam = data.currentTeam;
+            if (data.hammer) gameState.hammer = data.hammer;
+            if (data.currentEnd) gameState.currentEnd = data.currentEnd;
+            if (data.redScore !== undefined) gameState.redScore = data.redScore;
+            if (data.yellowScore !== undefined) gameState.yellowScore = data.yellowScore;
+            if (data.endScores) gameState.endScores = data.endScores;
+            updateUI();
+            // Re-evaluate controls with the corrected turn state
+            if (gameState.phase === 'aiming') {
+                setupTurnControls();
             }
         });
 

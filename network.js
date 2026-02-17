@@ -99,6 +99,8 @@ const CurlingNetwork = (() => {
         onSettleNudge: null,
         // Server turn correction (stale throw_settled detected)
         onTurnCorrection: null,
+        // End transition (scoring → new end with updated currentTeam)
+        onEndTransition: null,
     };
 
     function send(data) {
@@ -408,6 +410,10 @@ const CurlingNetwork = (() => {
                 console.log('[NET] Turn correction from server: currentTeam=' + data.currentTeam);
                 if (callbacks.onTurnCorrection) callbacks.onTurnCorrection(data);
                 break;
+            case 'end_transition':
+                console.log('[NET] End transition: currentTeam=' + data.currentTeam + ' hammer=' + data.hammer + ' currentEnd=' + data.currentEnd);
+                if (callbacks.onEndTransition) callbacks.onEndTransition(data);
+                break;
         }
     }
 
@@ -698,6 +704,8 @@ const CurlingNetwork = (() => {
 
         // Game state sync (for reconnection)
         sendGameStateSync(snapshot) { send({ type: 'game_state_sync', snapshot }); },
+        // End transition (after scoring, updates server's authoritative currentTeam)
+        sendEndTransition(data) { send({ type: 'end_transition', ...data }); },
         // Authoritative throw result (thrower sends after stone settles)
         sendThrowSettled(data) { send({ type: 'throw_settled', throwSeq: lastThrowSeq, ...data }); },
 
@@ -783,6 +791,7 @@ const CurlingNetwork = (() => {
         onSettleNudge(cb) { callbacks.onSettleNudge = cb; },
         // Turn correction (stale throw_settled detected)
         onTurnCorrection(cb) { callbacks.onTurnCorrection = cb; },
+        onEndTransition(cb) { callbacks.onEndTransition = cb; },
         // Connection verified
         onConnectionVerified(cb) { callbacks.onConnectionVerified = cb; },
         // Chat

@@ -1111,6 +1111,46 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        // ---- END TRANSITION (after scoring, updates authoritative currentTeam) ----
+        case 'end_transition': {
+            const code = playerRooms.get(ws);
+            if (!code) return;
+            const room = rooms.get(code);
+            if (!room) return;
+
+            // Update server's authoritative currentTeam for the new end.
+            // Unlike game_state_sync (which is distrusted), end_transition is a
+            // dedicated signal sent only after scoring — safe to trust.
+            if (data.currentTeam) {
+                const prevTeam = room.state.currentTeam;
+                room.state.currentTeam = data.currentTeam;
+                console.log(`[END_TRANSITION] currentTeam: ${prevTeam} -> ${data.currentTeam} hammer=${data.hammer} end=${data.currentEnd} (room ${code})`);
+            }
+
+            // Store snapshot for reconnects
+            room.gameSnapshot = {
+                currentTeam: data.currentTeam,
+                hammer: data.hammer,
+                currentEnd: data.currentEnd,
+                redScore: data.redScore,
+                yellowScore: data.yellowScore,
+                endScores: data.endScores,
+                redThrown: 0,
+                yellowThrown: 0,
+                stones: [],
+            };
+
+            // Relay to opponent so they sync too
+            const opponent = getOpponent(room, ws);
+            if (opponent && opponent.readyState === WebSocket.OPEN) {
+                send(opponent, { type: 'end_transition', ...data });
+            } else {
+                const opponentIdx = getPlayerIndex(room, ws) === 0 ? 1 : 0;
+                room.pendingMessages[opponentIdx].push({ type: 'end_transition', ...data });
+            }
+            break;
+        }
+
         // Authoritative stone positions after a throw settles.
         // The thrower's client is the source of truth — relay to opponent.
         case 'throw_settled': {
