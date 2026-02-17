@@ -1655,6 +1655,51 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* ================================================
+   WELCOME BACK OVERLAY (v101)
+   ================================================ */
+#welcome-back-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 950;
+    cursor: pointer;
+}
+
+.welcome-back-content {
+    text-align: center;
+    background: rgba(20, 20, 45, 0.95);
+    border: 1px solid #5c9ae6;
+    border-radius: 12px;
+    padding: 28px 36px;
+    animation: welcomeBackPulse 2s ease-in-out infinite;
+}
+
+@keyframes welcomeBackPulse {
+    0%, 100% { border-color: #5c9ae6; box-shadow: 0 0 8px rgba(92, 154, 230, 0.2); }
+    50% { border-color: #90caf9; box-shadow: 0 0 16px rgba(92, 154, 230, 0.4); }
+}
+
+.welcome-back-content p {
+    color: #fff;
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.welcome-back-content .welcome-back-sub {
+    color: #5c9ae6;
+    font-size: 15px;
+    font-weight: 400;
+    margin-bottom: 0;
+}
+
+/* ================================================
    ONLINE TEAM BADGE
    ================================================ */
 #online-team-badge {

@@ -391,26 +391,16 @@
 
     // Set up throw controls based on whose turn it is.
     // Called after reconnect, visibility change, authoritative state, etc.
+    // v101: Removed CONNECTING... gating — the Welcome Back popup is the gate now.
     function setupTurnControls() {
         const throwBtn = document.getElementById('throw-btn');
         if (isMyTurn()) {
             enableControlsForHuman();
             throwBtn.style.display = '';
-
-            // v93: Don't enable throw until connection is verified after tab return.
-            // This closes the 3-second zombie window where TCP is dead but readyState
-            // still reports OPEN. The pong handler sets _awaitingConnectionVerify=false
-            // and calls setupTurnControls() again, which will then enable the button.
-            if (gameState.onlineMode && gameState._awaitingConnectionVerify) {
-                throwBtn.disabled = true;
-                throwBtn.textContent = 'CONNECTING...';
-                throwBtn.classList.add('connecting');
-            } else {
-                throwBtn.disabled = false;
-                throwBtn.textContent = 'THROW';
-                throwBtn.classList.remove('connecting');
-                TabNotify.notify();
-            }
+            throwBtn.disabled = false;
+            throwBtn.textContent = 'THROW';
+            throwBtn.classList.remove('connecting');
+            TabNotify.notify();
 
             if (gameState.lastOpponentShot) {
                 showReplayButton();
@@ -1882,59 +1872,46 @@
         };
     }
 
-    // v88: Simplified visibility handler — no more remote delivery, resume overlay, or deferred state.
-    // Only two cases: (1) my throw in-flight → fast-forward, (2) everything else → sync controls.
+    // v101: Welcome Back popup — replaces the complex multi-branch visibility handler.
+    // When player returns from tab-away, show popup. Network layer handles ping/reconnect
+    // automatically. When user taps the popup, do a clean sync in one atomic sequence.
+    function showWelcomeBack() {
+        document.getElementById('welcome-back-overlay').style.display = 'flex';
+        console.log('[WELCOME_BACK] Popup shown — phase=' + gameState.phase);
+    }
+
+    function dismissWelcomeBack() {
+        document.getElementById('welcome-back-overlay').style.display = 'none';
+        console.log('[WELCOME_BACK] Popup dismissed — phase=' + gameState.phase
+            + ' currentTeam=' + gameState.currentTeam);
+
+        // If my throw was in-flight, finish it now in one atomic sequence
+        if ((gameState.phase === 'delivering' || gameState.phase === 'settling')
+            && !gameState._opponentThrowPending) {
+            console.log('[WELCOME_BACK] My throw was in-flight — fast-forwarding + nextTurn');
+            fastForwardPhysics();
+            checkFGZViolation();
+            // Send throw_settled immediately — by now WS should be alive
+            // (user had to tap the popup, giving WS time to reconnect)
+            gameState.phase = 'waitingNextTurn';
+            gameState.isSweeping = false;
+            document.getElementById('sweep-toggle-btn').style.display = 'none';
+            nextTurn(); // toggles team + sends throw_settled in one step
+        }
+
+        // Clear ALL recovery flags — popup is the single gate now
+        gameState._awaitingConnectionVerify = false;
+        gameState._throwSettledPending = false;
+
+        // Re-sync UI
+        updateUI();
+        setupTurnControls();
+    }
+
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden && gameState.onlineMode) {
-            gameState._awaitingConnectionVerify = true;
             // Network layer sends ping automatically via its own visibilitychange handler.
-
-            if ((gameState.phase === 'delivering' || gameState.phase === 'settling') && !gameState._opponentThrowPending) {
-                // v94: MY throw in-flight — always fast-forward physics (safe, deterministic),
-                // but defer sending throw_settled until connection is verified by pong.
-                // Previously, this checked isConnected() first and skipped fast-forward if dead,
-                // leaving the player stuck in 'delivering' phase.
-                console.log('[VISIBILITY] My throw in-flight — fast-forwarding physics');
-                document.getElementById('throw-btn').disabled = true;
-
-                fastForwardPhysics();
-                checkFGZViolation();
-                gameState.phase = 'waitingNextTurn';
-                gameState.isSweeping = false;
-                document.getElementById('sweep-toggle-btn').style.display = 'none';
-
-                // Don't send throw_settled yet — connection may be dead/zombie.
-                // Set flag so onConnectionVerified (pong) or onReconnected sends it.
-                gameState._throwSettledPending = true;
-                console.log('[VISIBILITY] throw_settled deferred until connection verified');
-            } else if (gameState.phase === 'aiming') {
-                // Enable controls immediately — pong will correct if stale
-                console.log('[VISIBILITY] Returned to aiming — enabling controls');
-                updateUI();
-                setupTurnControls();
-            } else if (gameState.phase === 'waitingNextTurn') {
-                console.log('[VISIBILITY] Returned during waitingNextTurn — ensuring nextTurn scheduled');
-                scheduleNextTurn(200);
-            } else if (gameState.phase === 'scoring') {
-                console.log('[VISIBILITY] Returned during scoring phase');
-            }
-            // If _opponentThrowPending: opponent is throwing. If WS is alive, auth_state will
-            // arrive when their throw settles. If WS is dead, we need to reconnect to get it.
-            if (gameState._opponentThrowPending) {
-                if (!CurlingNetwork.isConnected()) {
-                    console.log('[VISIBILITY] Opponent throw pending but WS dead — reconnect will deliver auth_state');
-                }
-                // Safety: if auth_state doesn't arrive within 5s, force a sync via pong
-                setTimeout(() => {
-                    if (gameState._opponentThrowPending && gameState.onlineMode) {
-                        console.log('[VISIBILITY] Opponent throw still pending after 5s — forcing sync');
-                        gameState._opponentThrowPending = false;
-                        gameState.phase = 'aiming';
-                        updateUI();
-                        setupTurnControls();
-                    }
-                }, 5000);
-            }
+            showWelcomeBack();
         }
     });
 
@@ -3372,16 +3349,13 @@ function drawStagedStones() {
         });
 
         // Connection verified alive after tab refocus (pong received)
-        // Server now includes authoritative currentTeam in pong so we can
-        // sync before enabling controls — prevents stale-turn throw rejections.
-        // v88: Simplified onConnectionVerified — just sync team and controls.
-        // v94: Also handles deferred throw_settled after mid-throw tab return.
+        // v101: Simplified — popup handles mid-throw recovery now. This just syncs
+        // team/controls if the popup isn't showing (i.e. normal non-tab-away pongs).
         CurlingNetwork.onConnectionVerified(({ currentTeam, throwSeq } = {}) => {
             gameState._awaitingConnectionVerify = false;
             console.log('[CONN_VERIFIED] pong received — phase=' + gameState.phase
                 + ' localTeam=' + gameState.currentTeam
-                + ' serverTeam=' + currentTeam
-                + ' throwSettledPending=' + gameState._throwSettledPending);
+                + ' serverTeam=' + currentTeam);
 
             // Safety net: clear stuck disconnect overlay
             if (!gameState.opponentConnected) {
@@ -3389,31 +3363,29 @@ function drawStagedStones() {
                 hideDisconnectOverlay();
             }
 
+            // If welcome-back popup is showing, it handles everything on dismiss
+            const popupVisible = document.getElementById('welcome-back-overlay').style.display !== 'none';
+            if (popupVisible) {
+                console.log('[CONN_VERIFIED] Welcome-back popup visible — deferring to popup dismiss');
+                return;
+            }
+
             // Sync currentTeam with server's authoritative value
-            // BUT skip this sync if we have a pending throw_settled — our local team
-            // hasn't toggled yet because nextTurn() hasn't run yet.
-            if (currentTeam && currentTeam !== gameState.currentTeam && !gameState._throwSettledPending) {
+            if (currentTeam && currentTeam !== gameState.currentTeam) {
                 console.log('[CONN_VERIFIED] Correcting stale currentTeam: '
                     + gameState.currentTeam + ' -> ' + currentTeam);
                 gameState.currentTeam = currentTeam;
                 updateUI();
             }
 
-            // v94: If a throw settled while connection was unverified, send it now
-            if (gameState._throwSettledPending) {
-                gameState._throwSettledPending = false;
-                console.log('[CONN_VERIFIED] Sending deferred throw_settled');
-                scheduleNextTurn(100);
-            } else {
-                // Re-sync controls
-                setupTurnControls();
-            }
+            setupTurnControls();
         });
 
         // v88: Server settle nudge — only applies to the thrower now.
         // If MY throw physics froze (tab hidden), fast-forward and send throw_settled.
+        // v101: Removed _throwSettledPending branch — popup handles deferred throws now.
         CurlingNetwork.onSettleNudge(() => {
-            console.log('[SETTLE_NUDGE] Server nudge received — phase=' + gameState.phase + ' throwSettledPending=' + gameState._throwSettledPending);
+            console.log('[SETTLE_NUDGE] Server nudge received — phase=' + gameState.phase);
             // Receiving a message from the server proves connection is alive
             gameState._awaitingConnectionVerify = false;
 
@@ -3426,13 +3398,6 @@ function drawStagedStones() {
                 gameState.isSweeping = false;
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
                 scheduleNextTurn(300);
-            } else if (gameState._throwSettledPending) {
-                // v94: Physics already fast-forwarded (visibility handler did it),
-                // but throw_settled was deferred. The server nudge means the connection
-                // IS alive (we just received a message!), so send it now.
-                console.log('[SETTLE_NUDGE] Sending deferred throw_settled');
-                gameState._throwSettledPending = false;
-                scheduleNextTurn(100);
             }
         });
 
@@ -3579,7 +3544,8 @@ function drawStagedStones() {
             showLobbyPanel('lobby-menu');
         });
 
-        // v88: Simplified onReconnected — no more remote delivery branching.
+        // v101: Simplified onReconnected — popup handles mid-throw recovery now.
+        // Just apply the server snapshot and sync controls.
         CurlingNetwork.onReconnected(({ yourTeam, currentTeam: serverCurrentTeam, gameSnapshot, opponent, lastThrowParams, lastSweepTimeline }) => {
             console.log('[GAME] onReconnected: myTeam=' + yourTeam + ' serverCurrentTeam=' + serverCurrentTeam + ' snapshot=' + !!gameSnapshot + ' phase=' + gameState.phase);
             gameState._awaitingConnectionVerify = false;
@@ -3602,15 +3568,12 @@ function drawStagedStones() {
                 gameState._replayRestore();
             }
 
-            // If MY throw is in-flight with local physics, let it finish naturally.
-            // The snapshot is from BEFORE this throw.
-            // Do NOT apply serverCurrentTeam here — the server already toggled it
-            // when it received the 'throw' message, but our local nextTurn() hasn't
-            // run yet. Applying the toggled value now would cause a double-toggle
-            // when the stone settles and nextTurn() toggles again.
+            // v101: If welcome-back popup is showing, let it handle mid-throw recovery.
+            // Don't apply snapshot or change phase — popup dismiss does that atomically.
+            const popupVisible = document.getElementById('welcome-back-overlay').style.display !== 'none';
             const myThrowInFlight = (gameState.phase === 'delivering' || gameState.phase === 'settling');
-            if (myThrowInFlight) {
-                console.log('[GAME] onReconnected — my throw in-flight, preserving local physics (skipping currentTeam sync)');
+            if (popupVisible && myThrowInFlight) {
+                console.log('[GAME] onReconnected — popup visible + throw in-flight, deferring to popup dismiss');
                 return;
             }
 
@@ -3639,23 +3602,20 @@ function drawStagedStones() {
             }
 
             // Use server's authoritative currentTeam
-            // BUT skip if _throwSettledPending — our local team hasn't been toggled by
-            // nextTurn() yet, and the server's value is already toggled from the 'throw'
-            // handler. Applying it here would cause a double-toggle when nextTurn() runs.
-            if (serverCurrentTeam && !gameState._throwSettledPending) {
+            if (serverCurrentTeam) {
                 gameState.currentTeam = serverCurrentTeam;
             }
 
             // Clean up
             gameState.deliveredStone = null;
             gameState._nextTurnScheduled = false;
+            gameState._throwSettledPending = false;
             VIEW.followStone = false;
 
             // Store last throw params for replay if provided
             if (lastThrowParams) {
                 gameState.lastOpponentShot = lastThrowParams;
                 gameState.lastOpponentShot.sweepTimeline = lastSweepTimeline || null;
-                // Use current stones as post-throw state (snapshot already applied)
             }
 
             // Handle game-over
@@ -3670,16 +3630,6 @@ function drawStagedStones() {
                 console.log('[GAME] onReconnected — all 16 thrown, entering scoring');
                 gameState.phase = 'scoring';
                 setTimeout(() => endEnd(), 1500);
-                return;
-            }
-
-            // v94: If a throw settled during disconnect, send throw_settled now
-            if (gameState._throwSettledPending) {
-                gameState._throwSettledPending = false;
-                console.log('[RECONNECTED] Sending deferred throw_settled');
-                gameState.phase = 'waitingNextTurn';
-                scheduleNextTurn(100);
-                updateUI();
                 return;
             }
 
@@ -3700,6 +3650,12 @@ function drawStagedStones() {
                     team: s.team, x: s.x, y: s.y,
                 })),
             });
+
+            // If popup is visible, defer UI setup to popup dismiss
+            if (popupVisible) {
+                console.log('[GAME] onReconnected — popup visible, deferring setupTurnControls to popup dismiss');
+                return;
+            }
 
             updateUI();
             setupTurnControls();
@@ -4070,6 +4026,11 @@ function drawStagedStones() {
         hideDisconnectOverlay();
         clearOnlineMode('disconnect-leave-button');
         resetGame();
+    });
+
+    // v101: Welcome Back popup — tap to dismiss and sync
+    document.getElementById('welcome-back-overlay').addEventListener('click', () => {
+        dismissWelcomeBack();
     });
 
     // Rematch / Leave buttons on game over screen
