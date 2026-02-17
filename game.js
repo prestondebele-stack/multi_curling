@@ -141,6 +141,7 @@
         _throwSweepLevel: 'none',       // sweep level used during MY throw (for replay on opponent's side)
         _sweepTimeline: [],             // [{step, sweeping, level}] events during MY throw (for accurate replay)
         _simStepCount: 0,               // physics step counter during throw (indexes into sweep timeline)
+        _throwSettledPending: false,     // true when throw settled locally but throw_settled not yet sent (awaiting connection verify)
     };
 
     // --------------------------------------------------------
@@ -723,6 +724,7 @@
         gameState._sweepTimeline = [];
         gameState._simStepCount = 0;
         gameState._replaySweepTimeline = null;
+        gameState._throwSettledPending = false;
 
         updateUI();
 
@@ -1855,21 +1857,23 @@
             // Network layer sends ping automatically via its own visibilitychange handler.
 
             if ((gameState.phase === 'delivering' || gameState.phase === 'settling') && !gameState._opponentThrowPending) {
-                // MY throw in-flight: fast-forward local physics so we can send throw_settled
+                // v94: MY throw in-flight — always fast-forward physics (safe, deterministic),
+                // but defer sending throw_settled until connection is verified by pong.
+                // Previously, this checked isConnected() first and skipped fast-forward if dead,
+                // leaving the player stuck in 'delivering' phase.
                 console.log('[VISIBILITY] My throw in-flight — fast-forwarding physics');
                 document.getElementById('throw-btn').disabled = true;
-
-                if (!CurlingNetwork.isConnected()) {
-                    console.log('[VISIBILITY] WS disconnected — deferring to reconnect handler');
-                    return;
-                }
 
                 fastForwardPhysics();
                 checkFGZViolation();
                 gameState.phase = 'waitingNextTurn';
                 gameState.isSweeping = false;
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
-                scheduleNextTurn(300);
+
+                // Don't send throw_settled yet — connection may be dead/zombie.
+                // Set flag so onConnectionVerified (pong) or onReconnected sends it.
+                gameState._throwSettledPending = true;
+                console.log('[VISIBILITY] throw_settled deferred until connection verified');
             } else if (gameState.phase === 'aiming') {
                 // Enable controls immediately — pong will correct if stale
                 console.log('[VISIBILITY] Returned to aiming — enabling controls');
@@ -2582,6 +2586,7 @@ function drawStagedStones() {
             _sweepTimeline: [],
             _simStepCount: 0,
             _replaySweepTimeline: null,
+            _throwSettledPending: false,
         };
 
         fgzSnapshots = [];
@@ -3329,11 +3334,13 @@ function drawStagedStones() {
         // Server now includes authoritative currentTeam in pong so we can
         // sync before enabling controls — prevents stale-turn throw rejections.
         // v88: Simplified onConnectionVerified — just sync team and controls.
+        // v94: Also handles deferred throw_settled after mid-throw tab return.
         CurlingNetwork.onConnectionVerified(({ currentTeam, throwSeq } = {}) => {
             gameState._awaitingConnectionVerify = false;
             console.log('[CONN_VERIFIED] pong received — phase=' + gameState.phase
                 + ' localTeam=' + gameState.currentTeam
-                + ' serverTeam=' + currentTeam);
+                + ' serverTeam=' + currentTeam
+                + ' throwSettledPending=' + gameState._throwSettledPending);
 
             // Safety net: clear stuck disconnect overlay
             if (!gameState.opponentConnected) {
@@ -3342,21 +3349,30 @@ function drawStagedStones() {
             }
 
             // Sync currentTeam with server's authoritative value
-            if (currentTeam && currentTeam !== gameState.currentTeam) {
+            // BUT skip this sync if we have a pending throw_settled — our local team
+            // hasn't toggled yet because nextTurn() hasn't run yet.
+            if (currentTeam && currentTeam !== gameState.currentTeam && !gameState._throwSettledPending) {
                 console.log('[CONN_VERIFIED] Correcting stale currentTeam: '
                     + gameState.currentTeam + ' -> ' + currentTeam);
                 gameState.currentTeam = currentTeam;
                 updateUI();
             }
 
-            // Re-sync controls
-            setupTurnControls();
+            // v94: If a throw settled while connection was unverified, send it now
+            if (gameState._throwSettledPending) {
+                gameState._throwSettledPending = false;
+                console.log('[CONN_VERIFIED] Sending deferred throw_settled');
+                scheduleNextTurn(100);
+            } else {
+                // Re-sync controls
+                setupTurnControls();
+            }
         });
 
         // v88: Server settle nudge — only applies to the thrower now.
         // If MY throw physics froze (tab hidden), fast-forward and send throw_settled.
         CurlingNetwork.onSettleNudge(() => {
-            console.log('[SETTLE_NUDGE] Server nudge received — phase=' + gameState.phase);
+            console.log('[SETTLE_NUDGE] Server nudge received — phase=' + gameState.phase + ' throwSettledPending=' + gameState._throwSettledPending);
 
             if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
                 // I'm the THROWER — my physics froze. Fast-forward now.
@@ -3367,6 +3383,13 @@ function drawStagedStones() {
                 gameState.isSweeping = false;
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
                 scheduleNextTurn(300);
+            } else if (gameState._throwSettledPending) {
+                // v94: Physics already fast-forwarded (visibility handler did it),
+                // but throw_settled was deferred. The server nudge means the connection
+                // IS alive (we just received a message!), so send it now.
+                console.log('[SETTLE_NUDGE] Sending deferred throw_settled');
+                gameState._throwSettledPending = false;
+                scheduleNextTurn(100);
             }
         });
 
@@ -3580,6 +3603,16 @@ function drawStagedStones() {
                 console.log('[GAME] onReconnected — all 16 thrown, entering scoring');
                 gameState.phase = 'scoring';
                 setTimeout(() => endEnd(), 1500);
+                return;
+            }
+
+            // v94: If a throw settled during disconnect, send throw_settled now
+            if (gameState._throwSettledPending) {
+                gameState._throwSettledPending = false;
+                console.log('[RECONNECTED] Sending deferred throw_settled');
+                gameState.phase = 'waitingNextTurn';
+                scheduleNextTurn(100);
+                updateUI();
                 return;
             }
 
