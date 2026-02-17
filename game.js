@@ -3341,6 +3341,8 @@ function drawStagedStones() {
                 }
 
                 // Set up for next turn
+                // Receiving data from the server proves connection is alive
+                gameState._awaitingConnectionVerify = false;
                 gameState.phase = 'aiming';
                 updateUI();
                 setupTurnControls();
@@ -3412,6 +3414,8 @@ function drawStagedStones() {
         // If MY throw physics froze (tab hidden), fast-forward and send throw_settled.
         CurlingNetwork.onSettleNudge(() => {
             console.log('[SETTLE_NUDGE] Server nudge received — phase=' + gameState.phase + ' throwSettledPending=' + gameState._throwSettledPending);
+            // Receiving a message from the server proves connection is alive
+            gameState._awaitingConnectionVerify = false;
 
             if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
                 // I'm the THROWER — my physics froze. Fast-forward now.
