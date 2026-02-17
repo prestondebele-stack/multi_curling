@@ -138,6 +138,7 @@
         _awaitingConnectionVerify: false, // true while waiting for pong after tab refocus
         _opponentThrowPending: false,   // true while waiting for opponent's throw to settle
         _preThrowSnapshot: null,        // snapshot of stones before MY throw (sent with throw_settled for replay)
+        _throwSweepLevel: 'none',       // sweep level used during MY throw (for replay on opponent's side)
     };
 
     // --------------------------------------------------------
@@ -474,6 +475,9 @@
         // Hide replay button when throwing
         hideReplayButton();
 
+        // Reset sweep tracking for this throw
+        gameState._throwSweepLevel = 'none';
+
         // If online mode, send throw to server (which relays to opponent).
         if (gameState.onlineMode) {
             // Capture pre-throw snapshot for opponent's replay
@@ -574,6 +578,7 @@
         gameState._awaitingConnectionVerify = false;
         gameState._opponentThrowPending = false;
         gameState._preThrowSnapshot = null;
+        gameState._throwSweepLevel = 'none';
 
         updateUI();
 
@@ -857,6 +862,7 @@
                 yellowScore: gameState.yellowScore,
                 currentEnd: gameState.currentEnd,
                 preThrowStones: gameState._preThrowSnapshot || null,
+                sweepLevel: gameState._throwSweepLevel || 'none',
                 snapshot: syncPayload,
             });
             gameState._preThrowSnapshot = null;
@@ -1662,6 +1668,15 @@
         gameState.phase = 'delivering';
         VIEW.followStone = true;
 
+        // Apply sweep from the original throw so replay matches actual result
+        if (shot.sweepLevel && shot.sweepLevel !== 'none') {
+            gameState.isSweeping = true;
+            gameState.sweepLevel = shot.sweepLevel;
+            document.getElementById('sweep-toggle-btn').style.display = 'block';
+            document.getElementById('sweep-toggle-btn').classList.add('sweeping');
+            document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
+        }
+
         // Wait for replay to finish via the gameLoop — it will detect
         // no more moving stones and transition to waitingNextTurn.
         // We intercept that with a check: if isReplaying, restore real state.
@@ -1711,8 +1726,23 @@
             } else if (gameState.phase === 'scoring') {
                 console.log('[VISIBILITY] Returned during scoring phase');
             }
-            // If _opponentThrowPending: opponent is throwing, no local physics to fast-forward.
-            // authoritative_state will arrive when the throw settles — nothing to do.
+            // If _opponentThrowPending: opponent is throwing. If WS is alive, auth_state will
+            // arrive when their throw settles. If WS is dead, we need to reconnect to get it.
+            if (gameState._opponentThrowPending) {
+                if (!CurlingNetwork.isConnected()) {
+                    console.log('[VISIBILITY] Opponent throw pending but WS dead — reconnect will deliver auth_state');
+                }
+                // Safety: if auth_state doesn't arrive within 5s, force a sync via pong
+                setTimeout(() => {
+                    if (gameState._opponentThrowPending && gameState.onlineMode) {
+                        console.log('[VISIBILITY] Opponent throw still pending after 5s — forcing sync');
+                        gameState._opponentThrowPending = false;
+                        gameState.phase = 'aiming';
+                        updateUI();
+                        setupTurnControls();
+                    }
+                }, 5000);
+            }
         }
     });
 
@@ -2119,6 +2149,45 @@ function drawStagedStones() {
         }
     });
 
+    // Sync button — force re-sync game state from server
+    document.getElementById('sync-btn').addEventListener('click', () => {
+        if (!gameState.onlineMode) return;
+        console.log('[SYNC] Manual sync triggered');
+        const btn = document.getElementById('sync-btn');
+        btn.classList.add('syncing');
+        setTimeout(() => btn.classList.remove('syncing'), 800);
+
+        // Clear any stuck pending state
+        gameState._opponentThrowPending = false;
+
+        // If WS is connected, send a ping to force pong sync
+        if (CurlingNetwork.isConnected()) {
+            gameState._awaitingConnectionVerify = true;
+            // The ping will be sent by the network layer's existing mechanism.
+            // Force a pong by calling the internal ping. We can trigger the
+            // visibilitychange-like sync by calling setupTurnControls after a small delay.
+            updateUI();
+            setupTurnControls();
+            // Also trigger a pong round-trip
+            CurlingNetwork.sendGameStateSync({
+                currentTeam: gameState.currentTeam,
+                redScore: gameState.redScore,
+                yellowScore: gameState.yellowScore,
+                currentEnd: gameState.currentEnd,
+                redThrown: gameState.redThrown,
+                yellowThrown: gameState.yellowThrown,
+                hammer: gameState.hammer,
+                endScores: gameState.endScores,
+                stones: gameState.stones.filter(s => s.active).map(s => ({
+                    team: s.team, x: s.x, y: s.y,
+                })),
+            });
+        } else {
+            // WS is dead — the network layer will handle reconnect
+            console.log('[SYNC] WS not connected — waiting for reconnect');
+        }
+    });
+
     document.getElementById('aim-slider').addEventListener('input', (e) => {
         document.getElementById('aim-value').textContent = parseFloat(e.target.value).toFixed(1) + '°';
     });
@@ -2157,6 +2226,10 @@ function drawStagedStones() {
 
     function setSweepLevel(level) {
         gameState.sweepLevel = level;
+        // Track highest sweep level during my throw for opponent's replay
+        if (gameState.phase === 'delivering' && gameState.isSweeping) {
+            gameState._throwSweepLevel = level;
+        }
         document.querySelectorAll('.sweep-btn').forEach(b => b.classList.remove('active'));
         document.getElementById('sweep-' + level).classList.add('active');
         if (gameState.onlineMode && isMyTurn()) {
@@ -2204,6 +2277,8 @@ function drawStagedStones() {
                 gameState.sweepLevel = 'hard';
                 setSweepLevel('hard');
             }
+            // Track that sweep was used during this throw (for opponent's replay)
+            gameState._throwSweepLevel = gameState.sweepLevel;
             document.getElementById('sweep-toggle-btn').classList.add('sweeping');
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
             if (gameState.onlineMode) CurlingNetwork.sendSweepStart();
@@ -2295,6 +2370,7 @@ function drawStagedStones() {
             _awaitingConnectionVerify: false,
             _opponentThrowPending: false,
             _preThrowSnapshot: null,
+            _throwSweepLevel: 'none',
         };
 
         fgzSnapshots = [];
@@ -2362,6 +2438,7 @@ function drawStagedStones() {
         document.getElementById('online-team-badge').style.display = 'none';
         document.getElementById('chat-btn').style.display = 'none';
         document.getElementById('chat-popup').style.display = 'none';
+        document.getElementById('sync-btn').style.display = 'none';
         hideReplayButton();
         // Clear player names from scoreboard
         document.getElementById('red-player-name').textContent = '';
@@ -2881,6 +2958,7 @@ function drawStagedStones() {
                 updateScoreboardNames();
                 updateUI();
                 document.getElementById('chat-btn').style.display = '';
+                document.getElementById('sync-btn').style.display = '';
                 if (isMyTurn()) {
                     enableControlsForHuman();
                     document.getElementById('throw-btn').disabled = false;
@@ -2971,9 +3049,10 @@ function drawStagedStones() {
                     }));
                 }
 
-                // Store throw params for replay
+                // Store throw params and sweep level for replay
                 if (data.throwParams) {
                     gameState.lastOpponentShot = data.throwParams;
+                    gameState.lastOpponentShot.sweepLevel = data.sweepLevel || 'none';
                 }
 
                 // Clean up delivery state
@@ -3217,6 +3296,7 @@ function drawStagedStones() {
             dismissWelcome();
             showOnlineTeamBadge();
             updateScoreboardNames();
+            document.getElementById('sync-btn').style.display = '';
 
             // Reset the end-of-end safety net timer
             _endOfEndStuckTimer = 0;

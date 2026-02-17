@@ -977,6 +977,7 @@ async function handleMessage(ws, message) {
 
             // Store throw params so we can include them in authoritative_state for replay
             room.lastThrowParams = { aim: data.aim, weight: data.weight, spinDir: data.spinDir, spinAmount: data.spinAmount };
+            room.lastSweepLevel = 'none'; // Will be updated when throw_settled arrives
 
             // Track who threw for the settle timeout
             room.lastThrowBy = getPlayerIndex(room, ws);
@@ -1151,6 +1152,7 @@ async function handleMessage(ws, message) {
                     currentEnd: data.currentEnd,
                     throwParams: room.lastThrowParams || null,
                     preThrowStones: data.preThrowStones || null,
+                    sweepLevel: data.sweepLevel || 'none',
                 };
                 if (opponent && opponent.readyState === WebSocket.OPEN) {
                     send(opponent, authMsg);
@@ -1163,6 +1165,9 @@ async function handleMessage(ws, message) {
 
             // Store as latest snapshot too
             if (data.snapshot) room.gameSnapshot = data.snapshot;
+
+            // Store sweep level for reconnect replay
+            room.lastSweepLevel = data.sweepLevel || 'none';
 
             // Keep server's currentTeam in sync with the thrower's authoritative state.
             const prevTeam = room.state.currentTeam;
@@ -1184,6 +1189,7 @@ async function handleMessage(ws, message) {
                 currentEnd: data.currentEnd,
                 throwParams: room.lastThrowParams || null,
                 preThrowStones: data.preThrowStones || null,
+                sweepLevel: data.sweepLevel || 'none',
             };
             if (opponent && opponent.readyState === WebSocket.OPEN) {
                 send(opponent, authMsg);

@@ -2124,6 +2124,34 @@ input[type="range"]::-moz-range-thumb {
     color: #fff;
 }
 
+#sync-btn {
+    font-size: 18px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 2px solid #5c9ae6;
+    background: transparent;
+    color: #5c9ae6;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.2s, color 0.2s;
+    line-height: 1;
+}
+
+#sync-btn:active {
+    background: #5c9ae6;
+    color: #fff;
+}
+
+#sync-btn.syncing {
+    animation: syncSpin 0.8s linear;
+    pointer-events: none;
+}
+
+@keyframes syncSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
 #chat-popup {
     position: absolute;
     bottom: 60px;
