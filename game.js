@@ -1668,14 +1668,11 @@
         gameState.phase = 'delivering';
         VIEW.followStone = true;
 
-        // Apply sweep from the original throw so replay matches actual result
-        if (shot.sweepLevel && shot.sweepLevel !== 'none') {
-            gameState.isSweeping = true;
-            gameState.sweepLevel = shot.sweepLevel;
-            document.getElementById('sweep-toggle-btn').style.display = 'block';
-            document.getElementById('sweep-toggle-btn').classList.add('sweeping');
-            document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
-        }
+        // NOTE: We intentionally do NOT apply sweep during replay. We don't know
+        // the exact sweep timing (on/off moments), so applying sweep for the full
+        // duration makes the stone travel too far. The replay is approximate — the
+        // real final positions are already correct from authoritative_state.
+        gameState.isSweeping = false;
 
         // Wait for replay to finish via the gameLoop — it will detect
         // no more moving stones and transition to waitingNextTurn.
