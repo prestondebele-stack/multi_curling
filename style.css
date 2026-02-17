@@ -2135,6 +2135,23 @@ input[type="range"]::-moz-range-thumb {
     color: #fff;
 }
 
+#skip-replay-btn {
+    font-size: 13px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 2px solid #e53935;
+    background: transparent;
+    color: #e53935;
+    cursor: pointer;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background 0.2s, color 0.2s;
+}
+#skip-replay-btn:active {
+    background: #e53935;
+    color: #fff;
+}
+
 #sync-btn {
     font-size: 18px;
     padding: 6px 10px;

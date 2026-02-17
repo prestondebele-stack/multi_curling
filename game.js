@@ -1771,6 +1771,13 @@
         if (btn) btn.style.display = 'none';
     }
 
+    function skipReplay() {
+        if (!gameState.isReplaying || !gameState._replayRestore) return;
+        console.log('[REPLAY] Skipping replay');
+        gameState._replayRestore();
+        document.getElementById('skip-replay-btn').style.display = 'none';
+    }
+
     function replayLastShot() {
         if (!gameState.lastOpponentShot || !gameState.lastOpponentShotStones || gameState.isReplaying) return;
 
@@ -1781,6 +1788,7 @@
         const realStones = gameState.stones;
         const realPhase = gameState.phase;
         const realDeliveredStone = gameState.deliveredStone;
+        const realSimSpeed = gameState.simSpeed;
 
         // Restore the board to the snapshot before the shot
         gameState.stones = savedStones.map(s => ({
@@ -1789,7 +1797,9 @@
 
         // Deliver the shot on the snapshot board
         gameState.isReplaying = true;
+        gameState.simSpeed = 9.0; // 3x faster than normal for quick replay
         hideReplayButton();
+        document.getElementById('skip-replay-btn').style.display = '';
 
         // Determine the team that threw (opponent)
         const replayTeam = gameState.myTeam === 'red' ? 'yellow' : 'red';
@@ -1836,6 +1846,7 @@
             gameState.deliveredStone = realDeliveredStone;
             gameState.currentTeam = prevTeam;
             gameState.isReplaying = false;
+            gameState.simSpeed = realSimSpeed; // restore normal speed
             gameState._replayRestore = null;
             gameState._replaySweepTimeline = null;
             gameState.isSweeping = false;
@@ -1843,6 +1854,7 @@
             // Reset sweep UI
             document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
+            document.getElementById('skip-replay-btn').style.display = 'none';
             updateUI();
         };
     }
@@ -1993,7 +2005,7 @@
                         if (gameState.isReplaying && gameState._replayRestore) {
                             setTimeout(() => {
                                 if (gameState._replayRestore) gameState._replayRestore();
-                            }, 600);
+                            }, 200);
                             break;
                         }
 
@@ -2004,7 +2016,7 @@
                         gameState.isSweeping = false;
                         document.getElementById('sweep-toggle-btn').style.display = 'none';
 
-                        scheduleNextTurn(800);
+                        scheduleNextTurn(400);
                     }
                     break;
                 }
@@ -2592,6 +2604,7 @@ function drawStagedStones() {
         extraEndNotice = null;
         hogLineViolation = null;
         hideReplayButton();
+        document.getElementById('skip-replay-btn').style.display = 'none';
 
         document.getElementById('zoom-btn').classList.remove('zoomed');
         document.getElementById('red-total').textContent = '0';
@@ -3044,6 +3057,10 @@ function drawStagedStones() {
         replayLastShot();
     });
 
+    document.getElementById('skip-replay-btn').addEventListener('click', () => {
+        skipReplay();
+    });
+
     // Preset message buttons
     document.querySelectorAll('.chat-preset').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -3306,12 +3323,12 @@ function drawStagedStones() {
 
                 // Auto-play replay if tab is visible and we have shot data
                 if (!document.hidden && data.throwParams && gameState.lastOpponentShotStones) {
-                    // Small delay so player sees the final positions first
+                    // Brief delay so player sees the final positions, then auto-replay
                     setTimeout(() => {
                         if (gameState.phase === 'aiming' && !gameState.isReplaying) {
                             replayLastShot();
                         }
-                    }, 800);
+                    }, 300);
                 } else if (data.throwParams) {
                     // Tab was hidden — show replay button so player can watch when ready
                     showReplayButton();
