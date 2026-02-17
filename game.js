@@ -1743,12 +1743,15 @@
     // so the game catches up (requestAnimationFrame is throttled/paused in background tabs)
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden && gameState.onlineMode) {
-            // Temporarily disable throw while we verify connection is alive.
-            // The pong response or onReconnected will re-enable it.
-            document.getElementById('throw-btn').disabled = true;
+            // Track that we're waiting for a pong to confirm/correct state.
+            // But DON'T unconditionally disable the throw button — that causes
+            // the button to stay stuck for 3-10+ seconds while WS reconnects.
             gameState._awaitingConnectionVerify = true;
 
             if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                // Stone in-flight: disable throw (can't throw during delivery)
+                document.getElementById('throw-btn').disabled = true;
+
                 // If the WebSocket is NOT connected, a reconnect cycle is starting.
                 // Let onReconnected handle the fast-forward instead.
                 if (!CurlingNetwork.isConnected()) {
@@ -1785,13 +1788,13 @@
 
                 scheduleNextTurn(300);
             } else if (gameState.phase === 'aiming') {
-                // Tab came back during aiming phase. Do NOT call setupTurnControls()
-                // here — our local currentTeam may be stale if the opponent threw
-                // while we were away. Wait for the pong response which carries the
-                // server's authoritative currentTeam, then onConnectionVerified
-                // will sync and call setupTurnControls() with correct state.
-                console.log('[VISIBILITY] Returned to aiming phase — waiting for pong to sync');
+                // Tab came back during aiming phase. Enable controls immediately
+                // based on current local state — don't wait for pong. The pong
+                // will correct currentTeam if it's stale, and the server rejects
+                // throws from the wrong team anyway (throw_rejected safety net).
+                console.log('[VISIBILITY] Returned to aiming phase — enabling controls, pong will correct if stale');
                 updateUI();
+                setupTurnControls();
             } else if (gameState.phase === 'waitingNextTurn') {
                 // Stone settled while tab was hidden but nextTurn hasn't fired yet.
                 // Make sure it's scheduled.
@@ -3369,13 +3372,10 @@ function drawStagedStones() {
                 }
             }
 
-            // Re-enable throw if it's our turn (now using synced currentTeam).
-            // Handle aiming AND waitingNextTurn — the pong may arrive during the
-            // 300-800ms gap before scheduleNextTurn fires nextTurn().
-            // Also handle scoring (don't enable) and delivering (don't interfere).
-            if (gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
-                setupTurnControls();
-            }
+            // Always re-sync controls after pong — don't gate on phase.
+            // If the phase changed between ping and pong (e.g., delivering finished,
+            // scoring completed), isMyTurn() will correctly handle the button state.
+            setupTurnControls();
         });
 
         // Server settle nudge: throw_settled didn't arrive within 45s.
