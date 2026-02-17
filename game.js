@@ -857,6 +857,29 @@
     // Periodic safety: auto-detect stuck end-of-end in the game loop.
     // Only triggers when the game is in a PASSIVE phase (aiming/waitingNextTurn)
     // with all 16 stones thrown — never during active delivery or settling.
+    // Safety: if opponent's throw_settled (authoritative_state) never arrives
+    // (e.g. server sent it to a zombie socket), recover after 10 seconds.
+    let _opponentThrowPendingTimer = 0;
+    function checkOpponentThrowPendingTimeout(dt) {
+        if (gameState._opponentThrowPending && !document.hidden) {
+            _opponentThrowPendingTimer += dt;
+            if (_opponentThrowPendingTimer > 10.0) {
+                _opponentThrowPendingTimer = 0;
+                console.log('[SAFETY] _opponentThrowPending stuck for 10s — forcing recovery');
+                gameState._opponentThrowPending = false;
+                gameState.phase = 'aiming';
+                updateUI();
+                // Send a ping to get the server's authoritative currentTeam
+                // The pong will trigger onConnectionVerified which syncs state
+                gameState._awaitingConnectionVerify = true;
+                CurlingNetwork.sendPing();
+                setupTurnControls();
+            }
+        } else {
+            _opponentThrowPendingTimer = 0;
+        }
+    }
+
     let _endOfEndStuckTimer = 0;
     function checkEndOfEndStuckPeriodic(dt) {
         if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8 &&
@@ -2031,9 +2054,10 @@
         // Camera
         updateCamera();
 
-        // Safety: periodic check for stuck end-of-end
+        // Safety: periodic checks for stuck states
         if (gameState.onlineMode) {
             checkEndOfEndStuckPeriodic(frameTime);
+            checkOpponentThrowPendingTimeout(frameTime);
         }
 
         // Tick stone animations (settle bounce + fade-out)

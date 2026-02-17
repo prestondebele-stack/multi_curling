@@ -688,6 +688,9 @@ const CurlingNetwork = (() => {
         joinQueue() { send({ type: 'join_queue' }); },
         leaveQueue() { send({ type: 'leave_queue' }); },
 
+        // Connectivity
+        sendPing() { send({ type: 'ping' }); },
+
         // Gameplay
         sendThrow(params) {
             return send({ type: 'throw', aim: params.aim, weight: params.weight, spinDir: params.spinDir, spinAmount: params.spinAmount });
