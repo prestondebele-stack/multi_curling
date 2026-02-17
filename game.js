@@ -169,10 +169,17 @@
             document.removeEventListener('click', unlock);
         }, { once: true });
 
+        let _pendingDing = false; // true if we tried to ding but audio was suspended
+
         function playTone() {
             try {
                 const ctx = getCtx();
-                if (ctx.state === 'suspended') return;
+                if (ctx.state === 'suspended') {
+                    _pendingDing = true;
+                    ctx.resume(); // will play when tab returns and context resumes
+                    return;
+                }
+                _pendingDing = false;
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
                 osc.connect(gain);
@@ -200,11 +207,20 @@
             document.title = ORIG_TITLE;
         }
 
-        document.addEventListener('visibilitychange', () => { if (!document.hidden) stopFlash(); });
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                stopFlash();
+                // Play the ding we couldn't play while tab was hidden
+                if (_pendingDing) playTone();
+            }
+        });
 
         return {
-            notify() { if (!document.hidden) return; playTone(); startFlash(); },
-            stop() { stopFlash(); },
+            notify() {
+                playTone(); // always try to ding
+                if (document.hidden) startFlash(); // title flash only when hidden
+            },
+            stop() { stopFlash(); _pendingDing = false; },
         };
     })();
 
@@ -1668,11 +1684,15 @@
         gameState.phase = 'delivering';
         VIEW.followStone = true;
 
-        // NOTE: We intentionally do NOT apply sweep during replay. We don't know
-        // the exact sweep timing (on/off moments), so applying sweep for the full
-        // duration makes the stone travel too far. The replay is approximate — the
-        // real final positions are already correct from authoritative_state.
-        gameState.isSweeping = false;
+        // Don't apply sweep to PHYSICS (we don't know exact timing, so it would
+        // make the stone travel too far). But DO show the sweep indicator visually
+        // so the opponent can see that sweeping was used during the shot.
+        gameState.isSweeping = false; // no physics effect
+        if (shot.sweepLevel && shot.sweepLevel !== 'none') {
+            document.getElementById('sweep-toggle-btn').style.display = 'block';
+            document.getElementById('sweep-toggle-btn').classList.add('sweeping');
+            document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
+        }
 
         // Wait for replay to finish via the gameLoop — it will detect
         // no more moving stones and transition to waitingNextTurn.
