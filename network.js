@@ -103,8 +103,16 @@ const CurlingNetwork = (() => {
 
     function send(data) {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(data));
+            try {
+                ws.send(JSON.stringify(data));
+                return true;
+            } catch (e) {
+                console.error('[NET] send() failed:', e.message);
+                return false;
+            }
         }
+        console.warn('[NET] send() dropped — ws not open. type=' + (data && data.type) + ' readyState=' + (ws ? ws.readyState : 'null'));
+        return false;
     }
 
     function startHeartbeat() {
@@ -461,7 +469,9 @@ const CurlingNetwork = (() => {
                 ws = newWs;
                 ws.onmessage = handleMessage;
                 ws.onclose = handleClose;
-                ws.onerror = () => {};
+                ws.onerror = (evt) => {
+                    console.error('[NET] WS error after reconnect open:', evt.type || 'unknown');
+                };
                 isReconnecting = false;
                 startHeartbeat();
                 // Try to rejoin room (include team hint to preserve original slot)
@@ -473,7 +483,8 @@ const CurlingNetwork = (() => {
                 }
             };
 
-            newWs.onerror = () => {
+            newWs.onerror = (evt) => {
+                console.warn('[NET] WS error during reconnect attempt #' + reconnectAttempts + ':', evt.type || 'unknown');
                 // Don't double-trigger (onclose will also fire)
             };
 
@@ -491,7 +502,8 @@ const CurlingNetwork = (() => {
         }, delay);
     }
 
-    function handleClose() {
+    function handleClose(event) {
+        console.log('[NET] WS closed: code=' + (event?.code || '?') + ' reason=' + (event?.reason || 'none') + ' wasClean=' + (event?.wasClean || false));
         stopHeartbeat();
 
         // CRITICAL: Only start reconnect if this close event is from the CURRENT ws.
@@ -672,7 +684,7 @@ const CurlingNetwork = (() => {
 
         // Gameplay
         sendThrow(params) {
-            send({ type: 'throw', aim: params.aim, weight: params.weight, spinDir: params.spinDir, spinAmount: params.spinAmount });
+            return send({ type: 'throw', aim: params.aim, weight: params.weight, spinDir: params.spinDir, spinAmount: params.spinAmount });
         },
         sendSweepChange(level) { send({ type: 'sweep_change', level }); },
         sendSweepStart() { send({ type: 'sweep_start' }); },

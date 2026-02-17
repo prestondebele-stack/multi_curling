@@ -227,6 +227,98 @@
     })();
 
     // --------------------------------------------------------
+    // ON-SCREEN DEBUG LOG (for mobile debugging)
+    // Triple-tap on beta version text to activate.
+    // --------------------------------------------------------
+    const DebugPanel = (() => {
+        const MAX_LINES = 200;
+        let _enabled = false;
+        const _lines = [];
+
+        // Triple-tap gesture on beta version text to toggle
+        let _tapCount = 0;
+        let _tapTimer = null;
+        const betaEl = document.getElementById('beta-version');
+        if (betaEl) {
+            betaEl.addEventListener('click', () => {
+                _tapCount++;
+                if (_tapTimer) clearTimeout(_tapTimer);
+                _tapTimer = setTimeout(() => { _tapCount = 0; }, 600);
+                if (_tapCount >= 3) {
+                    _tapCount = 0;
+                    toggle();
+                }
+            });
+        }
+
+        function toggle() {
+            _enabled = !_enabled;
+            document.getElementById('debug-toggle').style.display = _enabled ? 'block' : 'none';
+            if (!_enabled) {
+                document.getElementById('debug-panel').style.display = 'none';
+            }
+        }
+
+        // Hook console.log/warn/error to capture entries
+        const origLog = console.log;
+        const origWarn = console.warn;
+        const origError = console.error;
+
+        function addLine(level, args) {
+            const ts = new Date().toTimeString().split(' ')[0]; // HH:MM:SS
+            const text = Array.from(args).map(a => {
+                if (typeof a === 'object') {
+                    try { return JSON.stringify(a); } catch { return String(a); }
+                }
+                return String(a);
+            }).join(' ');
+
+            _lines.push({ ts, level, text });
+            if (_lines.length > MAX_LINES) _lines.shift();
+
+            if (_enabled && document.getElementById('debug-panel').style.display !== 'none') {
+                appendToDOM({ ts, level, text });
+            }
+        }
+
+        function appendToDOM(entry) {
+            const logEl = document.getElementById('debug-log');
+            if (!logEl) return;
+            const div = document.createElement('div');
+            div.className = entry.level === 'error' ? 'debug-error' : entry.level === 'warn' ? 'debug-warn' : '';
+            div.textContent = '[' + entry.ts + '] ' + entry.text;
+            logEl.appendChild(div);
+            logEl.scrollTop = logEl.scrollHeight;
+            // Trim DOM nodes
+            while (logEl.children.length > MAX_LINES) logEl.removeChild(logEl.firstChild);
+        }
+
+        console.log = function() { origLog.apply(console, arguments); addLine('log', arguments); };
+        console.warn = function() { origWarn.apply(console, arguments); addLine('warn', arguments); };
+        console.error = function() { origError.apply(console, arguments); addLine('error', arguments); };
+
+        // Wire up toggle button and close button
+        document.getElementById('debug-toggle')?.addEventListener('click', () => {
+            const panel = document.getElementById('debug-panel');
+            if (panel.style.display === 'none') {
+                panel.style.display = 'flex';
+                // Render buffered lines
+                const logEl = document.getElementById('debug-log');
+                logEl.innerHTML = '';
+                _lines.forEach(entry => appendToDOM(entry));
+            } else {
+                panel.style.display = 'none';
+            }
+        });
+
+        document.getElementById('debug-close')?.addEventListener('click', () => {
+            document.getElementById('debug-panel').style.display = 'none';
+        });
+
+        return { toggle, isEnabled: () => _enabled };
+    })();
+
+    // --------------------------------------------------------
     // PUSH NOTIFICATION SETUP
     // --------------------------------------------------------
     const PushSetup = (() => {
@@ -299,17 +391,34 @@
     // Set up throw controls based on whose turn it is.
     // Called after reconnect, visibility change, authoritative state, etc.
     function setupTurnControls() {
+        const throwBtn = document.getElementById('throw-btn');
         if (isMyTurn()) {
             enableControlsForHuman();
-            document.getElementById('throw-btn').disabled = false;
-            document.getElementById('throw-btn').style.display = '';
-            TabNotify.notify();
+            throwBtn.style.display = '';
+
+            // v93: Don't enable throw until connection is verified after tab return.
+            // This closes the 3-second zombie window where TCP is dead but readyState
+            // still reports OPEN. The pong handler sets _awaitingConnectionVerify=false
+            // and calls setupTurnControls() again, which will then enable the button.
+            if (gameState.onlineMode && gameState._awaitingConnectionVerify) {
+                throwBtn.disabled = true;
+                throwBtn.textContent = 'CONNECTING...';
+                throwBtn.classList.add('connecting');
+            } else {
+                throwBtn.disabled = false;
+                throwBtn.textContent = 'THROW';
+                throwBtn.classList.remove('connecting');
+                TabNotify.notify();
+            }
+
             if (gameState.lastOpponentShot) {
                 showReplayButton();
             }
         } else {
             disableControlsForBot();
-            document.getElementById('throw-btn').disabled = true;
+            throwBtn.disabled = true;
+            throwBtn.textContent = 'THROW';
+            throwBtn.classList.remove('connecting');
         }
     }
 
@@ -504,7 +613,19 @@
             gameState._preThrowSnapshot = gameState.stones
                 .filter(s => s.active)
                 .map(s => ({ team: s.team, x: s.x, y: s.y }));
-            CurlingNetwork.sendThrow({ aim: aimDeg, weight: weightPct, spinDir, spinAmount });
+
+            // v93: Check if the message actually sent — if WS is dead, abort
+            const sent = CurlingNetwork.sendThrow({ aim: aimDeg, weight: weightPct, spinDir, spinAmount });
+            if (!sent) {
+                console.error('[DELIVER] sendThrow failed — aborting local delivery');
+                const throwBtn = document.getElementById('throw-btn');
+                throwBtn.disabled = true;
+                throwBtn.textContent = 'RECONNECTING...';
+                throwBtn.classList.add('connecting');
+                gameState._awaitingConnectionVerify = true;
+                gameState._preThrowSnapshot = null;
+                return;
+            }
         }
 
         deliverStoneWithParams(aimDeg, weightPct, spinDir, spinAmount);
@@ -2197,11 +2318,22 @@ function drawStagedStones() {
     // EVENT HANDLERS
     // --------------------------------------------------------
     document.getElementById('throw-btn').addEventListener('click', () => {
-        console.log('[THROW-BTN] Clicked! phase=' + gameState.phase + ' currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isOnlineOpponentTurn=' + isOnlineOpponentTurn() + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
+        console.log('[THROW-BTN] Clicked! phase=' + gameState.phase + ' currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isOnlineOpponentTurn=' + isOnlineOpponentTurn() + ' awaitingVerify=' + gameState._awaitingConnectionVerify + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
         // Safety: if all 16 stones thrown, force scoring instead of allowing throw
         if (checkEndOfEndStuck()) return;
         if (gameState.phase === 'aiming') {
             if (isOnlineOpponentTurn()) return;
+
+            // v93: Defense-in-depth — block throw if connection not verified or WS dead
+            if (gameState.onlineMode && (gameState._awaitingConnectionVerify || !CurlingNetwork.isConnected())) {
+                console.log('[THROW-BTN] Blocked — connection not verified or WS dead');
+                const throwBtn = document.getElementById('throw-btn');
+                throwBtn.disabled = true;
+                throwBtn.textContent = 'RECONNECTING...';
+                throwBtn.classList.add('connecting');
+                return;
+            }
+
             deliverStone();
         }
     });
