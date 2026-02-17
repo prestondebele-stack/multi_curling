@@ -3616,6 +3616,7 @@ function drawStagedStones() {
             gameState.opponentInfo = opponent;
             hideDisconnectOverlay();
             hideResumeOverlay();
+            dismissWelcome(); // Reconnect succeeded — safe to remove welcome screen now
             showOnlineTeamBadge();
             updateScoreboardNames();
 
@@ -3781,6 +3782,13 @@ function drawStagedStones() {
             resetGame();
             hideLobbyScreen();
             hideDisconnectOverlay();
+            hideResumeOverlay();
+            // Restore welcome screen if it was hidden during auto-rejoin attempt
+            const welcomeEl = document.getElementById('welcome-screen');
+            if (welcomeEl) {
+                welcomeEl.style.display = '';
+                welcomeEl.style.opacity = '1';
+            }
         });
 
         // ---- FRIENDS & INVITE HANDLERS ----
@@ -4492,8 +4500,11 @@ function drawStagedStones() {
 
         console.log('[REJOIN] Found active session: room=' + session.roomCode + ' team=' + session.myTeam);
 
-        // Dismiss welcome screen if present
-        dismissWelcome();
+        // DON'T dismiss the welcome screen yet — wait until reconnect succeeds.
+        // If reconnect fails, the player will see the normal welcome screen.
+        // Just hide it temporarily so the game canvas is visible during reconnect.
+        const welcomeEl = document.getElementById('welcome-screen');
+        if (welcomeEl) welcomeEl.style.display = 'none';
 
         // Switch UI to online mode and set gameState EARLY so the reconnect
         // handler and isMyTurn() work correctly before onReconnected fires
@@ -4520,6 +4531,8 @@ function drawStagedStones() {
             console.log('[REJOIN] Connection failed — clearing session');
             CurlingNetwork.clearActiveSession();
             gameState.onlineMode = false;
+            // Show welcome screen back since reconnect failed
+            if (welcomeEl) { welcomeEl.style.display = ''; }
         });
     })();
 
