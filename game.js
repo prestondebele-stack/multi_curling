@@ -3099,6 +3099,13 @@ function drawStagedStones() {
             try {
                 console.log('[OPP-THROW] Received: currentTeam=' + gameState.currentTeam + ' phase=' + gameState.phase + ' remoteDelivery=' + gameState._remoteDelivery);
 
+                // Safety net: if we're receiving opponent data but disconnect overlay is stuck, clear it
+                if (!gameState.opponentConnected) {
+                    console.log('[OPP-THROW] Clearing stuck disconnect overlay — opponent is clearly connected');
+                    gameState.opponentConnected = true;
+                    hideDisconnectOverlay();
+                }
+
                 // GUARD: If we're already in remote delivery, this is a duplicate
                 // (e.g., replayed pending message after reconnect). Ignore it.
                 if (gameState._remoteDelivery) {
@@ -3174,6 +3181,13 @@ function drawStagedStones() {
 
         // Real-time stone positions from thrower (single-authority physics)
         CurlingNetwork.onOpponentStonePositions(({ stones, sweep }) => {
+            // Safety net: if we're receiving live stone positions but disconnect overlay is stuck, clear it
+            if (!gameState.opponentConnected) {
+                console.log('[STONE_POS] Clearing stuck disconnect overlay — receiving live data from opponent');
+                gameState.opponentConnected = true;
+                hideDisconnectOverlay();
+            }
+
             if (!gameState._remoteDelivery) return;
             gameState._latestStonePositions = stones;
 
@@ -3330,6 +3344,14 @@ function drawStagedStones() {
             console.log('[CONN_VERIFIED] pong received — phase=' + gameState.phase
                 + ' localTeam=' + gameState.currentTeam
                 + ' serverTeam=' + currentTeam);
+
+            // Safety net: if the disconnect overlay is stuck, clear it.
+            // A successful pong proves the server connection is alive.
+            if (!gameState.opponentConnected) {
+                console.log('[CONN_VERIFIED] Clearing stuck disconnect overlay');
+                gameState.opponentConnected = true;
+                hideDisconnectOverlay();
+            }
 
             // Sync currentTeam with server's authoritative value BEFORE enabling controls
             if (currentTeam) {

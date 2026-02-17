@@ -555,10 +555,10 @@ const CurlingNetwork = (() => {
     // These fire INSTANTLY when the device loses/gains connectivity (WiFi drop,
     // airplane mode toggle). visibilitychange does NOT fire for network changes.
     window.addEventListener('offline', () => {
-        console.log('[NETWORK] Device went offline');
-        if (roomCode && !intentionalClose) {
-            if (callbacks.onDisconnect) callbacks.onDisconnect();
-        }
+        console.log('[NETWORK] Device went offline — will verify on next visibility check');
+        // Don't call onDisconnect here — the offline event is unreliable on mobile
+        // (fires for transient network blips, app switches, notification shade).
+        // Let the heartbeat or visibility handler detect actual WS death.
     });
 
     window.addEventListener('online', () => {
