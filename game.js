@@ -142,6 +142,7 @@
         _awaitingConnectionVerify: false, // true while waiting for pong after tab refocus
         _deferredOpponentThrow: null,    // opponent_throw received while my stone in-flight; process after settle
         _serverSyncedTeam: null,         // server's currentTeam from pong; used by nextTurn() to avoid double-toggle
+        _myThrowFastForwarded: false,   // true when visibility handler fast-forwarded MY throw (not opponent's)
     };
 
     // --------------------------------------------------------
@@ -575,6 +576,7 @@
         gameState._nextTurnScheduled = false;
         gameState._awaitingConnectionVerify = false;
         gameState._serverSyncedTeam = null;
+        gameState._myThrowFastForwarded = false;
 
         updateUI();
 
@@ -835,6 +837,7 @@
         gameState._remoteDelivery = false;
         gameState._latestStonePositions = null;
         gameState._lastPositionSendTime = 0;
+        gameState._myThrowFastForwarded = false;
 
         const prevTeam = gameState.currentTeam;
         // Switch teams. If the server already told us the authoritative currentTeam
@@ -1770,6 +1773,7 @@
                 fastForwardPhysics();
                 checkFGZViolation();
                 gameState.phase = 'waitingNextTurn';
+                gameState._myThrowFastForwarded = true; // Flag so pong doesn't override nextTurn toggle
                 gameState.isSweeping = false;
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
 
@@ -3364,10 +3368,17 @@ function drawStagedStones() {
                     gameState.currentTeam = currentTeam;
                     updateUI();
                 }
-                // If nextTurn() hasn't fired yet (waitingNextTurn), store the
-                // server's value so nextTurn() uses it instead of blind-toggling.
-                // This prevents the double-toggle bug after tab switch during throw.
-                if (gameState.phase === 'waitingNextTurn') {
+                // If nextTurn() hasn't fired yet (waitingNextTurn), we may need
+                // to store the server's value so nextTurn() doesn't double-toggle.
+                //
+                // BUT only if this waitingNextTurn was NOT caused by our own throw
+                // being fast-forwarded. When MY throw fast-forwards, the server
+                // hasn't received throw_settled yet — its currentTeam is pre-throw
+                // (stale). nextTurn() MUST toggle normally and send throw_settled.
+                //
+                // _myThrowFastForwarded is set by the visibility handler when it
+                // fast-forwards local physics for my own throw.
+                if (gameState.phase === 'waitingNextTurn' && !gameState._myThrowFastForwarded) {
                     gameState._serverSyncedTeam = currentTeam;
                 }
             }
