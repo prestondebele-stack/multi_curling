@@ -3576,10 +3576,13 @@ function drawStagedStones() {
 
             // If MY throw is in-flight with local physics, let it finish naturally.
             // The snapshot is from BEFORE this throw.
+            // Do NOT apply serverCurrentTeam here — the server already toggled it
+            // when it received the 'throw' message, but our local nextTurn() hasn't
+            // run yet. Applying the toggled value now would cause a double-toggle
+            // when the stone settles and nextTurn() toggles again.
             const myThrowInFlight = (gameState.phase === 'delivering' || gameState.phase === 'settling');
             if (myThrowInFlight) {
-                console.log('[GAME] onReconnected — my throw in-flight, preserving local physics');
-                if (serverCurrentTeam) gameState.currentTeam = serverCurrentTeam;
+                console.log('[GAME] onReconnected — my throw in-flight, preserving local physics (skipping currentTeam sync)');
                 return;
             }
 
