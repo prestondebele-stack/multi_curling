@@ -285,6 +285,13 @@
     // Set up throw controls based on whose turn it is.
     // Called after reconnect, visibility change, authoritative state, etc.
     function setupTurnControls() {
+        // If the resume overlay is showing, don't touch controls.
+        // The user must tap Resume to re-engage — this prevents
+        // background state syncs from half-enabling the UI.
+        if (_resumeOverlayVisible) {
+            console.log('[CONTROLS] Resume overlay visible — skipping setupTurnControls');
+            return;
+        }
         if (isMyTurn()) {
             enableControlsForHuman();
             document.getElementById('throw-btn').disabled = false;
@@ -2736,21 +2743,21 @@ function drawStagedStones() {
 
     function handleResume() {
         hideResumeOverlay();
-        console.log('[RESUME] Player tapped Resume — syncing state');
+        console.log('[RESUME] Player tapped Resume — phase=' + gameState.phase
+            + ' currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam);
 
-        // Force a fresh ping to get authoritative state from server
-        gameState._awaitingConnectionVerify = true;
+        // The pong/reconnect may have already synced the correct state in the
+        // background while the overlay was up. Just update UI and enable controls.
+        updateUI();
 
-        // If WS is alive, the pong will sync currentTeam and call setupTurnControls.
-        // If WS is dead, the visibility handler already kicked off reconnect.
-        // Either way, force-enable controls now based on local state.
         if (gameState.phase === 'aiming') {
-            updateUI();
             setupTurnControls();
         } else if (gameState.phase === 'waitingNextTurn') {
             scheduleNextTurn(100);
+        } else if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+            // Stone is in-flight — disable throw, let physics/stream handle it
+            document.getElementById('throw-btn').disabled = true;
         }
-
     }
 
     function showOnlineTeamBadge() {
@@ -3615,7 +3622,9 @@ function drawStagedStones() {
             gameState.opponentConnected = true;
             gameState.opponentInfo = opponent;
             hideDisconnectOverlay();
-            hideResumeOverlay();
+            // DON'T hide resume overlay here — let the user tap it.
+            // The reconnect syncs state in the background; the overlay
+            // gives them a clear action to re-engage with the game.
             dismissWelcome(); // Reconnect succeeded — safe to remove welcome screen now
             showOnlineTeamBadge();
             updateScoreboardNames();
