@@ -1792,13 +1792,12 @@
 
                 scheduleNextTurn(300);
             } else if (gameState.phase === 'aiming') {
-                // Tab came back during aiming phase. Enable controls immediately
-                // based on current local state — don't wait for pong. The pong
-                // will correct currentTeam if it's stale, and the server rejects
-                // throws from the wrong team anyway (throw_rejected safety net).
-                console.log('[VISIBILITY] Returned to aiming phase — enabling controls, pong will correct if stale');
+                // Tab came back during aiming phase. Show the resume overlay
+                // so the player has a clear "tap to get back in the game" action.
+                // This is more reliable than auto-recovery which can fail silently.
+                console.log('[VISIBILITY] Returned to aiming phase — showing resume overlay');
                 updateUI();
-                setupTurnControls();
+                showResumeOverlay();
             } else if (gameState.phase === 'waitingNextTurn') {
                 // Stone settled while tab was hidden but nextTurn hasn't fired yet.
                 // Make sure it's scheduled.
@@ -2720,6 +2719,40 @@ function drawStagedStones() {
         document.getElementById('disconnect-overlay').style.display = 'none';
     }
 
+    // --- Resume overlay (shown after tab return) ---
+    let _resumeOverlayVisible = false;
+
+    function showResumeOverlay() {
+        // Don't show if disconnect overlay is already up
+        if (document.getElementById('disconnect-overlay').style.display !== 'none') return;
+        document.getElementById('resume-overlay').style.display = 'flex';
+        _resumeOverlayVisible = true;
+    }
+
+    function hideResumeOverlay() {
+        document.getElementById('resume-overlay').style.display = 'none';
+        _resumeOverlayVisible = false;
+    }
+
+    function handleResume() {
+        hideResumeOverlay();
+        console.log('[RESUME] Player tapped Resume — syncing state');
+
+        // Force a fresh ping to get authoritative state from server
+        gameState._awaitingConnectionVerify = true;
+
+        // If WS is alive, the pong will sync currentTeam and call setupTurnControls.
+        // If WS is dead, the visibility handler already kicked off reconnect.
+        // Either way, force-enable controls now based on local state.
+        if (gameState.phase === 'aiming') {
+            updateUI();
+            setupTurnControls();
+        } else if (gameState.phase === 'waitingNextTurn') {
+            scheduleNextTurn(100);
+        }
+
+    }
+
     function showOnlineTeamBadge() {
         const badge = document.getElementById('online-team-badge');
         badge.className = gameState.myTeam === TEAMS.RED ? 'team-red' : 'team-yellow';
@@ -3496,6 +3529,7 @@ function drawStagedStones() {
 
         CurlingNetwork.onOpponentDisconnected(() => {
             gameState.opponentConnected = false;
+            hideResumeOverlay();
             showDisconnectOverlay();
         });
 
@@ -3581,6 +3615,7 @@ function drawStagedStones() {
             gameState.opponentConnected = true;
             gameState.opponentInfo = opponent;
             hideDisconnectOverlay();
+            hideResumeOverlay();
             showOnlineTeamBadge();
             updateScoreboardNames();
 
@@ -4089,6 +4124,8 @@ function drawStagedStones() {
         clearOnlineMode('disconnect-leave-button');
         resetGame();
     });
+
+    document.getElementById('resume-btn').addEventListener('click', handleResume);
 
     // Rematch / Leave buttons on game over screen
     document.getElementById('rematch-btn').addEventListener('click', () => {

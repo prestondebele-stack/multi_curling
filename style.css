@@ -1644,6 +1644,60 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* ================================================
+   RESUME OVERLAY (tab return)
+   ================================================ */
+#resume-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 950;
+    animation: resumeFadeIn 0.2s ease-out;
+}
+
+@keyframes resumeFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.resume-content {
+    text-align: center;
+    background: rgba(20, 20, 45, 0.95);
+    border: 1px solid #5c9ae6;
+    border-radius: 12px;
+    padding: 28px 36px;
+}
+
+.resume-content p {
+    color: #ccc;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+}
+
+#resume-btn {
+    font-size: 18px;
+    padding: 16px 40px;
+    background: #2a6a3a;
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+#resume-btn:hover,
+#resume-btn:active {
+    background: #3a8a4a;
+}
+
+/* ================================================
    ONLINE TEAM BADGE
    ================================================ */
 #online-team-badge {
