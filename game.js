@@ -3608,7 +3608,10 @@ function drawStagedStones() {
             }
 
             // Use server's authoritative currentTeam
-            if (serverCurrentTeam) {
+            // BUT skip if _throwSettledPending — our local team hasn't been toggled by
+            // nextTurn() yet, and the server's value is already toggled from the 'throw'
+            // handler. Applying it here would cause a double-toggle when nextTurn() runs.
+            if (serverCurrentTeam && !gameState._throwSettledPending) {
                 gameState.currentTeam = serverCurrentTeam;
             }
 
