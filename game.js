@@ -134,15 +134,10 @@
         lastOpponentShot: null,         // { aim, weight, spinDir, spinAmount }
         lastOpponentShotStones: null,   // snapshot of stone positions before the shot
         isReplaying: false,             // true during replay animation
-        _pendingAuthState: null,        // deferred authoritative state from thrower
-        _remoteDelivery: false,         // true when opponent is throwing (no local physics)
-        _latestStonePositions: null,    // latest stone positions from thrower's stream
-        _lastPositionSendTime: 0,       // throttle for position sends (~80ms)
-        _nextTurnScheduled: false,      // guard: prevents double nextTurn() calls from visibility + auth handlers
+        _nextTurnScheduled: false,      // guard: prevents double nextTurn() calls
         _awaitingConnectionVerify: false, // true while waiting for pong after tab refocus
-        _deferredOpponentThrow: null,    // opponent_throw received while my stone in-flight; process after settle
-        _serverSyncedTeam: null,         // server's currentTeam from pong; used by nextTurn() to avoid double-toggle
-        _myThrowFastForwarded: false,   // true when visibility handler fast-forwarded MY throw (not opponent's)
+        _opponentThrowPending: false,   // true while waiting for opponent's throw to settle
+        _preThrowSnapshot: null,        // snapshot of stones before MY throw (sent with throw_settled for replay)
     };
 
     // --------------------------------------------------------
@@ -285,13 +280,6 @@
     // Set up throw controls based on whose turn it is.
     // Called after reconnect, visibility change, authoritative state, etc.
     function setupTurnControls() {
-        // If the resume overlay is showing, don't touch controls.
-        // The user must tap Resume to re-engage — this prevents
-        // background state syncs from half-enabling the UI.
-        if (_resumeOverlayVisible) {
-            console.log('[CONTROLS] Resume overlay visible — skipping setupTurnControls');
-            return;
-        }
         if (isMyTurn()) {
             enableControlsForHuman();
             document.getElementById('throw-btn').disabled = false;
@@ -488,6 +476,10 @@
 
         // If online mode, send throw to server (which relays to opponent).
         if (gameState.onlineMode) {
+            // Capture pre-throw snapshot for opponent's replay
+            gameState._preThrowSnapshot = gameState.stones
+                .filter(s => s.active)
+                .map(s => ({ team: s.team, x: s.x, y: s.y }));
             CurlingNetwork.sendThrow({ aim: aimDeg, weight: weightPct, spinDir, spinAmount });
         }
 
@@ -578,12 +570,10 @@
         gameState.stones = [];
         gameState.phase = 'aiming';
         gameState.deliveredStone = null;
-        gameState._pendingAuthState = null;
-        gameState._remoteDelivery = false;
         gameState._nextTurnScheduled = false;
         gameState._awaitingConnectionVerify = false;
-        gameState._serverSyncedTeam = null;
-        gameState._myThrowFastForwarded = false;
+        gameState._opponentThrowPending = false;
+        gameState._preThrowSnapshot = null;
 
         updateUI();
 
@@ -705,9 +695,8 @@
             gameState.phase !== 'delivering' && gameState.phase !== 'settling') {
             console.log('[SAFETY] End-of-end stuck detected! phase=' + gameState.phase +
                 ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown +
-                ' remoteDelivery=' + gameState._remoteDelivery + ' — forcing scoring');
+                ' — forcing scoring');
             gameState.phase = 'scoring';
-            gameState._remoteDelivery = false;
             gameState.deliveredStone = null;
             VIEW.followStone = false;
             setTimeout(() => endEnd(), 1500);
@@ -798,9 +787,6 @@
 
         // Auth state is the latest truth — if a deferred opponent throw exists,
         // the auth state already accounts for it (it's from after that throw settled).
-        // Clear it to prevent double-processing.
-        gameState._deferredOpponentThrow = null;
-
         updateUI();
         console.log('[AUTH] Applied authoritative state: ' + (auth.stones ? auth.stones.length : 0) + ' stones, currentTeam=' + gameState.currentTeam);
 
@@ -840,37 +826,13 @@
         // Clear the scheduling guard
         gameState._nextTurnScheduled = false;
 
-        // Clean up remote delivery state
-        gameState._remoteDelivery = false;
-        gameState._latestStonePositions = null;
-        gameState._lastPositionSendTime = 0;
-        gameState._myThrowFastForwarded = false;
-
+        // Toggle teams
         const prevTeam = gameState.currentTeam;
-        // Switch teams. If the server already told us the authoritative currentTeam
-        // (via pong sync after tab switch), use that instead of blindly toggling.
-        // This prevents double-toggling when the server already advanced the turn
-        // on receiving our throw message.
-        if (gameState._serverSyncedTeam) {
-            gameState.currentTeam = gameState._serverSyncedTeam;
-            gameState._serverSyncedTeam = null;
-            console.log('[NEXT-TURN] Using server-synced team: ' + prevTeam + ' -> ' + gameState.currentTeam);
-        } else {
-            if (gameState.currentTeam === TEAMS.RED) {
-                gameState.currentTeam = TEAMS.YELLOW;
-            } else {
-                gameState.currentTeam = TEAMS.RED;
-            }
-        }
+        gameState.currentTeam = (gameState.currentTeam === TEAMS.RED) ? TEAMS.YELLOW : TEAMS.RED;
         console.log('[NEXT-TURN] Switched ' + prevTeam + ' -> ' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn() + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
 
-        // In online mode, send throw_settled so the opponent gets authoritative
-        // stone positions. BUT skip this if a deferred opponent throw exists —
-        // that means the opponent already threw while we were away, the server
-        // has already advanced past our throw, and our throw_settled would be
-        // stale (wrong currentTeam). The server would reject it via throwSeq
-        // validation anyway, but skipping avoids the round-trip.
-        if (gameState.onlineMode && !isMyTurn() && !gameState._deferredOpponentThrow) {
+        // In online mode, send throw_settled so the opponent gets final stone positions + replay data
+        if (gameState.onlineMode && !isMyTurn()) {
             const settledStones = gameState.stones.filter(s => s.active).map(s => ({
                 team: s.team, x: s.x, y: s.y,
             }));
@@ -894,8 +856,10 @@
                 redScore: gameState.redScore,
                 yellowScore: gameState.yellowScore,
                 currentEnd: gameState.currentEnd,
+                preThrowStones: gameState._preThrowSnapshot || null,
                 snapshot: syncPayload,
             });
+            gameState._preThrowSnapshot = null;
         }
 
         // Check if all 16 stones have been thrown
@@ -920,43 +884,7 @@
         document.getElementById('aim-value').textContent = '0.0°';
 
         if (gameState.onlineMode) {
-            if (isMyTurn()) {
-                enableControlsForHuman();
-                document.getElementById('throw-btn').disabled = false;
-                document.getElementById('throw-btn').style.display = '';
-                TabNotify.notify();
-                // Show replay button if opponent just threw
-                if (gameState.lastOpponentShot) {
-                    showReplayButton();
-                }
-                console.log('[NEXT-TURN] My turn! Controls enabled. phase=' + gameState.phase);
-            } else {
-                disableControlsForBot();
-                document.getElementById('throw-btn').disabled = true;
-                // throw_settled was already sent at the top of nextTurn()
-            }
-
-            // Process deferred opponent throw that arrived while my stone was in-flight.
-            // Now that my throw has settled and nextTurn switched teams, it's safe to
-            // replay the opponent's throw without clobbering local physics.
-            if (gameState._deferredOpponentThrow && !isMyTurn()) {
-                const deferred = gameState._deferredOpponentThrow;
-                gameState._deferredOpponentThrow = null;
-                console.log('[NEXT-TURN] Processing deferred opponent throw');
-                // Use setTimeout(0) to let the current nextTurn() finish before
-                // the opponent throw handler modifies game state
-                setTimeout(() => {
-                    if (gameState.phase === 'aiming' && !gameState._remoteDelivery) {
-                        // Re-trigger the handler by calling the callback directly
-                        // We simulate receiving the opponent_throw message
-                        CurlingNetwork._triggerOpponentThrow(deferred);
-                    }
-                }, 50);
-            } else if (gameState._deferredOpponentThrow && isMyTurn()) {
-                // It's my turn now — the deferred throw is stale (already accounted for)
-                console.log('[NEXT-TURN] Clearing stale deferred opponent throw (it\'s my turn)');
-                gameState._deferredOpponentThrow = null;
-            }
+            setupTurnControls();
         } else if (isBotTurn()) {
             triggerBotTurn();
         } else {
@@ -1749,71 +1677,42 @@
         };
     }
 
-    // When tab becomes visible again in online mode, fast-forward any in-flight stones
-    // so the game catches up (requestAnimationFrame is throttled/paused in background tabs)
+    // v88: Simplified visibility handler — no more remote delivery, resume overlay, or deferred state.
+    // Only two cases: (1) my throw in-flight → fast-forward, (2) everything else → sync controls.
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden && gameState.onlineMode) {
-            // Track that we're waiting for a pong to confirm/correct state.
-            // But DON'T unconditionally disable the throw button — that causes
-            // the button to stay stuck for 3-10+ seconds while WS reconnects.
             gameState._awaitingConnectionVerify = true;
+            // Network layer sends ping automatically via its own visibilitychange handler.
 
-            if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
-                // Stone in-flight: disable throw (can't throw during delivery)
+            if ((gameState.phase === 'delivering' || gameState.phase === 'settling') && !gameState._opponentThrowPending) {
+                // MY throw in-flight: fast-forward local physics so we can send throw_settled
+                console.log('[VISIBILITY] My throw in-flight — fast-forwarding physics');
                 document.getElementById('throw-btn').disabled = true;
 
-                // If the WebSocket is NOT connected, a reconnect cycle is starting.
-                // Let onReconnected handle the fast-forward instead.
                 if (!CurlingNetwork.isConnected()) {
-                    console.log('[VISIBILITY] Stone in-flight but WS disconnected — deferring to reconnect handler');
+                    console.log('[VISIBILITY] WS disconnected — deferring to reconnect handler');
                     return;
                 }
 
-                // Remote delivery: no local physics to fast-forward.
-                // The thrower's position stream and authoritative_state will handle it.
-                if (gameState._remoteDelivery) {
-                    console.log('[VISIBILITY] Remote delivery in progress — waiting for position updates');
-                    return;
-                }
-
-                // My throw: fast-forward physics as before
                 fastForwardPhysics();
                 checkFGZViolation();
                 gameState.phase = 'waitingNextTurn';
-                gameState._myThrowFastForwarded = true; // Flag so pong doesn't override nextTurn toggle
                 gameState.isSweeping = false;
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
-
-                // Apply pending authoritative state if the thrower already sent one
-                if (gameState._pendingAuthState) {
-                    console.log('[AUTH] Applying deferred auth state (visibility fast-forward)');
-                    const auth = gameState._pendingAuthState;
-                    gameState._pendingAuthState = null;
-                    applyAuthoritativeState(auth);
-                }
-
-                // Show replay button since the player missed seeing the shot
-                if (gameState.lastOpponentShot) {
-                    showReplayButton();
-                }
-
                 scheduleNextTurn(300);
             } else if (gameState.phase === 'aiming') {
-                // Tab came back during aiming phase. Show the resume overlay
-                // so the player has a clear "tap to get back in the game" action.
-                // This is more reliable than auto-recovery which can fail silently.
-                console.log('[VISIBILITY] Returned to aiming phase — showing resume overlay');
+                // Enable controls immediately — pong will correct if stale
+                console.log('[VISIBILITY] Returned to aiming — enabling controls');
                 updateUI();
-                showResumeOverlay();
+                setupTurnControls();
             } else if (gameState.phase === 'waitingNextTurn') {
-                // Stone settled while tab was hidden but nextTurn hasn't fired yet.
-                // Make sure it's scheduled.
                 console.log('[VISIBILITY] Returned during waitingNextTurn — ensuring nextTurn scheduled');
                 scheduleNextTurn(200);
             } else if (gameState.phase === 'scoring') {
-                // Returned during scoring — let it play out
                 console.log('[VISIBILITY] Returned during scoring phase');
             }
+            // If _opponentThrowPending: opponent is throwing, no local physics to fast-forward.
+            // authoritative_state will arrive when the throw settles — nothing to do.
         }
     });
 
@@ -1834,180 +1733,69 @@
 
         // Physics update
         if (gameState.phase === 'delivering') {
-            if (gameState._remoteDelivery) {
-                // ---- OPPONENT IS THROWING (single-authority: no local physics) ----
-                // Smoothly interpolate stone positions toward the latest network data.
-                // Between updates (~80ms apart), predict using velocity for smooth motion.
-                const posData = gameState._latestStonePositions;
-                if (posData) {
-                    // Sync stone count if it changed (stone knocked out of play)
-                    if (gameState.stones.length !== posData.length) {
-                        const newStones = [];
-                        for (const sp of posData) {
-                            const stone = createStone(sp.team, sp.x, sp.y, sp.vx || 0, sp.vy || 0, 0);
-                            stone.active = true;
-                            stone.moving = !!sp.moving;
-                            // Store target positions for interpolation
-                            stone._targetX = sp.x;
-                            stone._targetY = sp.y;
-                            newStones.push(stone);
-                        }
-                        gameState.stones = newStones;
-                    } else {
-                        // Update targets and velocity on existing stones
-                        for (let i = 0; i < posData.length; i++) {
-                            const sp = posData[i];
-                            const stone = gameState.stones[i];
-                            stone._targetX = sp.x;
-                            stone._targetY = sp.y;
-                            stone.vx = sp.vx || 0;
-                            stone.vy = sp.vy || 0;
-                            stone.moving = !!sp.moving;
-                            stone.active = true;
-                            stone.team = sp.team;
-                        }
-                    }
-
-                    // Identify the delivered stone (the one that's moving)
-                    const movingStone = gameState.stones.find(s => s.moving);
-                    if (movingStone) {
-                        gameState.deliveredStone = movingStone;
-                    }
-                }
-
-                // Interpolate all stones toward their targets each frame
-                for (const stone of gameState.stones) {
-                    if (stone._targetX !== undefined) {
-                        if (stone.moving) {
-                            // Moving stones: predict with velocity + lerp toward target
-                            stone.x += stone.vx * frameTime;
-                            stone.y += stone.vy * frameTime;
-                            // Blend toward target to correct drift (fast lerp)
-                            const blend = Math.min(1, frameTime * 15);
-                            stone.x += (stone._targetX - stone.x) * blend;
-                            stone.y += (stone._targetY - stone.y) * blend;
-                        } else {
-                            // Settled stones: snap to target
-                            stone.x = stone._targetX;
-                            stone.y = stone._targetY;
-                        }
-                    }
-                }
-
-                // Update trail for the delivered stone
-                if (gameState.deliveredStone) {
-                    const ds = gameState.deliveredStone;
-                    const last = stoneTrail[stoneTrail.length - 1];
-                    if (last) {
-                        const dx = ds.x - last.x;
-                        const dy = ds.y - last.y;
-                        if (dx * dx + dy * dy > 0.04) {
-                            stoneTrail.push({ x: ds.x, y: ds.y });
-                        }
-                    }
-                }
-                // Transition to nextTurn is handled by onAuthoritativeState (throw_settled),
-                // NOT by local physics detecting settle.
-            } else {
-                // ---- MY THROW (or bot mode): run physics locally ----
-                // Bot sweep decision (runs each frame for bot's stones)
-                if (gameState.botMode && gameState.deliveredStone &&
-                    gameState.deliveredStone.moving && gameState.deliveredStone.team === TEAMS.YELLOW) {
-                    const botSweep = CurlingBot.decideSweep(window._curlingBridge);
-                    if (botSweep !== 'none') {
-                        gameState.isSweeping = true;
-                        gameState.sweepLevel = botSweep;
-                        setSweepLevel(botSweep);
-                    } else {
-                        gameState.isSweeping = false;
-                    }
-                }
-
-                physicsAccumulator += frameTime * gameState.simSpeed;
-
-                while (physicsAccumulator >= PHYSICS_DT) {
-                    const sweep = gameState.isSweeping ? gameState.sweepLevel : 'none';
-                    const anyMoving = CurlingPhysics.simulate(gameState.stones, PHYSICS_DT, sweep);
-
-                    // Record trail for the delivered stone
-                    if (gameState.deliveredStone && gameState.deliveredStone.moving) {
-                        const ds = gameState.deliveredStone;
-                        const last = stoneTrail[stoneTrail.length - 1];
-                        const dx = ds.x - last.x;
-                        const dy = ds.y - last.y;
-                        if (dx * dx + dy * dy > 0.04) {
-                            stoneTrail.push({ x: ds.x, y: ds.y });
-                        }
-                    }
-
-                    // Check for stones out of bounds
-                    checkOutOfBounds();
-
-                    physicsAccumulator -= PHYSICS_DT;
-
-                    if (!anyMoving) {
-                        physicsAccumulator = 0;
-                        if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
-                            // If replaying, restore the real game state instead of advancing
-                            if (gameState.isReplaying && gameState._replayRestore) {
-                                setTimeout(() => {
-                                    if (gameState._replayRestore) gameState._replayRestore();
-                                }, 600);
-                                break;
-                            }
-
-                            // Check FGZ violation before advancing turn
-                            checkFGZViolation();
-
-                            gameState.phase = 'waitingNextTurn';
-                            gameState.isSweeping = false;
-                            document.getElementById('sweep-toggle-btn').style.display = 'none';
-
-                            // Apply pending authoritative state from the thrower
-                            if (gameState._pendingAuthState) {
-                                console.log('[AUTH] Applying deferred auth state (gameLoop settle)');
-                                const auth = gameState._pendingAuthState;
-                                gameState._pendingAuthState = null;
-                                applyAuthoritativeState(auth);
-
-                                // If the deferred state says all 16 thrown, enter scoring now
-                                if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
-                                    console.log('[AUTH] Deferred state: end complete — entering scoring');
-                                    gameState.phase = 'scoring';
-                                    setTimeout(() => endEnd(), 1500);
-                                    break;
-                                }
-                            }
-
-                            scheduleNextTurn(800);
-                        }
-                        break;
-                    }
-                }
-
-                // Stream stone positions to opponent every ~80ms (thrower is authority)
-                if (gameState.onlineMode && gameState.deliveredStone &&
-                    gameState.deliveredStone.team === gameState.myTeam) {
-                    if (!gameState._lastPositionSendTime ||
-                        (timestamp - gameState._lastPositionSendTime) >= 80) {
-                        gameState._lastPositionSendTime = timestamp;
-                        CurlingNetwork.sendStonePositions({
-                            stones: gameState.stones.filter(s => s.active).map(s => ({
-                                team: s.team, x: s.x, y: s.y,
-                                vx: s.vx, vy: s.vy, moving: s.moving,
-                            })),
-                            sweep: {
-                                active: gameState.isSweeping,
-                                level: gameState.sweepLevel,
-                            },
-                        });
-                    }
-                }
-
-                // Once the delivered stone passes the far hog line, stop sweeping ability
-                if (gameState.deliveredStone && !gameState.deliveredStone.moving) {
+            // v88: Only local physics (my throw, bot mode, or replay). No remote delivery branch.
+            // Bot sweep decision (runs each frame for bot's stones)
+            if (gameState.botMode && gameState.deliveredStone &&
+                gameState.deliveredStone.moving && gameState.deliveredStone.team === TEAMS.YELLOW) {
+                const botSweep = CurlingBot.decideSweep(window._curlingBridge);
+                if (botSweep !== 'none') {
+                    gameState.isSweeping = true;
+                    gameState.sweepLevel = botSweep;
+                    setSweepLevel(botSweep);
+                } else {
                     gameState.isSweeping = false;
                 }
+            }
+
+            physicsAccumulator += frameTime * gameState.simSpeed;
+
+            while (physicsAccumulator >= PHYSICS_DT) {
+                const sweep = gameState.isSweeping ? gameState.sweepLevel : 'none';
+                const anyMoving = CurlingPhysics.simulate(gameState.stones, PHYSICS_DT, sweep);
+
+                // Record trail for the delivered stone
+                if (gameState.deliveredStone && gameState.deliveredStone.moving) {
+                    const ds = gameState.deliveredStone;
+                    const last = stoneTrail[stoneTrail.length - 1];
+                    const dx = ds.x - last.x;
+                    const dy = ds.y - last.y;
+                    if (dx * dx + dy * dy > 0.04) {
+                        stoneTrail.push({ x: ds.x, y: ds.y });
+                    }
+                }
+
+                // Check for stones out of bounds
+                checkOutOfBounds();
+
+                physicsAccumulator -= PHYSICS_DT;
+
+                if (!anyMoving) {
+                    physicsAccumulator = 0;
+                    if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                        // If replaying, restore the real game state instead of advancing
+                        if (gameState.isReplaying && gameState._replayRestore) {
+                            setTimeout(() => {
+                                if (gameState._replayRestore) gameState._replayRestore();
+                            }, 600);
+                            break;
+                        }
+
+                        // Check FGZ violation before advancing turn
+                        checkFGZViolation();
+
+                        gameState.phase = 'waitingNextTurn';
+                        gameState.isSweeping = false;
+                        document.getElementById('sweep-toggle-btn').style.display = 'none';
+
+                        scheduleNextTurn(800);
+                    }
+                    break;
+                }
+            }
+
+            // Once the delivered stone passes the far hog line, stop sweeping ability
+            if (gameState.deliveredStone && !gameState.deliveredStone.moving) {
+                gameState.isSweeping = false;
             }
         }
 
@@ -2315,7 +2103,7 @@ function drawStagedStones() {
     // EVENT HANDLERS
     // --------------------------------------------------------
     document.getElementById('throw-btn').addEventListener('click', () => {
-        console.log('[THROW-BTN] Clicked! phase=' + gameState.phase + ' currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isOnlineOpponentTurn=' + isOnlineOpponentTurn() + ' remoteDelivery=' + gameState._remoteDelivery + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
+        console.log('[THROW-BTN] Clicked! phase=' + gameState.phase + ' currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isOnlineOpponentTurn=' + isOnlineOpponentTurn() + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
         // Safety: if all 16 stones thrown, force scoring instead of allowing throw
         if (checkEndOfEndStuck()) return;
         if (gameState.phase === 'aiming') {
@@ -2409,7 +2197,7 @@ function drawStagedStones() {
 
     function startSweeping() {
         if (gameState.phase === 'delivering' && gameState.deliveredStone?.moving) {
-            if (gameState._remoteDelivery) return; // can't sweep opponent's stone
+            if (gameState._opponentThrowPending) return; // can't sweep opponent's stone
             if (isOnlineOpponentTurn()) return; // only sweep your own stone
             gameState.isSweeping = true;
             if (gameState.sweepLevel === 'none') {
@@ -2503,13 +2291,10 @@ function drawStagedStones() {
             lastOpponentShot: null,
             lastOpponentShotStones: null,
             isReplaying: false,
-            _pendingAuthState: null,
-            _remoteDelivery: false,
-            _latestStonePositions: null,
-            _lastPositionSendTime: 0,
             _nextTurnScheduled: false,
             _awaitingConnectionVerify: false,
-            _deferredOpponentThrow: null,
+            _opponentThrowPending: false,
+            _preThrowSnapshot: null,
         };
 
         fgzSnapshots = [];
@@ -2572,9 +2357,8 @@ function drawStagedStones() {
         gameState.myTeam = null;
         gameState.roomCode = null;
         gameState.opponentInfo = null;
-        gameState._remoteDelivery = false;
-        gameState._latestStonePositions = null;
-        gameState._pendingAuthState = null;
+        gameState._opponentThrowPending = false;
+        gameState._preThrowSnapshot = null;
         document.getElementById('online-team-badge').style.display = 'none';
         document.getElementById('chat-btn').style.display = 'none';
         document.getElementById('chat-popup').style.display = 'none';
@@ -2724,40 +2508,6 @@ function drawStagedStones() {
             disconnectCountdown = null;
         }
         document.getElementById('disconnect-overlay').style.display = 'none';
-    }
-
-    // --- Resume overlay (shown after tab return) ---
-    let _resumeOverlayVisible = false;
-
-    function showResumeOverlay() {
-        // Don't show if disconnect overlay is already up
-        if (document.getElementById('disconnect-overlay').style.display !== 'none') return;
-        document.getElementById('resume-overlay').style.display = 'flex';
-        _resumeOverlayVisible = true;
-    }
-
-    function hideResumeOverlay() {
-        document.getElementById('resume-overlay').style.display = 'none';
-        _resumeOverlayVisible = false;
-    }
-
-    function handleResume() {
-        hideResumeOverlay();
-        console.log('[RESUME] Player tapped Resume — phase=' + gameState.phase
-            + ' currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam);
-
-        // The pong/reconnect may have already synced the correct state in the
-        // background while the overlay was up. Just update UI and enable controls.
-        updateUI();
-
-        if (gameState.phase === 'aiming') {
-            setupTurnControls();
-        } else if (gameState.phase === 'waitingNextTurn') {
-            scheduleNextTurn(100);
-        } else if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
-            // Stone is in-flight — disable throw, let physics/stream handle it
-            document.getElementById('throw-btn').disabled = true;
-        }
     }
 
     function showOnlineTeamBadge() {
@@ -3142,349 +2892,190 @@ function drawStagedStones() {
             }, 1500);
         });
 
+        // v88: "Settle First, Replay Second" — opponent throw just stores params and waits.
+        // No local physics, no visual stone, no remote delivery. The authoritative_state
+        // message (after throw settles) will apply final positions + trigger auto-replay.
         CurlingNetwork.onOpponentThrow(({ aim, weight, spinDir, spinAmount }) => {
-            try {
-                console.log('[OPP-THROW] Received: currentTeam=' + gameState.currentTeam + ' phase=' + gameState.phase + ' remoteDelivery=' + gameState._remoteDelivery);
+            console.log('[OPP-THROW] Received: currentTeam=' + gameState.currentTeam + ' phase=' + gameState.phase);
 
-                // Safety net: if we're receiving opponent data but disconnect overlay is stuck, clear it
-                if (!gameState.opponentConnected) {
-                    console.log('[OPP-THROW] Clearing stuck disconnect overlay — opponent is clearly connected');
-                    gameState.opponentConnected = true;
-                    hideDisconnectOverlay();
-                }
-
-                // GUARD: If we're already in remote delivery, this is a duplicate
-                // (e.g., replayed pending message after reconnect). Ignore it.
-                if (gameState._remoteDelivery) {
-                    console.log('[OPP-THROW] Already in remote delivery — ignoring duplicate');
-                    return;
-                }
-
-                // GUARD: If MY throw is still in-flight (local physics active),
-                // defer the opponent's throw until my stone settles and nextTurn() fires.
-                // Without this, the opponent's throw clobbers our active delivery,
-                // sets _remoteDelivery=true, and the visibility handler gets confused.
-                if ((gameState.phase === 'delivering' || gameState.phase === 'settling' || gameState.phase === 'waitingNextTurn') && !gameState._remoteDelivery) {
-                    console.log('[OPP-THROW] My throw still in-flight/settling — deferring opponent throw');
-                    gameState._deferredOpponentThrow = { aim, weight, spinDir, spinAmount };
-                    return;
-                }
-
-                // GUARD: If it's currently MY turn (not opponent's), this opponent_throw
-                // is stale — the snapshot already advanced past this throw. Ignore it.
-                if (isMyTurn() && gameState.phase === 'aiming') {
-                    console.log('[OPP-THROW] Stale replayed throw (already my turn) — ignoring');
-                    return;
-                }
-
-                // If we're mid-replay, cancel it and restore real state first
-                if (gameState.isReplaying && gameState._replayRestore) {
-                    gameState._replayRestore();
-                }
-                hideReplayButton();
-
-                // Store last opponent shot for replay feature
-                gameState.lastOpponentShot = { aim, weight, spinDir, spinAmount };
-                gameState.lastOpponentShotStones = gameState.stones
-                    .filter(s => s.active)
-                    .map(s => ({ team: s.team, x: s.x, y: s.y, vx: 0, vy: 0, omega: 0, active: true, moving: false }));
-
-                // SINGLE-AUTHORITY PHYSICS: Do NOT run local physics for opponent's throw.
-                // Create a visual-only stone; its position will be driven by
-                // stone_positions messages streamed from the thrower's client.
-                const startX = 0;
-                const startY = P.hack + 1.0;
-                const stone = createStone(gameState.currentTeam, startX, startY, 0, 0, 0);
-                stone.moving = true; // so camera follows it
-                stoneTrail = [{ x: startX, y: startY }];
-                gameState.stones.push(stone);
-                gameState.deliveredStone = stone;
-
-                // Update throw count (must match thrower's count)
-                if (gameState.currentTeam === TEAMS.RED) {
-                    gameState.redThrown++;
-                } else {
-                    gameState.yellowThrown++;
-                }
-
-                gameState.phase = 'delivering';
-                gameState._remoteDelivery = true;
-                gameState._latestStonePositions = null;
-                document.getElementById('throw-btn').disabled = true;
-                document.getElementById('throw-btn').style.display = 'none';
-                document.getElementById('sweep-toggle-btn').style.display = 'block';
-                document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
-                VIEW.followStone = true;
-
-                // Animate sliders for visual feedback (non-blocking)
-                if (!document.hidden) {
-                    animateOpponentSliders(aim, weight, spinDir, spinAmount, () => {});
-                }
-                console.log('[OPP-THROW] Set up: _remoteDelivery=true phase=delivering');
-            } catch (err) {
-                console.error('[OPP-THROW] ERROR:', err);
-            }
-        });
-
-        // Real-time stone positions from thrower (single-authority physics)
-        CurlingNetwork.onOpponentStonePositions(({ stones, sweep }) => {
-            // Safety net: if we're receiving live stone positions but disconnect overlay is stuck, clear it
+            // Safety net: clear stuck disconnect overlay
             if (!gameState.opponentConnected) {
-                console.log('[STONE_POS] Clearing stuck disconnect overlay — receiving live data from opponent');
                 gameState.opponentConnected = true;
                 hideDisconnectOverlay();
             }
 
-            if (!gameState._remoteDelivery) return;
-            gameState._latestStonePositions = stones;
+            // If we're mid-replay, cancel it
+            if (gameState.isReplaying && gameState._replayRestore) {
+                gameState._replayRestore();
+            }
+            hideReplayButton();
 
-            // Update sweep UI from thrower's state (visual only, no physics effect)
-            if (sweep) {
-                if (sweep.active) {
-                    document.getElementById('sweep-toggle-btn').classList.add('sweeping');
-                    document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
-                } else {
-                    document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
-                    document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
-                }
+            // Store shot params — replay will use these when authoritative_state arrives
+            gameState.lastOpponentShot = { aim, weight, spinDir, spinAmount };
+            gameState._opponentThrowPending = true;
+
+            // Disable controls — opponent is throwing
+            disableControlsForBot();
+            document.getElementById('throw-btn').disabled = true;
+            document.getElementById('throw-btn').style.display = 'none';
+            updateUI();
+
+            // Animate sliders for visual feedback (non-blocking)
+            if (!document.hidden) {
+                animateOpponentSliders(aim, weight, spinDir, spinAmount, () => {});
             }
         });
 
+        // v88: onOpponentStonePositions removed — no more position streaming.
+
         CurlingNetwork.onOpponentSweepChange(({ level }) => {
-            if (!gameState._remoteDelivery) gameState.sweepLevel = level;
+            gameState.sweepLevel = level;
             document.querySelectorAll('.sweep-btn').forEach(b => b.classList.remove('active'));
             document.getElementById('sweep-' + level).classList.add('active');
         });
 
         CurlingNetwork.onOpponentSweepStart(() => {
-            if (!gameState._remoteDelivery) {
-                gameState.isSweeping = true;
-                if (gameState.sweepLevel === 'none') {
-                    gameState.sweepLevel = 'hard';
-                    document.querySelectorAll('.sweep-btn').forEach(b => b.classList.remove('active'));
-                    document.getElementById('sweep-hard').classList.add('active');
-                }
+            gameState.isSweeping = true;
+            if (gameState.sweepLevel === 'none') {
+                gameState.sweepLevel = 'hard';
+                document.querySelectorAll('.sweep-btn').forEach(b => b.classList.remove('active'));
+                document.getElementById('sweep-hard').classList.add('active');
             }
             document.getElementById('sweep-toggle-btn').classList.add('sweeping');
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
         });
 
         CurlingNetwork.onOpponentSweepStop(() => {
-            if (!gameState._remoteDelivery) gameState.isSweeping = false;
+            gameState.isSweeping = false;
             document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
         });
 
-        // Authoritative state from the thrower after their stone settles.
+        // v88: Authoritative state — opponent's throw settled OR reconnect correction.
+        // Apply final stone positions, set up turn, and auto-play replay.
         CurlingNetwork.onAuthoritativeState((data) => {
             try {
                 console.log('[AUTH] authoritative_state received, phase=' + gameState.phase +
-                    ' remoteDelivery=' + gameState._remoteDelivery +
                     ' currentTeam=' + gameState.currentTeam + ' dataTeam=' + data.currentTeam +
-                    ' stones=' + (data.stones ? data.stones.length : 0));
+                    ' stones=' + (data.stones ? data.stones.length : 0) +
+                    ' hasThrowParams=' + !!data.throwParams);
 
-                // setupTurnControls is defined at module level (near enableControlsForHuman)
+                // Apply the final stone positions and game state
+                applyAuthoritativeState(data);
+                gameState._opponentThrowPending = false;
 
-                // SINGLE-AUTHORITY: opponent's throw just settled — apply and transition.
-                // DO NOT call nextTurn() here — it would double-switch currentTeam.
-                // The thrower already switched teams before sending throw_settled,
-                // so data.currentTeam is already correct (it's now our turn).
-                if (gameState._remoteDelivery) {
-                    gameState._remoteDelivery = false;
-                    gameState._latestStonePositions = null;
-                    gameState._lastPositionSendTime = 0;
-                    applyAuthoritativeState(data);
+                // Store pre-throw stones for replay (sent by server from thrower's snapshot)
+                if (data.preThrowStones) {
+                    gameState.lastOpponentShotStones = data.preThrowStones.map(s => ({
+                        team: s.team, x: s.x, y: s.y, vx: 0, vy: 0, omega: 0, active: true, moving: false,
+                    }));
+                }
 
-                    gameState.isSweeping = false;
-                    gameState.deliveredStone = null;
-                    document.getElementById('sweep-toggle-btn').style.display = 'none';
-                    document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
-                    document.getElementById('aim-slider').value = 0;
-                    document.getElementById('aim-value').textContent = '0.0°';
-                    VIEW.followStone = false;
+                // Store throw params for replay
+                if (data.throwParams) {
+                    gameState.lastOpponentShot = data.throwParams;
+                }
 
-                    console.log('[AUTH] Remote delivery settled: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn() +
-                        ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
+                // Clean up delivery state
+                gameState.isSweeping = false;
+                gameState.deliveredStone = null;
+                document.getElementById('sweep-toggle-btn').style.display = 'none';
+                document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
+                document.getElementById('aim-slider').value = 0;
+                document.getElementById('aim-value').textContent = '0.0°';
+                VIEW.followStone = false;
 
-                    // Check if this was the last stone of the end (all 16 thrown).
-                    // The thrower already scored on their side; we must do the same.
-                    if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
-                        console.log('[AUTH] End complete — entering scoring phase');
-                        gameState.phase = 'scoring';
-                        setTimeout(() => endEnd(), 1500);
-                        return;
-                    }
+                console.log('[AUTH] Applied: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn() +
+                    ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
 
-                    gameState.phase = 'aiming';
-                    updateUI();
-
-                    setupTurnControls();
-
-                    // Safety: verify UI state after a short delay
-                    setTimeout(() => {
-                        if (gameState.phase === 'aiming') {
-                            setupTurnControls();
-                        }
-                    }, 200);
+                // Check if end is complete (all 16 stones thrown)
+                if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
+                    console.log('[AUTH] End complete — entering scoring phase');
+                    gameState.phase = 'scoring';
+                    setTimeout(() => endEnd(), 1500);
                     return;
                 }
 
-                // Non-remote cases: could be (a) reconnect correction, (b) late auth after
-                // reconnect cleared _remoteDelivery, or (c) my own throw's confirmation.
-
-                // CRITICAL: If the data says all 16 stones are thrown, enter scoring.
-                // But only if local physics isn't actively running (no moving stones).
-                // This fixes the case where _remoteDelivery was cleared mid-throw
-                // and the auth state arrives while phase is stuck in 'delivering'.
-                if (data.redThrown >= 8 && data.yellowThrown >= 8 &&
-                    gameState.phase !== 'scoring' && gameState.phase !== 'gameover') {
-                    // Check if any stones are actually moving (local physics active)
+                // If MY throw is still in-flight, don't change phase — let physics finish
+                if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
                     const anyMoving = gameState.stones.some(s => s.active && s.moving);
-                    if (!anyMoving) {
-                        console.log('[AUTH] Non-remote: end complete (all 16 thrown, none moving) — forcing scoring. phase=' + gameState.phase);
-                        applyAuthoritativeState(data);
-                        gameState.phase = 'scoring';
-                        gameState._remoteDelivery = false;
-                        gameState.deliveredStone = null;
-                        VIEW.followStone = false;
-                        setTimeout(() => endEnd(), 1500);
+                    if (anyMoving) {
+                        console.log('[AUTH] My local sim still running — not changing phase');
                         return;
                     }
-                    // Stones still moving — defer to _pendingAuthState for when they settle
-                    console.log('[AUTH] Non-remote: all 16 thrown but stones still moving — deferring');
-                    gameState._pendingAuthState = data;
-                    return;
                 }
 
-                // In ALL cases, apply the state AND set up the turn properly.
-                if (gameState.phase === 'aiming' || gameState.phase === 'waitingNextTurn') {
-                    applyAuthoritativeState(data);
-                    console.log('[AUTH] Non-remote apply: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn());
-                    setupTurnControls();
-                } else if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
-                    // My local simulation hasn't finished yet — store and apply when it does
-                    console.log('[AUTH] Deferring — local sim still running, phase=' + gameState.phase);
-                    gameState._pendingAuthState = data;
-                } else {
-                    console.log('[AUTH] Ignoring — unexpected phase: ' + gameState.phase);
+                // Set up for next turn
+                gameState.phase = 'aiming';
+                updateUI();
+                setupTurnControls();
+
+                // Auto-play replay if tab is visible and we have shot data
+                if (!document.hidden && data.throwParams && gameState.lastOpponentShotStones) {
+                    // Small delay so player sees the final positions first
+                    setTimeout(() => {
+                        if (gameState.phase === 'aiming' && !gameState.isReplaying) {
+                            replayLastShot();
+                        }
+                    }, 800);
+                } else if (data.throwParams) {
+                    // Tab was hidden — show replay button so player can watch when ready
+                    showReplayButton();
                 }
             } catch (err) {
                 console.error('[AUTH] ERROR in onAuthoritativeState handler:', err);
-                // Emergency recovery: try to put the game in a usable state
-                gameState._remoteDelivery = false;
+                // Emergency recovery
                 gameState.phase = 'aiming';
                 gameState.deliveredStone = null;
+                gameState._opponentThrowPending = false;
                 if (data.currentTeam) gameState.currentTeam = data.currentTeam;
                 updateUI();
-                if (isMyTurn()) {
-                    enableControlsForHuman();
-                    document.getElementById('throw-btn').disabled = false;
-                }
+                setupTurnControls();
             }
         });
 
         // Connection verified alive after tab refocus (pong received)
         // Server now includes authoritative currentTeam in pong so we can
         // sync before enabling controls — prevents stale-turn throw rejections.
+        // v88: Simplified onConnectionVerified — just sync team and controls.
         CurlingNetwork.onConnectionVerified(({ currentTeam, throwSeq } = {}) => {
             gameState._awaitingConnectionVerify = false;
             console.log('[CONN_VERIFIED] pong received — phase=' + gameState.phase
                 + ' localTeam=' + gameState.currentTeam
                 + ' serverTeam=' + currentTeam);
 
-            // Safety net: if the disconnect overlay is stuck, clear it.
-            // A successful pong proves the server connection is alive.
+            // Safety net: clear stuck disconnect overlay
             if (!gameState.opponentConnected) {
-                console.log('[CONN_VERIFIED] Clearing stuck disconnect overlay');
                 gameState.opponentConnected = true;
                 hideDisconnectOverlay();
             }
 
-            // Sync currentTeam with server's authoritative value BEFORE enabling controls
-            if (currentTeam) {
-                if (currentTeam !== gameState.currentTeam) {
-                    console.log('[CONN_VERIFIED] Correcting stale currentTeam: '
-                        + gameState.currentTeam + ' -> ' + currentTeam);
-                    gameState.currentTeam = currentTeam;
-                    updateUI();
-                }
-                // If nextTurn() hasn't fired yet (waitingNextTurn), we may need
-                // to store the server's value so nextTurn() doesn't double-toggle.
-                //
-                // BUT only if this waitingNextTurn was NOT caused by our own throw
-                // being fast-forwarded. When MY throw fast-forwards, the server
-                // hasn't received throw_settled yet — its currentTeam is pre-throw
-                // (stale). nextTurn() MUST toggle normally and send throw_settled.
-                //
-                // _myThrowFastForwarded is set by the visibility handler when it
-                // fast-forwards local physics for my own throw.
-                if (gameState.phase === 'waitingNextTurn' && !gameState._myThrowFastForwarded) {
-                    gameState._serverSyncedTeam = currentTeam;
-                }
+            // Sync currentTeam with server's authoritative value
+            if (currentTeam && currentTeam !== gameState.currentTeam) {
+                console.log('[CONN_VERIFIED] Correcting stale currentTeam: '
+                    + gameState.currentTeam + ' -> ' + currentTeam);
+                gameState.currentTeam = currentTeam;
+                updateUI();
             }
 
-            // Always re-sync controls after pong — don't gate on phase.
-            // If the phase changed between ping and pong (e.g., delivering finished,
-            // scoring completed), isMyTurn() will correctly handle the button state.
+            // Re-sync controls
             setupTurnControls();
         });
 
-        // Server settle nudge: throw_settled didn't arrive within 45s.
-        // This happens when the thrower tabs away and physics freezes.
-        // Fast-forward physics and send the settled state, or if we're the
-        // opponent stuck in _remoteDelivery, apply whatever state we have.
+        // v88: Server settle nudge — only applies to the thrower now.
+        // If MY throw physics froze (tab hidden), fast-forward and send throw_settled.
         CurlingNetwork.onSettleNudge(() => {
-            console.log('[SETTLE_NUDGE] Server nudge received — phase=' + gameState.phase + ' remoteDelivery=' + gameState._remoteDelivery);
+            console.log('[SETTLE_NUDGE] Server nudge received — phase=' + gameState.phase);
 
             if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
-                if (gameState._remoteDelivery) {
-                    // I'm the OPPONENT — the thrower went silent. Force-settle
-                    // with whatever position data we have (or snapshot).
-                    console.log('[SETTLE_NUDGE] Stuck in remote delivery — force settling');
-                    gameState._remoteDelivery = false;
-                    gameState._latestStonePositions = null;
-                    gameState.deliveredStone = null;
-                    gameState.isSweeping = false;
-                    VIEW.followStone = false;
-                    document.getElementById('sweep-toggle-btn').style.display = 'none';
-
-                    // Stop all stone movement
-                    for (const s of gameState.stones) {
-                        if (s.moving) { s.moving = false; s.vx = 0; s.vy = 0; }
-                    }
-
-                    // Apply pending auth state if we got one.
-                    // The auth state has currentTeam already correct (thrower switched it),
-                    // so do NOT call nextTurn() (which would double-switch). Go directly
-                    // to aiming and set up controls.
-                    if (gameState._pendingAuthState) {
-                        const auth = gameState._pendingAuthState;
-                        gameState._pendingAuthState = null;
-                        applyAuthoritativeState(auth);
-                        if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8) {
-                            gameState.phase = 'scoring';
-                            setTimeout(() => endEnd(), 1500);
-                            return;
-                        }
-                        gameState.phase = 'aiming';
-                        updateUI();
-                        setupTurnControls();
-                        return;
-                    }
-
-                    // No auth state available — must use nextTurn() to advance
-                    gameState.phase = 'waitingNextTurn';
-                    scheduleNextTurn(300);
-                } else {
-                    // I'm the THROWER — my physics froze (tab was hidden). Fast-forward now.
-                    console.log('[SETTLE_NUDGE] I am thrower — fast-forwarding physics');
-                    fastForwardPhysics();
-                    checkFGZViolation();
-                    gameState.phase = 'waitingNextTurn';
-                    gameState.isSweeping = false;
-                    document.getElementById('sweep-toggle-btn').style.display = 'none';
-                    scheduleNextTurn(300);
-                }
+                // I'm the THROWER — my physics froze. Fast-forward now.
+                console.log('[SETTLE_NUDGE] Fast-forwarding physics');
+                fastForwardPhysics();
+                checkFGZViolation();
+                gameState.phase = 'waitingNextTurn';
+                gameState.isSweeping = false;
+                document.getElementById('sweep-toggle-btn').style.display = 'none';
+                scheduleNextTurn(300);
             }
         });
 
@@ -3536,7 +3127,6 @@ function drawStagedStones() {
 
         CurlingNetwork.onOpponentDisconnected(() => {
             gameState.opponentConnected = false;
-            hideResumeOverlay();
             showDisconnectOverlay();
         });
 
@@ -3614,70 +3204,38 @@ function drawStagedStones() {
             showLobbyPanel('lobby-menu');
         });
 
-        CurlingNetwork.onReconnected(({ yourTeam, currentTeam: serverCurrentTeam, gameSnapshot, opponent }) => {
+        // v88: Simplified onReconnected — no more remote delivery branching.
+        CurlingNetwork.onReconnected(({ yourTeam, currentTeam: serverCurrentTeam, gameSnapshot, opponent, lastThrowParams }) => {
             console.log('[GAME] onReconnected: myTeam=' + yourTeam + ' serverCurrentTeam=' + serverCurrentTeam + ' snapshot=' + !!gameSnapshot + ' phase=' + gameState.phase);
             gameState._awaitingConnectionVerify = false;
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.opponentConnected = true;
             gameState.opponentInfo = opponent;
+            gameState._opponentThrowPending = false;
             hideDisconnectOverlay();
-            // DON'T hide resume overlay here — let the user tap it.
-            // The reconnect syncs state in the background; the overlay
-            // gives them a clear action to re-engage with the game.
-            dismissWelcome(); // Reconnect succeeded — safe to remove welcome screen now
+            dismissWelcome();
             showOnlineTeamBadge();
             updateScoreboardNames();
 
-            // Reset the end-of-end safety net timer so it doesn't fire immediately
+            // Reset the end-of-end safety net timer
             _endOfEndStuckTimer = 0;
 
-            // Cancel any pending replay state
+            // Cancel any pending replay
             if (gameState.isReplaying && gameState._replayRestore) {
                 gameState._replayRestore();
             }
 
-            // ---- Handle in-flight stones based on delivery type ----
-            // KEY PRINCIPLE: If MY stone is currently being delivered locally,
-            // DON'T clobber it with the snapshot. Let physics finish, then
-            // nextTurn() will send throw_settled. The snapshot is stale (pre-throw).
-            const myThrowInFlight = (gameState.phase === 'delivering' || gameState.phase === 'settling') && !gameState._remoteDelivery;
-
+            // If MY throw is in-flight with local physics, let it finish naturally.
+            // The snapshot is from BEFORE this throw.
+            const myThrowInFlight = (gameState.phase === 'delivering' || gameState.phase === 'settling');
             if (myThrowInFlight) {
-                // My stone is in-flight with local physics — let it finish naturally.
-                // The snapshot is from BEFORE this throw, so applying it would erase the stone.
-                // Only update metadata that won't affect the active throw.
                 console.log('[GAME] onReconnected — my throw in-flight, preserving local physics');
                 if (serverCurrentTeam) gameState.currentTeam = serverCurrentTeam;
-                // Don't overwrite stones, scores, throw counts — they're live
                 return;
             }
 
-            if ((gameState.phase === 'delivering' || gameState.phase === 'settling') && gameState._remoteDelivery) {
-                // Opponent's throw is in-flight (remote delivery).
-                // The authoritative_state from their side will arrive when their stone settles.
-                // Clean up the visual delivery state — it will restart from position stream.
-                console.log('[GAME] onReconnected — remote delivery in progress, waiting for auth state');
-                gameState.isSweeping = false;
-                document.getElementById('sweep-toggle-btn').style.display = 'none';
-                // Apply snapshot scores but keep _remoteDelivery active
-                if (gameSnapshot) {
-                    gameState.redScore = gameSnapshot.redScore || 0;
-                    gameState.yellowScore = gameSnapshot.yellowScore || 0;
-                    gameState.currentEnd = gameSnapshot.currentEnd || 1;
-                    gameState.hammer = gameSnapshot.hammer || TEAMS.YELLOW;
-                    gameState.endScores = gameSnapshot.endScores || [];
-                    document.getElementById('red-total').textContent = gameState.redScore;
-                    document.getElementById('yellow-total').textContent = gameState.yellowScore;
-                    document.getElementById('current-end').textContent = gameState.currentEnd;
-                }
-                if (serverCurrentTeam) gameState.currentTeam = serverCurrentTeam;
-                return;
-            }
-
-            // ---- No active delivery — safe to fully restore from snapshot ----
-
-            // Apply snapshot stone positions if available
+            // Apply snapshot stone positions
             if (gameSnapshot && gameSnapshot.stones && gameSnapshot.stones.length > 0) {
                 gameState.stones = gameSnapshot.stones.map(s => {
                     const stone = createStone(s.team, s.x, s.y, 0, 0, 0);
@@ -3685,14 +3243,9 @@ function drawStagedStones() {
                     stone.moving = false;
                     return stone;
                 });
-            } else {
-                // No snapshot stones — ensure no ghost stones moving
-                for (const s of gameState.stones) {
-                    if (s.active && s.moving) s.moving = false;
-                }
             }
 
-            // Apply snapshot scores/counters if available
+            // Apply snapshot scores/counters
             if (gameSnapshot) {
                 gameState.redScore = gameSnapshot.redScore || 0;
                 gameState.yellowScore = gameSnapshot.yellowScore || 0;
@@ -3706,38 +3259,29 @@ function drawStagedStones() {
                 document.getElementById('current-end').textContent = gameState.currentEnd;
             }
 
-            // ALWAYS use the server's authoritative currentTeam.
+            // Use server's authoritative currentTeam
             if (serverCurrentTeam) {
                 gameState.currentTeam = serverCurrentTeam;
             }
 
-            // Clean up delivery state
+            // Clean up
             gameState.deliveredStone = null;
-            gameState._remoteDelivery = false;
-            gameState._latestStonePositions = null;
             gameState._nextTurnScheduled = false;
             VIEW.followStone = false;
 
-            // If there was a pending authoritative state from before the reconnect
-            // (e.g., opponent's throw settled while we were disconnected but the
-            // message arrived before reconnect completed), apply it now instead of
-            // discarding it. This prevents the game from getting stuck.
-            if (gameState._pendingAuthState) {
-                console.log('[GAME] onReconnected — applying stale _pendingAuthState');
-                const auth = gameState._pendingAuthState;
-                gameState._pendingAuthState = null;
-                applyAuthoritativeState(auth);
-            } else {
-                gameState._pendingAuthState = null;
+            // Store last throw params for replay if provided
+            if (lastThrowParams) {
+                gameState.lastOpponentShot = lastThrowParams;
+                // Use current stones as post-throw state (snapshot already applied)
             }
 
-            // Handle game-over state: if the snapshot says the game ended, don't go to aiming
+            // Handle game-over
             if (gameState.phase === 'gameover') {
-                console.log('[GAME] onReconnected — game already over, keeping gameover phase');
+                console.log('[GAME] onReconnected — game already over');
                 return;
             }
 
-            // Check if all 16 stones were thrown — need to enter scoring
+            // Check if all 16 thrown — enter scoring
             if (gameState.redThrown >= 8 && gameState.yellowThrown >= 8 &&
                 gameState.phase !== 'scoring') {
                 console.log('[GAME] onReconnected — all 16 thrown, entering scoring');
@@ -3746,10 +3290,10 @@ function drawStagedStones() {
                 return;
             }
 
-            // Normal case: set to aiming phase
+            // Normal case: aiming phase
             gameState.phase = 'aiming';
 
-            // Push our state to server for future reconnects
+            // Push state to server for future reconnects
             CurlingNetwork.sendGameStateSync({
                 currentTeam: gameState.currentTeam,
                 redScore: gameState.redScore,
@@ -3765,17 +3309,11 @@ function drawStagedStones() {
             });
 
             updateUI();
+            setupTurnControls();
 
-            console.log('[GAME] onReconnected final: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn());
-
-            if (isMyTurn()) {
-                enableControlsForHuman();
-                document.getElementById('throw-btn').disabled = false;
-                document.getElementById('throw-btn').style.display = '';
-                TabNotify.notify();
-            } else {
-                disableControlsForBot();
-                document.getElementById('throw-btn').disabled = true;
+            // Offer replay of last shot if available
+            if (lastThrowParams) {
+                showReplayButton();
             }
         });
 
@@ -3791,7 +3329,6 @@ function drawStagedStones() {
             resetGame();
             hideLobbyScreen();
             hideDisconnectOverlay();
-            hideResumeOverlay();
             // Restore welcome screen if it was hidden during auto-rejoin attempt
             const welcomeEl = document.getElementById('welcome-screen');
             if (welcomeEl) {
@@ -4141,8 +3678,6 @@ function drawStagedStones() {
         clearOnlineMode('disconnect-leave-button');
         resetGame();
     });
-
-    document.getElementById('resume-btn').addEventListener('click', handleResume);
 
     // Rematch / Leave buttons on game over screen
     document.getElementById('rematch-btn').addEventListener('click', () => {

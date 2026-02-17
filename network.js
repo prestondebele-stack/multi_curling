@@ -89,8 +89,6 @@ const CurlingNetwork = (() => {
         onGameInviteCancelled: null,
         // Search
         onSearchResults: null,
-        // Stone position stream (single-authority physics)
-        onOpponentStonePositions: null,
         // Authoritative state
         onAuthoritativeState: null,
         // Connection verified (pong received after tab refocus)
@@ -231,7 +229,7 @@ const CurlingNetwork = (() => {
                 break;
 
             case 'opponent_stone_positions':
-                if (callbacks.onOpponentStonePositions) callbacks.onOpponentStonePositions({ stones: data.stones, sweep: data.sweep });
+                // v88: No-op — position streaming removed. Kept for backward compat.
                 break;
 
             case 'chat_message':
@@ -274,6 +272,7 @@ const CurlingNetwork = (() => {
                     currentTeam: data.currentTeam || null, // server's authoritative turn
                     gameSnapshot: data.gameSnapshot || null,
                     opponent: data.opponent || null,
+                    lastThrowParams: data.lastThrowParams || null, // for replay on reconnect
                 });
                 break;
 
@@ -677,8 +676,8 @@ const CurlingNetwork = (() => {
         sendSweepChange(level) { send({ type: 'sweep_change', level }); },
         sendSweepStart() { send({ type: 'sweep_start' }); },
         sendSweepStop() { send({ type: 'sweep_stop' }); },
-        // Real-time stone positions during delivery (thrower → opponent)
-        sendStonePositions(data) { send({ type: 'stone_positions', stones: data.stones, sweep: data.sweep }); },
+        // v88: Position streaming removed — opponent sees replay instead
+        sendStonePositions(data) { /* no-op */ },
         sendTurnComplete() { send({ type: 'turn_complete' }); },
         sendRematch() { send({ type: 'rematch' }); },
         sendLeave() { send({ type: 'leave' }); },
@@ -727,7 +726,6 @@ const CurlingNetwork = (() => {
         onOpponentSweepChange(cb) { callbacks.onOpponentSweepChange = cb; },
         onOpponentSweepStart(cb) { callbacks.onOpponentSweepStart = cb; },
         onOpponentSweepStop(cb) { callbacks.onOpponentSweepStop = cb; },
-        onOpponentStonePositions(cb) { callbacks.onOpponentStonePositions = cb; },
         onOpponentDisconnected(cb) { callbacks.onOpponentDisconnected = cb; },
         onOpponentReconnected(cb) { callbacks.onOpponentReconnected = cb; },
         onOpponentLeft(cb) { callbacks.onOpponentLeft = cb; },
@@ -776,11 +774,6 @@ const CurlingNetwork = (() => {
         onConnectionVerified(cb) { callbacks.onConnectionVerified = cb; },
         // Chat
         onChatMessage(cb) { callbacks.onChatMessage = cb; },
-
-        // Re-trigger opponent throw callback (for deferred throws)
-        _triggerOpponentThrow(data) {
-            if (callbacks.onOpponentThrow) callbacks.onOpponentThrow(data);
-        },
 
         // State
         getMyTeam() { return myTeam; },

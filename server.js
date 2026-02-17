@@ -975,6 +975,9 @@ async function handleMessage(ws, message) {
             // Acknowledge the throw to the thrower so client knows it was received
             send(ws, { type: 'throw_ack', throwSeq: room.throwSeq });
 
+            // Store throw params so we can include them in authoritative_state for replay
+            room.lastThrowParams = { aim: data.aim, weight: data.weight, spinDir: data.spinDir, spinAmount: data.spinAmount };
+
             // Track who threw for the settle timeout
             room.lastThrowBy = getPlayerIndex(room, ws);
 
@@ -1066,19 +1069,9 @@ async function handleMessage(ws, message) {
         // Real-time stone position stream from thrower to opponent.
         // The thrower is the single source of truth for physics.
         case 'stone_positions': {
-            const code = playerRooms.get(ws);
-            if (!code) return;
-            const room = rooms.get(code);
-            if (!room) return;
-
-            const opponent = getOpponent(room, ws);
-            if (opponent && opponent.readyState === WebSocket.OPEN) {
-                send(opponent, {
-                    type: 'opponent_stone_positions',
-                    stones: data.stones,
-                    sweep: data.sweep,
-                });
-            }
+            // v88: No-op — position streaming removed in "Settle First, Replay Second" architecture.
+            // Opponent now receives final positions via authoritative_state and watches a replay.
+            // Keep case label for backward compatibility with old clients.
             break;
         }
 
@@ -1156,6 +1149,8 @@ async function handleMessage(ws, message) {
                     redScore: data.redScore,
                     yellowScore: data.yellowScore,
                     currentEnd: data.currentEnd,
+                    throwParams: room.lastThrowParams || null,
+                    preThrowStones: data.preThrowStones || null,
                 };
                 if (opponent && opponent.readyState === WebSocket.OPEN) {
                     send(opponent, authMsg);
@@ -1187,6 +1182,8 @@ async function handleMessage(ws, message) {
                 redScore: data.redScore,
                 yellowScore: data.yellowScore,
                 currentEnd: data.currentEnd,
+                throwParams: room.lastThrowParams || null,
+                preThrowStones: data.preThrowStones || null,
             };
             if (opponent && opponent.readyState === WebSocket.OPEN) {
                 send(opponent, authMsg);
@@ -1393,6 +1390,7 @@ async function handleMessage(ws, message) {
                 currentTeam: room.state.currentTeam, // authoritative turn from server
                 gameSnapshot: snapshot,
                 opponent: opponentInfo,
+                lastThrowParams: room.lastThrowParams || null, // for replay on reconnect
             });
 
             // Replay any messages that were queued while this player was offline
