@@ -1885,14 +1885,19 @@
         console.log('[WELCOME_BACK] Popup dismissed — phase=' + gameState.phase
             + ' currentTeam=' + gameState.currentTeam);
 
-        // If my throw was in-flight, finish it now in one atomic sequence
+        // v102: Cancel any in-progress replay first (restores real stone state)
+        if (gameState.isReplaying && gameState._replayRestore) {
+            console.log('[WELCOME_BACK] Cancelling in-progress replay');
+            gameState._replayRestore();
+        }
+
+        // Safety net: if throw is STILL in-flight (v102 screen-off handler didn't fire)
         if ((gameState.phase === 'delivering' || gameState.phase === 'settling')
-            && !gameState._opponentThrowPending) {
+            && !gameState._opponentThrowPending
+            && !gameState.isReplaying) {
             console.log('[WELCOME_BACK] My throw was in-flight — fast-forwarding + nextTurn');
             fastForwardPhysics();
             checkFGZViolation();
-            // Send throw_settled immediately — by now WS should be alive
-            // (user had to tap the popup, giving WS time to reconnect)
             gameState.phase = 'waitingNextTurn';
             gameState.isSweeping = false;
             document.getElementById('sweep-toggle-btn').style.display = 'none';
@@ -1909,6 +1914,24 @@
     }
 
     document.addEventListener('visibilitychange', () => {
+        // v102: Screen going off — settle throw immediately before browser suspends.
+        // fastForwardPhysics() is synchronous (~ms). WS send() queues on TCP buffer
+        // which the OS flushes even as the browser suspends the tab.
+        if (document.hidden && gameState.onlineMode) {
+            if ((gameState.phase === 'delivering' || gameState.phase === 'settling')
+                && !gameState._opponentThrowPending
+                && !gameState.isReplaying) {
+                console.log('[VISIBILITY] Screen off during my throw — fast-forwarding + nextTurn');
+                fastForwardPhysics();
+                checkFGZViolation();
+                gameState.phase = 'waitingNextTurn';
+                gameState.isSweeping = false;
+                document.getElementById('sweep-toggle-btn').style.display = 'none';
+                VIEW.followStone = false;
+                nextTurn(); // toggles team + sends throw_settled immediately
+            }
+        }
+        // v101: Screen coming back — show welcome back popup
         if (!document.hidden && gameState.onlineMode) {
             // Network layer sends ping automatically via its own visibilitychange handler.
             showWelcomeBack();
