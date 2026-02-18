@@ -1902,6 +1902,10 @@
             gameState.isSweeping = false;
             document.getElementById('sweep-toggle-btn').style.display = 'none';
             nextTurn(); // toggles team + sends throw_settled in one step
+        } else if (gameState.phase === 'waitingNextTurn' && !gameState._opponentThrowPending) {
+            // Stone stopped but nextTurn never fired (setTimeout was frozen)
+            console.log('[WELCOME_BACK] Stuck in waitingNextTurn — firing nextTurn now');
+            nextTurn();
         }
 
         // Clear ALL recovery flags — popup is the single gate now
@@ -1921,6 +1925,7 @@
             if ((gameState.phase === 'delivering' || gameState.phase === 'settling')
                 && !gameState._opponentThrowPending
                 && !gameState.isReplaying) {
+                // Stone still moving — fast-forward physics then advance turn
                 console.log('[VISIBILITY] Screen off during my throw — fast-forwarding + nextTurn');
                 fastForwardPhysics();
                 checkFGZViolation();
@@ -1929,6 +1934,12 @@
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
                 VIEW.followStone = false;
                 nextTurn(); // toggles team + sends throw_settled immediately
+            } else if (gameState.phase === 'waitingNextTurn' && !gameState._opponentThrowPending) {
+                // Stone already stopped but nextTurn timer hasn't fired yet
+                // (scheduleNextTurn uses setTimeout which gets frozen by the browser).
+                // Fire nextTurn now before the tab suspends.
+                console.log('[VISIBILITY] Screen off during waitingNextTurn — firing nextTurn now');
+                nextTurn();
             }
         }
         // v101: Screen coming back — show welcome back popup
