@@ -3612,22 +3612,32 @@ function drawStagedStones() {
             }
 
             // Apply snapshot stone positions
-            if (gameSnapshot && gameSnapshot.stones && gameSnapshot.stones.length > 0) {
+            // v103: If we have MORE active stones locally than the snapshot (because we
+            // already fast-forwarded + settled a throw that the server hasn't seen yet),
+            // keep our local stones — they include the just-thrown stone.
+            const localActiveCount = gameState.stones.filter(s => s.active).length;
+            const snapshotStoneCount = (gameSnapshot && gameSnapshot.stones) ? gameSnapshot.stones.length : 0;
+            if (snapshotStoneCount > 0 && snapshotStoneCount >= localActiveCount) {
                 gameState.stones = gameSnapshot.stones.map(s => {
                     const stone = createStone(s.team, s.x, s.y, 0, 0, 0);
                     stone.active = true;
                     stone.moving = false;
                     return stone;
                 });
+            } else if (snapshotStoneCount > 0 && snapshotStoneCount < localActiveCount) {
+                console.log('[GAME] onReconnected — keeping local stones (local=' + localActiveCount + ' snapshot=' + snapshotStoneCount + ')');
             }
 
             // Apply snapshot scores/counters
+            // v103: Use Math.max for throw counts — if we already settled a throw locally
+            // (v102 screen-off fast-forward), our local count is ahead of the server's
+            // stale snapshot. Never go backwards.
             if (gameSnapshot) {
                 gameState.redScore = gameSnapshot.redScore || 0;
                 gameState.yellowScore = gameSnapshot.yellowScore || 0;
                 gameState.currentEnd = gameSnapshot.currentEnd || 1;
-                gameState.redThrown = gameSnapshot.redThrown || 0;
-                gameState.yellowThrown = gameSnapshot.yellowThrown || 0;
+                gameState.redThrown = Math.max(gameState.redThrown, gameSnapshot.redThrown || 0);
+                gameState.yellowThrown = Math.max(gameState.yellowThrown, gameSnapshot.yellowThrown || 0);
                 gameState.hammer = gameSnapshot.hammer || TEAMS.YELLOW;
                 gameState.endScores = gameSnapshot.endScores || [];
                 document.getElementById('red-total').textContent = gameState.redScore;
