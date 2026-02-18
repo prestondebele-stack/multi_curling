@@ -142,6 +142,7 @@
         _sweepTimeline: [],             // [{step, sweeping, level}] events during MY throw (for accurate replay)
         _simStepCount: 0,               // physics step counter during throw (indexes into sweep timeline)
         _throwSettledPending: false,     // true when throw settled locally but throw_settled not yet sent (awaiting connection verify)
+        _workerActive: false,           // v105: true when Web Worker is running physics for current throw
     };
 
     // --------------------------------------------------------
@@ -580,6 +581,28 @@
 
         // Snapshot FGZ-protected stones before this throw resolves
         snapshotFGZStones();
+
+        // v105: For online human throws, delegate physics to Web Worker
+        // so the stone keeps moving even if the player tabs away.
+        if (gameState.onlineMode && !gameState.isReplaying && !gameState.botMode) {
+            initPhysicsWorker();
+            if (physicsWorker) {
+                gameState._workerActive = true;
+                physicsWorker.postMessage({
+                    type: 'start',
+                    stones: gameState.stones.map(s => ({
+                        team: s.team, x: s.x, y: s.y,
+                        vx: s.vx || 0, vy: s.vy || 0, omega: s.omega || 0,
+                        angle: s.angle || 0, active: s.active, moving: s.moving || false,
+                        hasHitStone: s.hasHitStone || false
+                    })),
+                    deliveredStoneIndex: gameState.stones.indexOf(stone),
+                    sweepLevel: gameState.isSweeping ? gameState.sweepLevel : 'none',
+                    simStepCount: gameState._simStepCount
+                });
+                console.log('[WORKER] Started physics for online throw');
+            }
+        }
     }
 
     function deliverStone() {
@@ -701,6 +724,7 @@
         }
         // If blank end, same team keeps hammer (order stays)
 
+        stopPhysicsWorker(); // v105
         gameState.redThrown = 0;
         gameState.yellowThrown = 0;
         gameState.stones = [];
@@ -715,6 +739,7 @@
         gameState._simStepCount = 0;
         gameState._replaySweepTimeline = null;
         gameState._throwSettledPending = false;
+        gameState._workerActive = false;
 
         updateUI();
 
@@ -1765,10 +1790,114 @@
             }
             if (!anyMoving) break;
 
-            CurlingPhysics.stepAll(gameState.stones, PHYSICS_DT, gameState.sweepLevel, gameState.isSweeping);
+            // v105: Fixed — was calling non-existent CurlingPhysics.stepAll()
+            const sweep = gameState.isSweeping ? gameState.sweepLevel : 'none';
+            CurlingPhysics.simulate(gameState.stones, PHYSICS_DT, sweep);
             checkOutOfBounds();
             iterations++;
         }
+    }
+
+    // --------------------------------------------------------
+    // WEB WORKER PHYSICS (v105)
+    // Runs curling physics in a background thread so stones
+    // keep moving even when the browser tab is hidden.
+    // Only used for human online throws. Bot mode, replay,
+    // and trajectory preview stay on the main thread.
+    // --------------------------------------------------------
+    let physicsWorker = null;
+
+    function initPhysicsWorker() {
+        if (physicsWorker) return;
+        try {
+            physicsWorker = new Worker('physics-worker.js');
+            physicsWorker.onmessage = onPhysicsWorkerMessage;
+            physicsWorker.onerror = (err) => {
+                console.warn('[WORKER] Failed to load — falling back to main thread physics', err);
+                physicsWorker = null;
+                gameState._workerActive = false;
+            };
+        } catch (e) {
+            console.warn('[WORKER] Not supported — falling back to main thread physics', e);
+            physicsWorker = null;
+        }
+    }
+
+    function onPhysicsWorkerMessage(e) {
+        const msg = e.data;
+        if (msg.type === 'positions') {
+            applyWorkerPositions(msg);
+        } else if (msg.type === 'settled') {
+            applyWorkerSettled(msg);
+        }
+    }
+
+    // Update stone positions from Worker for rendering (called ~60fps when visible)
+    function applyWorkerPositions(msg) {
+        if (!gameState._workerActive) return;
+        for (let i = 0; i < msg.stones.length && i < gameState.stones.length; i++) {
+            const src = msg.stones[i];
+            const dst = gameState.stones[i];
+            dst.x = src.x;
+            dst.y = src.y;
+            dst.vx = src.vx;
+            dst.vy = src.vy;
+            dst.angle = src.angle;
+            dst.active = src.active;
+            dst.moving = src.moving;
+            dst.hasHitStone = src.hasHitStone;
+            if (src.settleTime) dst.settleTime = src.settleTime;
+            if (src.fadeOut !== undefined) dst.fadeOut = src.fadeOut;
+        }
+        gameState._simStepCount = msg.simStepCount;
+    }
+
+    // Worker reports all stones settled — advance the turn.
+    // CRITICAL: This handler fires even when the tab is hidden,
+    // because Worker postMessage callbacks are NOT throttled.
+    function applyWorkerSettled(msg) {
+        if (!gameState._workerActive) return;
+        gameState._workerActive = false;
+        console.log('[WORKER] Stones settled — simSteps=' + msg.simStepCount);
+
+        // Apply final stone positions
+        for (let i = 0; i < msg.stones.length && i < gameState.stones.length; i++) {
+            const src = msg.stones[i];
+            const dst = gameState.stones[i];
+            dst.x = src.x;
+            dst.y = src.y;
+            dst.vx = 0;
+            dst.vy = 0;
+            dst.active = src.active;
+            dst.moving = false;
+            dst.hasHitStone = src.hasHitStone;
+            if (src.fadeOut !== undefined) dst.fadeOut = src.fadeOut;
+        }
+        gameState._simStepCount = msg.simStepCount;
+
+        // Check FGZ violation with final settled state
+        checkFGZViolation();
+
+        // Advance turn — sends throw_settled to server immediately
+        gameState.phase = 'waitingNextTurn';
+        gameState.isSweeping = false;
+        document.getElementById('sweep-toggle-btn').style.display = 'none';
+        VIEW.followStone = false;
+
+        // Hide welcome-back popup if it's showing (throw finished in background)
+        const popup = document.getElementById('welcome-back-overlay');
+        if (popup && popup.style.display !== 'none') {
+            popup.style.display = 'none';
+        }
+
+        nextTurn(); // toggles team + sends throw_settled
+    }
+
+    function stopPhysicsWorker() {
+        if (physicsWorker && gameState._workerActive) {
+            physicsWorker.postMessage({ type: 'stop' });
+        }
+        gameState._workerActive = false;
     }
 
     // --------------------------------------------------------
@@ -1883,25 +2012,32 @@
     function dismissWelcomeBack() {
         document.getElementById('welcome-back-overlay').style.display = 'none';
         console.log('[WELCOME_BACK] Popup dismissed — phase=' + gameState.phase
-            + ' currentTeam=' + gameState.currentTeam);
+            + ' currentTeam=' + gameState.currentTeam
+            + ' workerActive=' + gameState._workerActive);
 
-        // v102: Cancel any in-progress replay first (restores real stone state)
+        // Cancel any in-progress replay first (restores real stone state)
         if (gameState.isReplaying && gameState._replayRestore) {
             console.log('[WELCOME_BACK] Cancelling in-progress replay');
             gameState._replayRestore();
         }
 
-        // Safety net: if throw is STILL in-flight (v102 screen-off handler didn't fire)
+        // v105: Safety net — if throw is STILL in-flight when user taps popup.
+        // Normally the Worker settles it in background, but if Worker failed to
+        // load or something unexpected happened, stop Worker and fast-forward locally.
         if ((gameState.phase === 'delivering' || gameState.phase === 'settling')
             && !gameState._opponentThrowPending
             && !gameState.isReplaying) {
-            console.log('[WELCOME_BACK] My throw was in-flight — fast-forwarding + nextTurn');
+            console.log('[WELCOME_BACK] Throw still in-flight — stopping Worker + fast-forwarding');
+            if (physicsWorker && gameState._workerActive) {
+                physicsWorker.postMessage({ type: 'stop' });
+                gameState._workerActive = false;
+            }
             fastForwardPhysics();
             checkFGZViolation();
             gameState.phase = 'waitingNextTurn';
             gameState.isSweeping = false;
             document.getElementById('sweep-toggle-btn').style.display = 'none';
-            nextTurn(); // toggles team + sends throw_settled in one step
+            nextTurn();
         } else if (gameState.phase === 'waitingNextTurn' && !gameState._opponentThrowPending) {
             // Stone stopped but nextTurn never fired (setTimeout was frozen)
             console.log('[WELCOME_BACK] Stuck in waitingNextTurn — firing nextTurn now');
@@ -1918,33 +2054,35 @@
     }
 
     document.addEventListener('visibilitychange', () => {
-        // v102: Screen going off — settle throw immediately before browser suspends.
-        // fastForwardPhysics() is synchronous (~ms). WS send() queues on TCP buffer
-        // which the OS flushes even as the browser suspends the tab.
         if (document.hidden && gameState.onlineMode) {
+            // v105: If Worker is running physics, it keeps going in the background —
+            // no need to fast-forward. Worker will post 'settled' and main thread
+            // receives it even while hidden (postMessage fires in microtask queue).
+            if (gameState._workerActive) {
+                console.log('[VISIBILITY] Screen off — Worker is running physics in background');
+                return;
+            }
+
+            // Fallback for non-Worker throws (Worker failed to load, or edge case):
+            // fast-forward physics synchronously before the browser suspends.
             if ((gameState.phase === 'delivering' || gameState.phase === 'settling')
                 && !gameState._opponentThrowPending
                 && !gameState.isReplaying) {
-                // Stone still moving — fast-forward physics then advance turn
-                console.log('[VISIBILITY] Screen off during my throw — fast-forwarding + nextTurn');
+                console.log('[VISIBILITY] Screen off during my throw (no Worker) — fast-forwarding + nextTurn');
                 fastForwardPhysics();
                 checkFGZViolation();
                 gameState.phase = 'waitingNextTurn';
                 gameState.isSweeping = false;
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
                 VIEW.followStone = false;
-                nextTurn(); // toggles team + sends throw_settled immediately
+                nextTurn();
             } else if (gameState.phase === 'waitingNextTurn' && !gameState._opponentThrowPending) {
-                // Stone already stopped but nextTurn timer hasn't fired yet
-                // (scheduleNextTurn uses setTimeout which gets frozen by the browser).
-                // Fire nextTurn now before the tab suspends.
                 console.log('[VISIBILITY] Screen off during waitingNextTurn — firing nextTurn now');
                 nextTurn();
             }
         }
         // v101: Screen coming back — show welcome back popup
         if (!document.hidden && gameState.onlineMode) {
-            // Network layer sends ping automatically via its own visibilitychange handler.
             showWelcomeBack();
         }
     });
@@ -1966,100 +2104,125 @@
 
         // Physics update
         if (gameState.phase === 'delivering') {
-            // v88: Only local physics (my throw, bot mode, or replay). No remote delivery branch.
-            // Bot sweep decision (runs each frame for bot's stones)
-            if (gameState.botMode && gameState.deliveredStone &&
-                gameState.deliveredStone.moving && gameState.deliveredStone.team === TEAMS.YELLOW) {
-                const botSweep = CurlingBot.decideSweep(window._curlingBridge);
-                if (botSweep !== 'none') {
-                    gameState.isSweeping = true;
-                    gameState.sweepLevel = botSweep;
-                    setSweepLevel(botSweep);
-                } else {
-                    gameState.isSweeping = false;
-                }
-            }
 
-            physicsAccumulator += frameTime * gameState.simSpeed;
-
-            while (physicsAccumulator >= PHYSICS_DT) {
-                // During replay, consult the sweep timeline to apply correct sweep at this step
-                if (gameState.isReplaying && gameState._replaySweepTimeline) {
-                    const timeline = gameState._replaySweepTimeline;
-                    const wasSweeping = gameState.isSweeping;
-                    // Find the latest event at or before this step
-                    for (let i = timeline.length - 1; i >= 0; i--) {
-                        if (timeline[i].step <= gameState._simStepCount) {
-                            gameState.isSweeping = timeline[i].sweeping;
-                            if (timeline[i].sweeping) {
-                                gameState.sweepLevel = timeline[i].level;
-                            }
-                            break;
-                        }
-                    }
-                    // Update sweep button visual during replay
-                    if (gameState.isSweeping !== wasSweeping) {
-                        const sweepBtn = document.getElementById('sweep-toggle-btn');
-                        if (gameState.isSweeping) {
-                            sweepBtn.classList.add('sweeping');
-                            sweepBtn.textContent = 'SWEEPING!';
-                        } else {
-                            sweepBtn.classList.remove('sweeping');
-                            sweepBtn.textContent = 'SWEEP';
-                        }
-                    }
-                }
-
-                const sweep = gameState.isSweeping ? gameState.sweepLevel : 'none';
-                const anyMoving = CurlingPhysics.simulate(gameState.stones, PHYSICS_DT, sweep);
-
-                // Increment sim step counter (indexes sweep timeline for recording & replay)
-                gameState._simStepCount++;
-
-                // Record trail for the delivered stone
+            // v105: Web Worker path — Worker runs physics in background thread.
+            // Main thread just updates the trail from Worker-provided positions.
+            if (gameState._workerActive) {
+                // Trail recording from Worker-updated positions
                 if (gameState.deliveredStone && gameState.deliveredStone.moving) {
                     const ds = gameState.deliveredStone;
                     const last = stoneTrail[stoneTrail.length - 1];
-                    const dx = ds.x - last.x;
-                    const dy = ds.y - last.y;
-                    if (dx * dx + dy * dy > 0.04) {
-                        stoneTrail.push({ x: ds.x, y: ds.y });
-                    }
-                }
-
-                // Check for stones out of bounds
-                checkOutOfBounds();
-
-                physicsAccumulator -= PHYSICS_DT;
-
-                if (!anyMoving) {
-                    physicsAccumulator = 0;
-                    if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
-                        // If replaying, restore the real game state instead of advancing
-                        if (gameState.isReplaying && gameState._replayRestore) {
-                            setTimeout(() => {
-                                if (gameState._replayRestore) gameState._replayRestore();
-                            }, 200);
-                            break;
+                    if (last) {
+                        const dx = ds.x - last.x;
+                        const dy = ds.y - last.y;
+                        if (dx * dx + dy * dy > 0.04) {
+                            stoneTrail.push({ x: ds.x, y: ds.y });
                         }
-
-                        // Check FGZ violation before advancing turn
-                        checkFGZViolation();
-
-                        gameState.phase = 'waitingNextTurn';
-                        gameState.isSweeping = false;
-                        document.getElementById('sweep-toggle-btn').style.display = 'none';
-
-                        scheduleNextTurn(400);
                     }
-                    break;
                 }
-            }
 
-            // Once the delivered stone passes the far hog line, stop sweeping ability
-            if (gameState.deliveredStone && !gameState.deliveredStone.moving) {
-                gameState.isSweeping = false;
-            }
+                // Stop sweeping ability once delivered stone stops
+                if (gameState.deliveredStone && !gameState.deliveredStone.moving) {
+                    gameState.isSweeping = false;
+                }
+
+            // Main-thread physics path — bot mode, replay, or Worker failed to load
+            } else {
+                // v88: Only local physics (my throw, bot mode, or replay). No remote delivery branch.
+                // Bot sweep decision (runs each frame for bot's stones)
+                if (gameState.botMode && gameState.deliveredStone &&
+                    gameState.deliveredStone.moving && gameState.deliveredStone.team === TEAMS.YELLOW) {
+                    const botSweep = CurlingBot.decideSweep(window._curlingBridge);
+                    if (botSweep !== 'none') {
+                        gameState.isSweeping = true;
+                        gameState.sweepLevel = botSweep;
+                        setSweepLevel(botSweep);
+                    } else {
+                        gameState.isSweeping = false;
+                    }
+                }
+
+                physicsAccumulator += frameTime * gameState.simSpeed;
+
+                while (physicsAccumulator >= PHYSICS_DT) {
+                    // During replay, consult the sweep timeline to apply correct sweep at this step
+                    if (gameState.isReplaying && gameState._replaySweepTimeline) {
+                        const timeline = gameState._replaySweepTimeline;
+                        const wasSweeping = gameState.isSweeping;
+                        // Find the latest event at or before this step
+                        for (let i = timeline.length - 1; i >= 0; i--) {
+                            if (timeline[i].step <= gameState._simStepCount) {
+                                gameState.isSweeping = timeline[i].sweeping;
+                                if (timeline[i].sweeping) {
+                                    gameState.sweepLevel = timeline[i].level;
+                                }
+                                break;
+                            }
+                        }
+                        // Update sweep button visual during replay
+                        if (gameState.isSweeping !== wasSweeping) {
+                            const sweepBtn = document.getElementById('sweep-toggle-btn');
+                            if (gameState.isSweeping) {
+                                sweepBtn.classList.add('sweeping');
+                                sweepBtn.textContent = 'SWEEPING!';
+                            } else {
+                                sweepBtn.classList.remove('sweeping');
+                                sweepBtn.textContent = 'SWEEP';
+                            }
+                        }
+                    }
+
+                    const sweep = gameState.isSweeping ? gameState.sweepLevel : 'none';
+                    const anyMoving = CurlingPhysics.simulate(gameState.stones, PHYSICS_DT, sweep);
+
+                    // Increment sim step counter (indexes sweep timeline for recording & replay)
+                    gameState._simStepCount++;
+
+                    // Record trail for the delivered stone
+                    if (gameState.deliveredStone && gameState.deliveredStone.moving) {
+                        const ds = gameState.deliveredStone;
+                        const last = stoneTrail[stoneTrail.length - 1];
+                        const dx = ds.x - last.x;
+                        const dy = ds.y - last.y;
+                        if (dx * dx + dy * dy > 0.04) {
+                            stoneTrail.push({ x: ds.x, y: ds.y });
+                        }
+                    }
+
+                    // Check for stones out of bounds
+                    checkOutOfBounds();
+
+                    physicsAccumulator -= PHYSICS_DT;
+
+                    if (!anyMoving) {
+                        physicsAccumulator = 0;
+                        if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
+                            // If replaying, restore the real game state instead of advancing
+                            if (gameState.isReplaying && gameState._replayRestore) {
+                                setTimeout(() => {
+                                    if (gameState._replayRestore) gameState._replayRestore();
+                                }, 200);
+                                break;
+                            }
+
+                            // Check FGZ violation before advancing turn
+                            checkFGZViolation();
+
+                            gameState.phase = 'waitingNextTurn';
+                            gameState.isSweeping = false;
+                            document.getElementById('sweep-toggle-btn').style.display = 'none';
+
+                            scheduleNextTurn(400);
+                        }
+                        break;
+                    }
+                }
+
+                // Once the delivered stone passes the far hog line, stop sweeping ability
+                if (gameState.deliveredStone && !gameState.deliveredStone.moving) {
+                    gameState.isSweeping = false;
+                }
+            } // end main-thread physics path
         }
 
         // Camera
@@ -2481,6 +2644,10 @@ function drawStagedStones() {
         }
         document.querySelectorAll('.sweep-btn').forEach(b => b.classList.remove('active'));
         document.getElementById('sweep-' + level).classList.add('active');
+        // v105: Notify Worker of sweep level change
+        if (physicsWorker && gameState._workerActive) {
+            physicsWorker.postMessage({ type: 'sweep', sweepLevel: level });
+        }
         if (gameState.onlineMode && isMyTurn()) {
             CurlingNetwork.sendSweepChange(level);
         }
@@ -2534,6 +2701,10 @@ function drawStagedStones() {
             }
             document.getElementById('sweep-toggle-btn').classList.add('sweeping');
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
+            // v105: Notify Worker of sweep change
+            if (physicsWorker && gameState._workerActive) {
+                physicsWorker.postMessage({ type: 'sweep', sweepLevel: gameState.sweepLevel });
+            }
             if (gameState.onlineMode) CurlingNetwork.sendSweepStart();
         }
     }
@@ -2547,6 +2718,10 @@ function drawStagedStones() {
         }
         document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
         document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
+        // v105: Notify Worker of sweep stop
+        if (physicsWorker && gameState._workerActive) {
+            physicsWorker.postMessage({ type: 'sweep', sweepLevel: 'none' });
+        }
         if (gameState.onlineMode && wasSweeping) CurlingNetwork.sendSweepStop();
     }
 
@@ -2593,6 +2768,8 @@ function drawStagedStones() {
     function resetGame() {
         console.log('[RESET_GAME] resetGame called, onlineMode:', gameState.onlineMode, 'phase:', gameState.phase);
         console.trace('[RESET_GAME] stack trace');
+        // v105: Stop Worker if running
+        stopPhysicsWorker();
         const preserveBotMode = gameState.botMode;
         const preserveOnlineMode = gameState.onlineMode;
         const preserveMyTeam = gameState.myTeam;
@@ -2632,6 +2809,7 @@ function drawStagedStones() {
             _simStepCount: 0,
             _replaySweepTimeline: null,
             _throwSettledPending: false,
+            _workerActive: false, // v105
         };
 
         fgzSnapshots = [];
