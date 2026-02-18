@@ -3480,7 +3480,31 @@ function drawStagedStones() {
                 console.log('[AUTH] authoritative_state received, phase=' + gameState.phase +
                     ' currentTeam=' + gameState.currentTeam + ' dataTeam=' + data.currentTeam +
                     ' stones=' + (data.stones ? data.stones.length : 0) +
-                    ' hasThrowParams=' + !!data.throwParams);
+                    ' hasThrowParams=' + !!data.throwParams +
+                    ' workerActive=' + gameState._workerActive);
+
+                // v106: If MY throw is in-flight (Worker running or physics active),
+                // do NOT apply the authoritative state — it's stale (from BEFORE our throw).
+                // Applying it would replace our stones, revert throw counts, and orphan
+                // our deliveredStone. Save throw params for replay but skip everything else.
+                if (gameState._workerActive ||
+                    ((gameState.phase === 'delivering' || gameState.phase === 'settling')
+                     && !gameState._opponentThrowPending && !gameState.isReplaying)) {
+                    console.log('[AUTH] My throw in-flight — deferring auth state (saving throw params only)');
+                    // Still save opponent's throw data for replay
+                    if (data.throwParams) {
+                        gameState.lastOpponentShot = data.throwParams;
+                        gameState.lastOpponentShot.sweepLevel = data.sweepLevel || 'none';
+                        gameState.lastOpponentShot.sweepTimeline = data.sweepTimeline || null;
+                    }
+                    if (data.preThrowStones) {
+                        gameState.lastOpponentShotStones = data.preThrowStones.map(s => ({
+                            team: s.team, x: s.x, y: s.y, vx: 0, vy: 0, omega: 0, active: true, moving: false,
+                        }));
+                    }
+                    gameState._opponentThrowPending = false;
+                    return;
+                }
 
                 // Apply the final stone positions and game state
                 applyAuthoritativeState(data);
@@ -3518,15 +3542,6 @@ function drawStagedStones() {
                     gameState.phase = 'scoring';
                     setTimeout(() => endEnd(), 1500);
                     return;
-                }
-
-                // If MY throw is still in-flight, don't change phase — let physics finish
-                if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
-                    const anyMoving = gameState.stones.some(s => s.active && s.moving);
-                    if (anyMoving) {
-                        console.log('[AUTH] My local sim still running — not changing phase');
-                        return;
-                    }
                 }
 
                 // Set up for next turn
@@ -3647,6 +3662,9 @@ function drawStagedStones() {
         // undo the local delivery and go back to aiming.
         CurlingNetwork.onThrowRejected(({ reason, serverCurrentTeam }) => {
             console.log('[THROW_REJECTED] reason=' + reason + ' serverCurrentTeam=' + serverCurrentTeam + ' phase=' + gameState.phase);
+
+            // v106: Stop the Worker if it's running — this throw was rejected
+            stopPhysicsWorker();
 
             // If we're mid-delivery, undo it
             if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
