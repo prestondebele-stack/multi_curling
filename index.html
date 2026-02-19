@@ -172,6 +172,7 @@
             <button id="new-game-btn">New Game</button>
             <button id="rematch-btn" style="display:none;">Rematch</button>
             <button id="leave-btn" style="display:none;">Leave</button>
+            <button id="gameover-copy-logs" style="display:none;">&#128203; Copy Debug Logs</button>
         </div>
         <div id="lobby-screen" style="display:none;">
             <div id="lobby-content">
@@ -386,7 +387,10 @@
     <div id="debug-panel" style="display:none;">
         <div id="debug-header">
             <span>Debug Log</span>
-            <button id="debug-close">&times;</button>
+            <div>
+                <button id="debug-copy">&#128203; Copy</button>
+                <button id="debug-close">&times;</button>
+            </div>
         </div>
         <div id="debug-log"></div>
     </div>

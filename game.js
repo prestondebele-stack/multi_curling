@@ -234,7 +234,7 @@
     // Triple-tap on beta version text to activate.
     // --------------------------------------------------------
     const DebugPanel = (() => {
-        const MAX_LINES = 200;
+        const MAX_LINES = 500;
         let _enabled = false;
         const _lines = [];
 
@@ -300,6 +300,41 @@
         console.warn = function() { origWarn.apply(console, arguments); addLine('warn', arguments); };
         console.error = function() { origError.apply(console, arguments); addLine('error', arguments); };
 
+        // v111: Direct log entry (bypasses console to avoid double-capture)
+        function log(msg) {
+            addLine('info', [msg]);
+        }
+
+        // v111: Copy full log buffer to clipboard with diagnostic header
+        function copyLogs() {
+            const header = '=== Capital Curling Club Debug Log ===\n'
+                + 'Exported: ' + new Date().toISOString() + '\n'
+                + 'Version: ' + (document.getElementById('beta-version')?.textContent || '?') + '\n'
+                + 'UA: ' + navigator.userAgent + '\n'
+                + 'Lines: ' + _lines.length + '/' + MAX_LINES + '\n'
+                + '======================================\n\n';
+            const text = header + _lines.map(e =>
+                '[' + e.ts + '] ' + (e.level === 'error' ? 'ERROR ' : e.level === 'warn' ? 'WARN ' : '') + e.text
+            ).join('\n');
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                return navigator.clipboard.writeText(text).then(() => true).catch(() => _fallbackCopy(text));
+            }
+            return Promise.resolve(_fallbackCopy(text));
+        }
+
+        function _fallbackCopy(text) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (e) { return false; }
+            document.body.removeChild(ta);
+            return true;
+        }
+
         // Wire up toggle button and close button
         document.getElementById('debug-toggle')?.addEventListener('click', () => {
             const panel = document.getElementById('debug-panel');
@@ -318,8 +353,40 @@
             document.getElementById('debug-panel').style.display = 'none';
         });
 
-        return { toggle, isEnabled: () => _enabled };
+        // v111: Copy logs button
+        document.getElementById('debug-copy')?.addEventListener('click', () => {
+            copyLogs().then(ok => {
+                const btn = document.getElementById('debug-copy');
+                if (btn) {
+                    const orig = btn.textContent;
+                    btn.textContent = ok ? 'Copied!' : 'Failed';
+                    setTimeout(() => { btn.textContent = orig; }, 1500);
+                }
+            });
+        });
+
+        return { toggle, isEnabled: () => _enabled, log, copyLogs };
     })();
+
+    // --------------------------------------------------------
+    // GLOBAL ERROR HANDLERS (v111 — feed into DebugPanel buffer)
+    // --------------------------------------------------------
+    window.onerror = function(message, source, lineno, colno, error) {
+        const file = (source || '').split('/').pop();
+        console.error('[UNCAUGHT] ' + message + ' @ ' + file + ':' + lineno + ':' + colno);
+        if (error && error.stack) {
+            console.error('[STACK] ' + error.stack.substring(0, 400));
+        }
+        return false;
+    };
+
+    window.addEventListener('unhandledrejection', function(event) {
+        const reason = event.reason;
+        const msg = reason instanceof Error
+            ? reason.message + (reason.stack ? ' | ' + reason.stack.substring(0, 400) : '')
+            : String(reason);
+        console.error('[UNHANDLED_PROMISE] ' + msg);
+    });
 
     // --------------------------------------------------------
     // PUSH NOTIFICATION SETUP
@@ -862,6 +929,13 @@
             rematchBtn.style.display = 'none';
             leaveBtn.style.display = 'none';
         }
+
+        // v111: Show copy debug logs button in online mode
+        const copyLogsBtn = document.getElementById('gameover-copy-logs');
+        if (copyLogsBtn) {
+            copyLogsBtn.style.display = gameState.onlineMode ? 'inline-block' : 'none';
+            copyLogsBtn.textContent = '\u{1F4CB} Copy Debug Logs';
+        }
     }
 
     // --------------------------------------------------------
@@ -955,6 +1029,34 @@
         } else {
             _nobodysTurnTimer = 0;
         }
+    }
+
+    // --------------------------------------------------------
+    // PERIODIC STATE SNAPSHOT (v111 — for debug log export)
+    // --------------------------------------------------------
+    let _lastSnapshotSec = 0;
+    function logStateSnapshot(timestampMs) {
+        if (!gameState.onlineMode) return;
+        const sec = timestampMs / 1000;
+        if (sec - _lastSnapshotSec < 8) return;
+        _lastSnapshotSec = sec;
+
+        const active = gameState.stones.filter(s => s.active).length;
+        DebugPanel.log(
+            '[STATE] p=' + gameState.phase
+            + ' turn=' + gameState.currentTeam
+            + ' me=' + gameState.myTeam
+            + ' end=' + gameState.currentEnd + '/' + gameState.totalEnds
+            + ' thr=R' + gameState.redThrown + '/Y' + gameState.yellowThrown
+            + ' sc=' + gameState.redScore + '-' + gameState.yellowScore
+            + ' st=' + active
+            + ' wkr=' + gameState._workerActive
+            + ' opp=' + gameState._opponentThrowPending
+            + ' pnd=' + !!gameState._pendingThrowSettled
+            + ' vfy=' + gameState._awaitingConnectionVerify
+            + ' hid=' + document.hidden
+            + ' ws=' + CurlingNetwork.isConnected()
+        );
     }
 
     // --------------------------------------------------------
@@ -2303,6 +2405,7 @@
             checkEndOfEndStuckPeriodic(frameTime);
             checkOpponentThrowPendingTimeout(frameTime);
             checkNobodysTurnStuck(frameTime); // v110
+            logStateSnapshot(timestamp); // v111
         }
 
         // Tick stone animations (settle bounce + fade-out)
@@ -4422,6 +4525,17 @@ function drawStagedStones() {
         document.getElementById('game-over-screen').style.display = 'none';
         clearOnlineMode('leave-button');
         resetGame();
+    });
+
+    // v111: Copy debug logs from game-over screen
+    document.getElementById('gameover-copy-logs')?.addEventListener('click', () => {
+        DebugPanel.copyLogs().then(ok => {
+            const btn = document.getElementById('gameover-copy-logs');
+            if (btn) {
+                btn.textContent = ok ? 'Logs Copied!' : 'Copy Failed';
+                setTimeout(() => { btn.textContent = '\u{1F4CB} Copy Debug Logs'; }, 2000);
+            }
+        });
     });
 
     // --------------------------------------------------------
