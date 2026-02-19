@@ -711,7 +711,7 @@ const CurlingNetwork = (() => {
         // End transition (after scoring, updates server's authoritative currentTeam)
         sendEndTransition(data) { send({ type: 'end_transition', ...data }); },
         // Authoritative throw result (thrower sends after stone settles)
-        sendThrowSettled(data) { send({ type: 'throw_settled', throwSeq: lastThrowSeq, ...data }); },
+        sendThrowSettled(data) { return send({ type: 'throw_settled', throwSeq: lastThrowSeq, ...data }); },
 
         // Game over (record result)
         sendGameOver(redScore, yellowScore, endCount) {

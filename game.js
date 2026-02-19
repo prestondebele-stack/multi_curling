@@ -142,6 +142,7 @@
         _sweepTimeline: [],             // [{step, sweeping, level}] events during MY throw (for accurate replay)
         _simStepCount: 0,               // physics step counter during throw (indexes into sweep timeline)
         _throwSettledPending: false,     // true when throw settled locally but throw_settled not yet sent (awaiting connection verify)
+        _pendingThrowSettled: null,     // v109: payload to re-send on reconnect if throw_settled was dropped (WS closed)
         _workerActive: false,           // v105: true when Web Worker is running physics for current throw
     };
 
@@ -613,6 +614,9 @@
 
         console.log('[DELIVER] Throwing! currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
 
+        // v109: Clear any stale pending throw_settled from a previous throw
+        gameState._pendingThrowSettled = null;
+
         // v107: Cancel any pending auto-replay — player wants to throw, not watch replay
         if (gameState._autoReplayTimeout) {
             clearTimeout(gameState._autoReplayTimeout);
@@ -745,6 +749,7 @@
         gameState._awaitingConnectionVerify = false;
         gameState._opponentThrowPending = false;
         gameState._preThrowSnapshot = null;
+        gameState._pendingThrowSettled = null; // v109
         gameState._throwSweepLevel = 'none';
         gameState._sweepTimeline = [];
         gameState._simStepCount = 0;
@@ -1049,8 +1054,7 @@
                 endScores: gameState.endScores,
                 stones: settledStones,
             };
-            console.log('[NEXT-TURN] Sending throw_settled: currentTeam=' + gameState.currentTeam + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
-            CurlingNetwork.sendThrowSettled({
+            const throwSettledPayload = {
                 stones: settledStones,
                 currentTeam: gameState.currentTeam,
                 redThrown: gameState.redThrown,
@@ -1062,7 +1066,16 @@
                 sweepLevel: gameState._throwSweepLevel || 'none',
                 sweepTimeline: gameState._sweepTimeline.length > 0 ? gameState._sweepTimeline : null,
                 snapshot: syncPayload,
-            });
+            };
+            console.log('[NEXT-TURN] Sending throw_settled: currentTeam=' + gameState.currentTeam + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
+            const sent = CurlingNetwork.sendThrowSettled(throwSettledPayload);
+            if (!sent) {
+                // v109: WebSocket was closed — save payload to re-send on reconnect
+                console.warn('[NEXT-TURN] throw_settled DROPPED (WS closed) — saving for reconnect');
+                gameState._pendingThrowSettled = throwSettledPayload;
+            } else {
+                gameState._pendingThrowSettled = null;
+            }
             gameState._preThrowSnapshot = null;
         }
 
@@ -2059,6 +2072,17 @@
             nextTurn();
         }
 
+        // v109: If Worker settled while offline and throw_settled was dropped,
+        // re-send now that we're reconnected
+        if (gameState._pendingThrowSettled) {
+            console.log('[WELCOME_BACK] Re-sending dropped throw_settled');
+            const sent = CurlingNetwork.sendThrowSettled(gameState._pendingThrowSettled);
+            if (sent) {
+                gameState._pendingThrowSettled = null;
+                console.log('[WELCOME_BACK] throw_settled re-sent successfully');
+            }
+        }
+
         // Clear ALL recovery flags — popup is the single gate now
         gameState._awaitingConnectionVerify = false;
         gameState._throwSettledPending = false;
@@ -2824,6 +2848,7 @@ function drawStagedStones() {
             _simStepCount: 0,
             _replaySweepTimeline: null,
             _throwSettledPending: false,
+            _pendingThrowSettled: null, // v109
             _workerActive: false, // v105
         };
 
@@ -2890,6 +2915,7 @@ function drawStagedStones() {
         gameState.opponentInfo = null;
         gameState._opponentThrowPending = false;
         gameState._preThrowSnapshot = null;
+        gameState._pendingThrowSettled = null; // v109
         document.getElementById('online-team-badge').style.display = 'none';
         document.getElementById('chat-btn').style.display = 'none';
         document.getElementById('chat-popup').style.display = 'none';
@@ -3821,6 +3847,46 @@ function drawStagedStones() {
             // Cancel any pending replay
             if (gameState.isReplaying && gameState._replayRestore) {
                 gameState._replayRestore();
+            }
+
+            // v109: If we have a pending throw_settled that was dropped (WS was closed
+            // when Worker settled in background), re-send it now and use our local state
+            // instead of the server's stale snapshot. The server doesn't know our throw
+            // settled, so its currentTeam/snapshot is outdated.
+            if (gameState._pendingThrowSettled) {
+                console.log('[GAME] onReconnected — re-sending dropped throw_settled');
+                const sent = CurlingNetwork.sendThrowSettled(gameState._pendingThrowSettled);
+                if (sent) {
+                    console.log('[GAME] onReconnected — throw_settled re-sent successfully');
+                    gameState._pendingThrowSettled = null;
+                    // Don't apply server snapshot — our local state is authoritative
+                    // (we already ran nextTurn() locally when Worker settled)
+                    // Just sync UI and hide popup
+                    const popup = document.getElementById('welcome-back-overlay');
+                    if (popup && popup.style.display !== 'none') {
+                        popup.style.display = 'none';
+                    }
+                    gameState.phase = 'aiming';
+                    // Push our correct state to server for future reconnects
+                    CurlingNetwork.sendGameStateSync({
+                        currentTeam: gameState.currentTeam,
+                        redScore: gameState.redScore,
+                        yellowScore: gameState.yellowScore,
+                        currentEnd: gameState.currentEnd,
+                        redThrown: gameState.redThrown,
+                        yellowThrown: gameState.yellowThrown,
+                        hammer: gameState.hammer,
+                        endScores: gameState.endScores,
+                        stones: gameState.stones.filter(s => s.active).map(s => ({
+                            team: s.team, x: s.x, y: s.y,
+                        })),
+                    });
+                    updateUI();
+                    setupTurnControls();
+                    return;
+                } else {
+                    console.warn('[GAME] onReconnected — throw_settled re-send failed again');
+                }
             }
 
             // v101: If welcome-back popup is showing, let it handle mid-throw recovery.
