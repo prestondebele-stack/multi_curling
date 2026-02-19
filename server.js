@@ -12,6 +12,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
 const auth = require('./auth');
 const webpush = require('web-push');
+const CurlingPhysics = require('./physics');
 
 const PORT = process.env.PORT || 3000;
 
@@ -146,16 +147,25 @@ function createRoom(hostWs, totalEnds) {
         totalEnds: ends,
         state: {
             currentTeam: 'red',
-            phase: 'waiting', // waiting | playing | finished
+            phase: 'waiting',      // waiting | playing | throwing | finished
+            settledStones: [],     // [{team, x, y}] — authoritative stone positions
+            redThrown: 0,
+            yellowThrown: 0,
+            currentEnd: 1,
+            totalEnds: ends,
+            redScore: 0,
+            yellowScore: 0,
+            hammer: 'yellow',
+            endScores: [],
+            fgzProtectedStones: [],
+            throwInProgress: false,
+            lastThrowParams: null,
+            lastPreThrowStones: null,
         },
-        gameSnapshot: null,      // stored game state for reconnection resync
         resultRecorded: false,   // prevent duplicate game result recording
         createdAt: Date.now(),
         disconnectTimers: [null, null],
         pendingMessages: [[], []], // queued messages per slot when opponent is offline
-        throwSettleTimer: null,    // timeout: auto-advance if throw_settled never arrives
-        lastThrowBy: null,         // index of player who threw (0 or 1)
-        throwSeq: 0,               // sequence number: increments on each throw, validates throw_settled freshness
     };
     rooms.set(code, room);
     playerRooms.set(hostWs, code);
@@ -173,9 +183,8 @@ function joinRoom(code, joinerWs) {
 }
 
 async function startGame(room) {
-    room.state.phase = 'playing';
-    room.state.currentTeam = 'red';
-    room.gameSnapshot = null;
+    initFullGameState(room);
+    room.state.totalEnds = room.totalEnds; // copy from room-level setting
     room.resultRecorded = false;
 
     // Cache sessions in the room for resilient lookup
@@ -273,6 +282,272 @@ async function getPlayerInfo(ws) {
         console.error('getPlayerInfo error:', e.message);
         return { username: session.username, rank: auth.getRank(1200), country: '' };
     }
+}
+
+// --------------------------------------------------------
+// SERVER-AUTHORITATIVE PHYSICS ENGINE (v112)
+// All online game physics run on the server. Clients send
+// throw params, server simulates, returns final positions.
+// --------------------------------------------------------
+const PHYSICS_DT = 1 / 240;
+const S_POSITIONS = CurlingPhysics.POSITIONS;
+const S_STONE_R = CurlingPhysics.STONE.radius;
+const S_HALF_W = CurlingPhysics.SHEET.width / 2;
+const S_HOUSE = CurlingPhysics.HOUSE;
+
+// Initialize room game state for a new end or game start
+function initRoomGameState(room) {
+    room.state.settledStones = [];
+    room.state.redThrown = 0;
+    room.state.yellowThrown = 0;
+    room.state.fgzProtectedStones = [];
+    room.state.throwInProgress = false;
+    room.state.lastThrowParams = null;
+    room.state.lastPreThrowStones = null;
+}
+
+// Initialize full game state when room is created / game starts
+function initFullGameState(room) {
+    room.state.currentTeam = 'red';
+    room.state.phase = 'playing';
+    room.state.currentEnd = 1;
+    room.state.redScore = 0;
+    room.state.yellowScore = 0;
+    room.state.hammer = 'yellow';
+    room.state.endScores = [];
+    initRoomGameState(room);
+}
+
+// Check if a stone is in the Free Guard Zone
+function serverIsInFGZ(stone) {
+    if (!stone.active) return false;
+    const distToTee = Math.sqrt(stone.x * stone.x + (stone.y - S_POSITIONS.farTeeLine) ** 2);
+    return stone.y >= S_POSITIONS.farHogLine && distToTee > S_HOUSE.twelveFoot + S_STONE_R;
+}
+
+// Snapshot FGZ-protected stones before a throw (5-rock rule)
+function serverSnapshotFGZ(room, throwingTeam) {
+    const totalThrown = room.state.redThrown + room.state.yellowThrown;
+    if (totalThrown > 5) {
+        room.state.fgzProtectedStones = [];
+        return;
+    }
+    room.state.fgzProtectedStones = [];
+    for (const stone of room.state.settledStones) {
+        if (stone.team === throwingTeam) continue; // only protect opponent's stones
+        if (serverIsInFGZ(stone)) {
+            room.state.fgzProtectedStones.push({ team: stone.team, x: stone.x, y: stone.y });
+        }
+    }
+}
+
+// Check FGZ violations after a throw settles — returns true if violation occurred
+function serverCheckFGZViolation(room, settledStones, deliveredStoneIdx) {
+    if (room.state.fgzProtectedStones.length === 0) return false;
+
+    let violated = false;
+    for (const snap of room.state.fgzProtectedStones) {
+        // Check if this protected stone was knocked out of play
+        const stillActive = settledStones.find(s =>
+            s.active && s.team === snap.team &&
+            Math.abs(s.x - snap.x) < 3.0 && Math.abs(s.y - snap.y) < 3.0
+        );
+        // Also check exact match in case stone didn't move
+        const exactMatch = settledStones.find(s =>
+            s.active && s.team === snap.team &&
+            Math.abs(s.x - snap.x) < 0.001 && Math.abs(s.y - snap.y) < 0.001
+        );
+
+        if (!stillActive && !exactMatch) {
+            // Stone was removed from play — restore it
+            settledStones.push({
+                team: snap.team, x: snap.x, y: snap.y,
+                vx: 0, vy: 0, omega: 0, angle: 0,
+                active: true, moving: false
+            });
+            violated = true;
+        }
+    }
+
+    if (violated && deliveredStoneIdx >= 0 && deliveredStoneIdx < settledStones.length) {
+        // Remove the thrown stone
+        settledStones[deliveredStoneIdx].active = false;
+    }
+
+    room.state.fgzProtectedStones = [];
+    return violated;
+}
+
+// Calculate end score — which team scores and how many points
+function serverCalculateEndScore(settledStones) {
+    const teeX = 0;
+    const teeY = S_POSITIONS.farTeeLine;
+
+    const activeStones = settledStones.filter(s => s.active);
+    if (activeStones.length === 0) return { team: null, points: 0 };
+
+    const scored = activeStones.map(s => ({
+        team: s.team,
+        x: s.x, y: s.y,
+        dist: Math.sqrt((s.x - teeX) ** 2 + (s.y - teeY) ** 2),
+    })).sort((a, b) => a.dist - b.dist);
+
+    // Only stones within the 12-foot house score
+    const inHouse = scored.filter(s => s.dist <= S_HOUSE.twelveFoot + S_STONE_R);
+    if (inHouse.length === 0) return { team: null, points: 0 };
+
+    const closestTeam = inHouse[0].team;
+    const otherTeamClosest = inHouse.find(s => s.team !== closestTeam);
+    const otherDist = otherTeamClosest ? otherTeamClosest.dist : Infinity;
+
+    let points = 0;
+    for (const s of inHouse) {
+        if (s.team === closestTeam && s.dist < otherDist) {
+            points++;
+        }
+    }
+
+    return { team: closestTeam, points };
+}
+
+// Run server-side physics for a throw. Non-blocking via setImmediate batching.
+function runServerPhysics(room, throwParams, callback) {
+    const { aim, weight, spinDir, spinAmount, sweepLevel } = throwParams;
+    const throwingTeam = room.state.currentTeam;
+
+    // Build stone array from current settled stones
+    const stones = room.state.settledStones.map(s => ({
+        team: s.team, x: s.x, y: s.y,
+        vx: 0, vy: 0, omega: 0, angle: 0,
+        active: true, moving: false,
+        hasHitStone: false, settleTime: 0, fadeOut: undefined,
+        _isDelivered: false, _hogViolation: false
+    }));
+
+    // Create the new thrown stone
+    const speed = CurlingPhysics.weightToSpeed(weight);
+    const aimRad = aim * Math.PI / 180;
+    const startX = 0;
+    const startY = S_POSITIONS.hack + 1.0;
+    const vx = speed * Math.sin(aimRad);
+    const vy = speed * Math.cos(aimRad);
+    const omega = CurlingPhysics.rotationsToAngularVelocity(spinAmount, speed) * spinDir;
+
+    const deliveredIdx = stones.length;
+    stones.push({
+        team: throwingTeam, x: startX, y: startY,
+        vx, vy, omega, angle: 0,
+        active: true, moving: true,
+        hasHitStone: false, settleTime: 0, fadeOut: undefined,
+        _isDelivered: true, _hogViolation: false
+    });
+
+    const sweep = sweepLevel || 'none';
+    let stepCount = 0;
+    const STEPS_PER_BATCH = 500; // yield to event loop every 500 steps
+
+    function checkOOB() {
+        for (const stone of stones) {
+            if (!stone.active) continue;
+            if (stone.y > S_POSITIONS.farBackLine + S_STONE_R && stone.vy > 0) {
+                stone.moving = false; stone.active = false; stone.fadeOut = 1.0;
+            }
+            if (stone.y < S_POSITIONS.hack - 2) {
+                stone.moving = false; stone.active = false; stone.fadeOut = 1.0;
+            }
+            if (Math.abs(stone.x) > S_HALF_W - S_STONE_R) {
+                stone.moving = false; stone.active = false; stone.fadeOut = 1.0;
+            }
+            // Hog line violation for delivered stone
+            if (stone._isDelivered && !stone.moving && (stone.y - S_STONE_R) < S_POSITIONS.farHogLine) {
+                if (!stone.hasHitStone) {
+                    stone.moving = false; stone.active = false; stone.fadeOut = 1.0;
+                    stone._hogViolation = true;
+                }
+            }
+        }
+    }
+
+    function batch() {
+        for (let i = 0; i < STEPS_PER_BATCH; i++) {
+            const anyMoving = CurlingPhysics.simulate(stones, PHYSICS_DT, sweep);
+            stepCount++;
+            checkOOB();
+
+            if (!anyMoving) {
+                // Physics settled — gather results
+                const delivered = stones[deliveredIdx];
+                const hogViolation = delivered ? delivered._hogViolation : false;
+
+                // Check FGZ violation
+                const fgzViolation = serverCheckFGZViolation(room, stones, deliveredIdx);
+
+                // Build final settled stones (only active ones)
+                const finalStones = stones
+                    .filter(s => s.active)
+                    .map(s => ({ team: s.team, x: s.x, y: s.y }));
+
+                callback({
+                    stones: finalStones,
+                    hogViolation,
+                    fgzViolation,
+                    deliveredStoneActive: delivered ? delivered.active : false,
+                    stepCount
+                });
+                return;
+            }
+        }
+        // Yield to event loop and continue
+        setImmediate(batch);
+    }
+
+    // Start the physics simulation
+    setImmediate(batch);
+}
+
+// Process end-of-end: score, check for game over, advance
+function serverEndOfEnd(room) {
+    const result = serverCalculateEndScore(room.state.settledStones);
+    room.state.endScores.push(result);
+
+    if (result.team === 'red') {
+        room.state.redScore += result.points;
+    } else if (result.team === 'yellow') {
+        room.state.yellowScore += result.points;
+    }
+
+    // Check for game over or extra end
+    if (room.state.currentEnd >= room.state.totalEnds) {
+        if (room.state.redScore === room.state.yellowScore) {
+            // Tied — extra end
+            room.state.totalEnds++;
+        } else {
+            // Game over
+            room.state.phase = 'finished';
+            return { gameOver: true, result, extraEnd: false };
+        }
+    }
+
+    // Start next end
+    room.state.currentEnd++;
+
+    if (result.team && result.points > 0) {
+        // Scoring team goes first (disadvantage); non-scoring team gets hammer
+        room.state.currentTeam = result.team;
+        room.state.hammer = result.team === 'red' ? 'yellow' : 'red';
+    }
+    // If blank end (no score), same team keeps hammer, order stays
+
+    // Reset for new end
+    room.state.settledStones = [];
+    room.state.redThrown = 0;
+    room.state.yellowThrown = 0;
+    room.state.fgzProtectedStones = [];
+    room.state.throwInProgress = false;
+    room.state.lastThrowParams = null;
+    room.state.lastPreThrowStones = null;
+
+    return { gameOver: false, result, extraEnd: room.state.currentEnd > room.totalEnds };
 }
 
 // --------------------------------------------------------
@@ -421,7 +696,6 @@ function destroyRoom(code) {
     const room = rooms.get(code);
     if (!room) return;
 
-    if (room.throwSettleTimer) clearTimeout(room.throwSettleTimer);
     for (let i = 0; i < 2; i++) {
         if (room.disconnectTimers[i]) clearTimeout(room.disconnectTimers[i]);
         if (room.players[i]) playerRooms.delete(room.players[i]);
@@ -448,14 +722,14 @@ async function handleMessage(ws, message) {
 
     switch (data.type) {
         case 'ping': {
-            // Include authoritative game state so client can sync after tab switch
+            // v112: Include full authoritative state so client can sync after tab switch
             const pingCode = playerRooms.get(ws);
             const pingRoom = pingCode ? rooms.get(pingCode) : null;
             if (pingRoom) {
                 send(ws, {
                     type: 'pong',
                     currentTeam: pingRoom.state.currentTeam,
-                    throwSeq: pingRoom.throwSeq
+                    throwInProgress: pingRoom.state.throwInProgress,
                 });
             } else {
                 send(ws, { type: 'pong' });
@@ -943,10 +1217,15 @@ async function handleMessage(ws, message) {
         }
 
         // ---- GAMEPLAY ----
+        // ============================================================
+        // v112: SERVER-AUTHORITATIVE THROW HANDLER
+        // Server receives throw params, runs physics, sends results
+        // to BOTH players. No more client-side physics for online.
+        // ============================================================
         case 'throw': {
             const code = playerRooms.get(ws);
             if (!code) {
-                console.log('[THROW REJECTED] ws not in any room — sending throw_rejected');
+                console.log('[THROW REJECTED] ws not in any room');
                 send(ws, { type: 'throw_rejected', reason: 'not_in_room' });
                 return;
             }
@@ -963,117 +1242,166 @@ async function handleMessage(ws, message) {
                 return;
             }
 
-            const prevTeam = room.state.currentTeam;
-            // Switch turns immediately when relaying the throw
-            // (prevents race condition with separate turn_complete message)
-            room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
-            console.log(`[THROW OK] ${team} threw, turn switched ${prevTeam} -> ${room.state.currentTeam} (room ${code})`);
+            // Reject if a throw is already in progress
+            if (room.state.throwInProgress) {
+                console.log(`[THROW REJECTED] throw already in progress (room ${code})`);
+                send(ws, { type: 'throw_rejected', reason: 'throw_in_progress' });
+                return;
+            }
 
-            // Increment throw sequence — used to detect stale throw_settled messages
-            room.throwSeq++;
-
-            // Acknowledge the throw to the thrower so client knows it was received
-            send(ws, { type: 'throw_ack', throwSeq: room.throwSeq });
-
-            // Store throw params so we can include them in authoritative_state for replay
-            room.lastThrowParams = { aim: data.aim, weight: data.weight, spinDir: data.spinDir, spinAmount: data.spinAmount };
-            room.lastSweepLevel = 'none'; // Will be updated when throw_settled arrives
-            room.lastSweepTimeline = null; // Will be updated when throw_settled arrives
-
-            // Track who threw for the settle timeout
-            room.lastThrowBy = getPlayerIndex(room, ws);
-
-            const opponent = getOpponent(room, ws);
-            const throwMsg = {
-                type: 'opponent_throw',
+            const throwParams = {
                 aim: data.aim,
                 weight: data.weight,
                 spinDir: data.spinDir,
                 spinAmount: data.spinAmount,
+                sweepLevel: data.sweepLevel || 'none',
             };
-            if (opponent && opponent.readyState === WebSocket.OPEN) {
-                send(opponent, throwMsg);
+
+            // Save pre-throw stone snapshot for replay
+            const preThrowStones = room.state.settledStones.map(s => ({ team: s.team, x: s.x, y: s.y }));
+            room.state.lastPreThrowStones = preThrowStones;
+            room.state.lastThrowParams = throwParams;
+
+            // Increment throw count (server tracks this now)
+            if (team === 'red') {
+                room.state.redThrown++;
             } else {
-                // Opponent is offline — queue for replay when they reconnect
-                const opponentIdx = getPlayerIndex(room, ws) === 0 ? 1 : 0;
-                room.pendingMessages[opponentIdx].push(throwMsg);
-                console.log(`[THROW WARN] opponent not connected — queued for slot ${opponentIdx} (room ${code})`);
+                room.state.yellowThrown++;
             }
 
-            // Start throw settle timeout: if the thrower's client doesn't send
-            // throw_settled within 15s (e.g. tab backgrounded, physics frozen),
-            // nudge them with a settle_nudge so they fast-forward and send it.
-            // 15s is generous — stones take ~8s max to settle, and mobile browsers
-            // throttle background tabs within 5-10s.
-            if (room.throwSettleTimer) clearTimeout(room.throwSettleTimer);
-            room.throwSettleTimer = setTimeout(() => {
-                room.throwSettleTimer = null;
-                // Only nudge if the room still exists and the thrower is connected
-                const throwerWs = room.players[room.lastThrowBy];
-                if (throwerWs && throwerWs.readyState === WebSocket.OPEN) {
-                    console.log(`[SETTLE_TIMEOUT] No throw_settled in 15s — nudging thrower (room ${code})`);
-                    send(throwerWs, { type: 'settle_nudge' });
+            // Snapshot FGZ-protected stones BEFORE physics runs
+            serverSnapshotFGZ(room, team);
+
+            // Mark throw in progress
+            room.state.throwInProgress = true;
+            room.state.phase = 'throwing';
+
+            console.log(`[THROW OK] ${team} throwing: aim=${data.aim} weight=${data.weight} sweep=${throwParams.sweepLevel} redThrown=${room.state.redThrown} yellowThrown=${room.state.yellowThrown} (room ${code})`);
+
+            // Acknowledge the throw
+            send(ws, { type: 'throw_ack' });
+
+            // Notify opponent that a throw is in progress
+            const opponent = getOpponent(room, ws);
+            if (opponent && opponent.readyState === WebSocket.OPEN) {
+                send(opponent, {
+                    type: 'opponent_throw_started',
+                    throwParams,
+                });
+            }
+
+            // Run physics on the server
+            runServerPhysics(room, throwParams, (result) => {
+                // Physics settled — update authoritative state
+                room.state.settledStones = result.stones;
+                room.state.throwInProgress = false;
+                room.state.phase = 'playing';
+
+                // Check if end is complete (all 16 stones thrown)
+                let endResult = null;
+                let gameOver = false;
+                if (room.state.redThrown >= 8 && room.state.yellowThrown >= 8) {
+                    endResult = serverEndOfEnd(room);
+                    gameOver = endResult.gameOver;
                 } else {
-                    console.log(`[SETTLE_TIMEOUT] No throw_settled in 15s and thrower disconnected (room ${code})`);
-                    // Thrower is gone — tell opponent to apply whatever state they have
-                    const oppIdx = room.lastThrowBy === 0 ? 1 : 0;
-                    const oppWs = room.players[oppIdx];
-                    if (oppWs && oppWs.readyState === WebSocket.OPEN) {
-                        send(oppWs, { type: 'settle_nudge' });
+                    // Toggle turn (ONCE — server is sole authority)
+                    room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
+                    // If current team has thrown all 8, switch again
+                    if (room.state.currentTeam === 'red' && room.state.redThrown >= 8) {
+                        room.state.currentTeam = 'yellow';
+                    } else if (room.state.currentTeam === 'yellow' && room.state.yellowThrown >= 8) {
+                        room.state.currentTeam = 'red';
                     }
                 }
-            }, 15000);
 
-            // Send push notification to the player whose turn it now is
-            const nextIdx = room.state.currentTeam === 'red' ? 0 : 1;
-            const nextWs = room.players[nextIdx];
-            const nextSession = nextWs ? playerSessions.get(nextWs) : null;
-            if (nextSession?.userId && process.env.VAPID_PUBLIC_KEY) {
-                sendPushNotification(nextSession.userId, "It's your turn!", 'Your opponent has thrown. Time to deliver your stone!');
-            }
+                console.log(`[THROW SETTLED] ${team} -> stones=${result.stones.length} hog=${result.hogViolation} fgz=${result.fgzViolation} steps=${result.stepCount} currentTeam=${room.state.currentTeam} (room ${code})`);
+
+                // Build the throw_result message for BOTH players
+                const throwResultMsg = {
+                    type: 'throw_result',
+                    stones: room.state.settledStones,
+                    currentTeam: room.state.currentTeam,
+                    redThrown: room.state.redThrown,
+                    yellowThrown: room.state.yellowThrown,
+                    redScore: room.state.redScore,
+                    yellowScore: room.state.yellowScore,
+                    currentEnd: room.state.currentEnd,
+                    totalEnds: room.state.totalEnds,
+                    hammer: room.state.hammer,
+                    endScores: room.state.endScores,
+                    throwParams,
+                    preThrowStones,
+                    hogViolation: result.hogViolation,
+                    fgzViolation: result.fgzViolation,
+                    throwerTeam: team,
+                    endComplete: !!endResult,
+                    gameOver,
+                };
+
+                // Send to both players
+                if (ws.readyState === WebSocket.OPEN) {
+                    send(ws, throwResultMsg);
+                }
+                const opp = getOpponent(room, ws);
+                if (opp && opp.readyState === WebSocket.OPEN) {
+                    send(opp, throwResultMsg);
+                }
+
+                // Record game result if game over
+                if (gameOver) {
+                    room.state.phase = 'finished';
+                    // Auto-record game result on server
+                    if (!room.resultRecorded) {
+                        room.resultRecorded = true;
+                        const redSession = (room.players[0] ? playerSessions.get(room.players[0]) : null) || room.sessions[0];
+                        const yellowSession = (room.players[1] ? playerSessions.get(room.players[1]) : null) || room.sessions[1];
+                        if (redSession && yellowSession) {
+                            auth.recordGameResult(
+                                redSession.userId,
+                                yellowSession.userId,
+                                room.state.redScore,
+                                room.state.yellowScore,
+                                room.state.currentEnd
+                            ).then(ratingResult => {
+                                if (ratingResult) {
+                                    if (room.players[0] && room.players[0].readyState === WebSocket.OPEN) {
+                                        send(room.players[0], { type: 'rating_update', rank: ratingResult.red.rank });
+                                    }
+                                    if (room.players[1] && room.players[1].readyState === WebSocket.OPEN) {
+                                        send(room.players[1], { type: 'rating_update', rank: ratingResult.yellow.rank });
+                                    }
+                                }
+                            }).catch(err => console.error('Game result recording error:', err));
+                        }
+                    }
+                }
+
+                // Send push notification to next player (if not game over)
+                if (!gameOver && process.env.VAPID_PUBLIC_KEY) {
+                    const nextIdx = room.state.currentTeam === 'red' ? 0 : 1;
+                    const nextWs = room.players[nextIdx];
+                    const nextSession = nextWs ? playerSessions.get(nextWs) : null;
+                    if (nextSession?.userId) {
+                        if (endResult) {
+                            sendPushNotification(nextSession.userId, 'New end starting!',
+                                `End ${room.state.currentEnd} is starting. You throw first!`);
+                        } else {
+                            sendPushNotification(nextSession.userId, "It's your turn!",
+                                'Your opponent has thrown. Time to deliver your stone!');
+                        }
+                    }
+                }
+            });
             break;
         }
 
-        case 'sweep_change': {
-            const code = playerRooms.get(ws);
-            if (!code) return;
-            const room = rooms.get(code);
-            if (!room) return;
-
-            // Allow sweep from either player (current thrower's turn already switched)
-            const opponent = getOpponent(room, ws);
-            send(opponent, { type: 'opponent_sweep_change', level: data.level });
-            break;
-        }
-
-        case 'sweep_start': {
-            const code = playerRooms.get(ws);
-            if (!code) return;
-            const room = rooms.get(code);
-            if (!room) return;
-
-            const opponent = getOpponent(room, ws);
-            send(opponent, { type: 'opponent_sweep_start' });
-            break;
-        }
-
-        case 'sweep_stop': {
-            const code = playerRooms.get(ws);
-            if (!code) return;
-            const room = rooms.get(code);
-            if (!room) return;
-
-            const opponent = getOpponent(room, ws);
-            send(opponent, { type: 'opponent_sweep_stop' });
-            break;
-        }
-
-        // Real-time stone position stream from thrower to opponent.
-        // The thrower is the single source of truth for physics.
+        // v112: sweep_change, sweep_start, sweep_stop, stone_positions — REMOVED
+        // Sweep is now pre-selected before throw and sent with throw params.
+        // These cases are kept as no-ops for backward compatibility.
+        case 'sweep_change':
+        case 'sweep_start':
+        case 'sweep_stop':
         case 'stone_positions': {
-            // v88: No-op — position streaming removed in "Settle First, Replay Second" architecture.
-            // Opponent now receives final positions via authoritative_state and watches a replay.
-            // Keep case label for backward compatibility with old clients.
             break;
         }
 
@@ -1096,165 +1424,12 @@ async function handleMessage(ws, message) {
             break;
         }
 
-        // ---- GAME STATE SYNC (for reconnection) ----
-        case 'game_state_sync': {
-            const code = playerRooms.get(ws);
-            if (!code) return;
-            const room = rooms.get(code);
-            if (!room) return;
-            // Store the latest game state snapshot for reconnection.
-            // IMPORTANT: Do NOT update room.state.currentTeam here!
-            // game_state_sync can be sent pre-throw (from deliverStone) with stale
-            // currentTeam that would revert the server's authoritative turn state.
-            // Only 'throw' and 'throw_settled' should update room.state.currentTeam.
-            room.gameSnapshot = data.snapshot;
-            break;
-        }
-
-        // ---- END TRANSITION (after scoring, updates authoritative currentTeam) ----
-        case 'end_transition': {
-            const code = playerRooms.get(ws);
-            if (!code) return;
-            const room = rooms.get(code);
-            if (!room) return;
-
-            // Update server's authoritative currentTeam for the new end.
-            // Unlike game_state_sync (which is distrusted), end_transition is a
-            // dedicated signal sent only after scoring — safe to trust.
-            if (data.currentTeam) {
-                const prevTeam = room.state.currentTeam;
-                room.state.currentTeam = data.currentTeam;
-                console.log(`[END_TRANSITION] currentTeam: ${prevTeam} -> ${data.currentTeam} hammer=${data.hammer} end=${data.currentEnd} (room ${code})`);
-            }
-
-            // Store snapshot for reconnects
-            room.gameSnapshot = {
-                currentTeam: data.currentTeam,
-                hammer: data.hammer,
-                currentEnd: data.currentEnd,
-                redScore: data.redScore,
-                yellowScore: data.yellowScore,
-                endScores: data.endScores,
-                redThrown: 0,
-                yellowThrown: 0,
-                stones: [],
-            };
-
-            // Relay to opponent so they sync too
-            const opponent = getOpponent(room, ws);
-            if (opponent && opponent.readyState === WebSocket.OPEN) {
-                send(opponent, { type: 'end_transition', ...data });
-            } else {
-                const opponentIdx = getPlayerIndex(room, ws) === 0 ? 1 : 0;
-                room.pendingMessages[opponentIdx].push({ type: 'end_transition', ...data });
-            }
-
-            // v110: Send push notification to the player who throws first in the new end
-            if (data.currentTeam && process.env.VAPID_PUBLIC_KEY) {
-                const nextIdx = data.currentTeam === 'red' ? 0 : 1;
-                const nextWs = room.players[nextIdx];
-                const nextSession = nextWs ? playerSessions.get(nextWs) : null;
-                if (nextSession?.userId) {
-                    sendPushNotification(nextSession.userId, 'New end starting!',
-                        `End ${data.currentEnd} is starting. You throw first!`);
-                }
-            }
-            break;
-        }
-
-        // Authoritative stone positions after a throw settles.
-        // The thrower's client is the source of truth — relay to opponent.
+        // v112: game_state_sync, end_transition, throw_settled — REMOVED
+        // Server is now authoritative for all game state. These messages
+        // are no longer needed. Kept as no-ops for backward compatibility.
+        case 'game_state_sync':
+        case 'end_transition':
         case 'throw_settled': {
-            const code = playerRooms.get(ws);
-            if (!code) return;
-            const room = rooms.get(code);
-            if (!room) return;
-
-            // Clear the settle timeout — thrower reported in time
-            if (room.throwSettleTimer) {
-                clearTimeout(room.throwSettleTimer);
-                room.throwSettleTimer = null;
-            }
-
-            // Validate throwSeq to detect stale throw_settled messages.
-            // If the opponent already threw (advancing throwSeq), this message
-            // has an old sequence number and its currentTeam is stale.
-            const isStale = data.throwSeq && data.throwSeq !== room.throwSeq;
-            if (isStale) {
-                console.log(`[THROW_SETTLED] STALE: msg throwSeq=${data.throwSeq} vs room throwSeq=${room.throwSeq} — ignoring currentTeam, keeping server's ${room.state.currentTeam} (room ${code})`);
-                // Still store snapshot and relay stone positions (they're valid),
-                // but do NOT overwrite currentTeam
-                if (data.snapshot) {
-                    // Update snapshot but preserve server's currentTeam in it
-                    const correctedSnapshot = { ...data.snapshot, currentTeam: room.state.currentTeam };
-                    room.gameSnapshot = correctedSnapshot;
-                }
-                // Send turn_correction to the sender so their client resyncs
-                send(ws, { type: 'turn_correction', currentTeam: room.state.currentTeam });
-                // Still relay stone positions to opponent (the positions are accurate)
-                const opponent = getOpponent(room, ws);
-                const authMsg = {
-                    type: 'authoritative_state',
-                    stones: data.stones,
-                    currentTeam: room.state.currentTeam, // Use SERVER's authoritative team
-                    redThrown: data.redThrown,
-                    yellowThrown: data.yellowThrown,
-                    redScore: data.redScore,
-                    yellowScore: data.yellowScore,
-                    currentEnd: data.currentEnd,
-                    throwParams: room.lastThrowParams || null,
-                    preThrowStones: data.preThrowStones || null,
-                    sweepLevel: data.sweepLevel || 'none',
-                    sweepTimeline: data.sweepTimeline || null,
-                };
-                if (opponent && opponent.readyState === WebSocket.OPEN) {
-                    send(opponent, authMsg);
-                } else {
-                    const opponentIdx = getPlayerIndex(room, ws) === 0 ? 1 : 0;
-                    room.pendingMessages[opponentIdx].push(authMsg);
-                }
-                break;
-            }
-
-            // Store as latest snapshot too
-            if (data.snapshot) room.gameSnapshot = data.snapshot;
-
-            // Store sweep level, timeline, and pre-throw stones for reconnect replay
-            room.lastSweepLevel = data.sweepLevel || 'none';
-            room.lastSweepTimeline = data.sweepTimeline || null;
-            room.lastPreThrowStones = data.preThrowStones || null; // v108: for replay on reconnect
-
-            // Keep server's currentTeam in sync with the thrower's authoritative state.
-            const prevTeam = room.state.currentTeam;
-            if (data.currentTeam) {
-                room.state.currentTeam = data.currentTeam;
-            }
-            console.log(`[THROW_SETTLED] currentTeam: ${prevTeam} -> ${room.state.currentTeam} seq=${data.throwSeq} redThrown=${data.redThrown} yellowThrown=${data.yellowThrown} (room ${code})`);
-
-            // Relay final stone positions to the opponent
-            const opponent = getOpponent(room, ws);
-            const authMsg = {
-                type: 'authoritative_state',
-                stones: data.stones,
-                currentTeam: data.currentTeam,
-                redThrown: data.redThrown,
-                yellowThrown: data.yellowThrown,
-                redScore: data.redScore,
-                yellowScore: data.yellowScore,
-                currentEnd: data.currentEnd,
-                throwParams: room.lastThrowParams || null,
-                preThrowStones: data.preThrowStones || null,
-                sweepLevel: data.sweepLevel || 'none',
-                sweepTimeline: data.sweepTimeline || null,
-            };
-            if (opponent && opponent.readyState === WebSocket.OPEN) {
-                send(opponent, authMsg);
-            } else {
-                // Opponent is offline — queue for replay when they reconnect
-                const opponentIdx = getPlayerIndex(room, ws) === 0 ? 1 : 0;
-                room.pendingMessages[opponentIdx].push(authMsg);
-                console.log(`[THROW_SETTLED] opponent not connected — queued auth state for slot ${opponentIdx} (room ${code})`);
-            }
             break;
         }
 
@@ -1307,19 +1482,18 @@ async function handleMessage(ws, message) {
                 room._rematchRequested = ws;
                 send(opponent, { type: 'rematch_requested' });
             } else if (room._rematchRequested !== ws) {
-                // Both players want rematch - restart
+                // Both players want rematch - restart with fresh game state
                 room._rematchRequested = null;
-                room.state.currentTeam = 'red';
-                room.state.phase = 'playing';
-                room.gameSnapshot = null;
+                initFullGameState(room);
+                room.state.totalEnds = room.totalEnds;
                 room.resultRecorded = false;
                 // Re-cache sessions
                 room.sessions[0] = playerSessions.get(room.players[0]) || room.sessions[0];
                 room.sessions[1] = playerSessions.get(room.players[1]) || room.sessions[1];
                 const redInfo = await getPlayerInfo(room.players[0]);
                 const yellowInfo = await getPlayerInfo(room.players[1]);
-                send(room.players[0], { type: 'rematch_accepted', yourTeam: 'red', opponent: yellowInfo, totalEnds: room.totalEnds || 6 });
-                send(room.players[1], { type: 'rematch_accepted', yourTeam: 'yellow', opponent: redInfo, totalEnds: room.totalEnds || 6 });
+                send(room.players[0], { type: 'rematch_accepted', yourTeam: 'red', opponent: yellowInfo, totalEnds: room.totalEnds || 4 });
+                send(room.players[1], { type: 'rematch_accepted', yourTeam: 'yellow', opponent: redInfo, totalEnds: room.totalEnds || 4 });
             }
             break;
         }
@@ -1346,6 +1520,9 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        // ============================================================
+        // v112: SIMPLIFIED RECONNECT — server owns all state
+        // ============================================================
         case 'reconnect': {
             const code = (data.code || '').toUpperCase();
             const room = rooms.get(code);
@@ -1356,41 +1533,29 @@ async function handleMessage(ws, message) {
 
             // Client sends a team hint (from sessionStorage) so we can place them
             // back in their ORIGINAL slot and avoid swapping team colors.
-            const teamHint = data.team; // 'red' or 'yellow' or undefined
+            const teamHint = data.team;
             const hintSlot = teamHint === 'red' ? 0 : teamHint === 'yellow' ? 1 : -1;
 
-            // Find the correct slot — prefer the hinted slot if it's available.
             let emptySlot = -1;
-
-            // 1) If client gave a team hint and that slot is empty, use it
             if (hintSlot !== -1 && room.players[hintSlot] === null) {
                 emptySlot = hintSlot;
-            }
-            // 2) If hint slot is occupied by a dead socket, reclaim it
-            else if (hintSlot !== -1 && room.players[hintSlot] &&
+            } else if (hintSlot !== -1 && room.players[hintSlot] &&
                      room.players[hintSlot] !== ws &&
                      room.players[hintSlot].readyState !== WebSocket.OPEN) {
-                console.log(`[RECONNECT] Reclaiming hinted slot ${hintSlot} (dead socket)`);
                 playerRooms.delete(room.players[hintSlot]);
                 playerSessions.delete(room.players[hintSlot]);
                 room.players[hintSlot] = null;
                 emptySlot = hintSlot;
-            }
-            // 3) If hint slot is this same ws, resync
-            else if (hintSlot !== -1 && room.players[hintSlot] === ws) {
+            } else if (hintSlot !== -1 && room.players[hintSlot] === ws) {
                 emptySlot = hintSlot;
-            }
-            // 4) Fallback: find any empty slot
-            else {
+            } else {
                 emptySlot = room.players[0] === null ? 0 : room.players[1] === null ? 1 : -1;
             }
 
-            // 5) If still no slot, check for dead sockets in any slot
             if (emptySlot === -1) {
                 for (let i = 0; i < 2; i++) {
                     const existingWs = room.players[i];
                     if (existingWs && existingWs !== ws && existingWs.readyState !== WebSocket.OPEN) {
-                        console.log(`[RECONNECT] Replacing dead socket in slot ${i} (readyState=${existingWs.readyState})`);
                         playerRooms.delete(existingWs);
                         playerSessions.delete(existingWs);
                         room.players[i] = null;
@@ -1405,28 +1570,20 @@ async function handleMessage(ws, message) {
             }
 
             if (emptySlot === -1) {
-                // Both sockets genuinely alive — can't join
                 send(ws, { type: 'reconnect_failed' });
                 return;
             }
 
-            // Duplicate reconnect guard: if this ws is already in this slot, just resend state
-            if (room.players[emptySlot] === ws && playerRooms.get(ws) === code) {
-                console.log(`[RECONNECT] Duplicate reconnect from same ws in slot ${emptySlot} — resending state`);
-                // Fall through to resend reconnected state (no slot changes needed)
-            } else {
+            if (room.players[emptySlot] !== ws || playerRooms.get(ws) !== code) {
                 room.players[emptySlot] = ws;
                 playerRooms.set(ws, code);
             }
 
-            // Cancel disconnect timers for THIS slot (grace + hard timer)
             if (room.disconnectTimers[emptySlot]) {
                 clearTimeout(room.disconnectTimers[emptySlot]);
                 room.disconnectTimers[emptySlot] = null;
             }
 
-            // Restore cached session to this ws if available
-            // (token_login may not have fired yet — it's sent after reconnect)
             if (room.sessions[emptySlot] && !playerSessions.get(ws)) {
                 playerSessions.set(ws, room.sessions[emptySlot]);
                 onlineUsers.set(room.sessions[emptySlot].userId, ws);
@@ -1436,43 +1593,37 @@ async function handleMessage(ws, message) {
             const opponentWs = getOpponent(room, ws);
             const opponentInfo = opponentWs ? await getPlayerInfo(opponentWs) : null;
 
-            // Override snapshot's currentTeam with the server's authoritative value.
-            // The snapshot may have been stored pre-throw (from game_state_sync in
-            // deliverStone) with a stale currentTeam before the server switched turns.
-            let snapshot = room.gameSnapshot || null;
-            if (snapshot) {
-                snapshot = { ...snapshot, currentTeam: room.state.currentTeam };
-            }
-
-            console.log(`[RECONNECT] Sending reconnected to slot ${emptySlot} (${team}): serverCurrentTeam=${room.state.currentTeam}, snapshotHas=${!!snapshot}, snapshotCurrentTeam=${snapshot?.currentTeam}, snapshotStones=${snapshot?.stones?.length || 0}`);
+            // v112: Server owns ALL game state — send it directly.
+            // No more snapshot patching or currentTeam overrides needed.
+            console.log(`[RECONNECT] Sending reconnected to slot ${emptySlot} (${team}): currentTeam=${room.state.currentTeam} stones=${room.state.settledStones.length} throwInProgress=${room.state.throwInProgress} (room ${code})`);
 
             send(ws, {
                 type: 'reconnected',
                 yourTeam: team,
-                currentTeam: room.state.currentTeam, // authoritative turn from server
-                gameSnapshot: snapshot,
+                // v112: Send full authoritative state from server
+                gameState: {
+                    currentTeam: room.state.currentTeam,
+                    settledStones: room.state.settledStones,
+                    redThrown: room.state.redThrown,
+                    yellowThrown: room.state.yellowThrown,
+                    currentEnd: room.state.currentEnd,
+                    totalEnds: room.state.totalEnds,
+                    redScore: room.state.redScore,
+                    yellowScore: room.state.yellowScore,
+                    hammer: room.state.hammer,
+                    endScores: room.state.endScores,
+                    throwInProgress: room.state.throwInProgress,
+                    lastThrowParams: room.state.lastThrowParams,
+                    lastPreThrowStones: room.state.lastPreThrowStones,
+                },
                 opponent: opponentInfo,
-                lastThrowParams: room.lastThrowParams || null, // for replay on reconnect
-                lastSweepTimeline: room.lastSweepTimeline || null, // for replay on reconnect
-                lastPreThrowStones: room.lastPreThrowStones || null, // v108: for replay on reconnect
             });
 
-            // v108: Clear queued messages — do NOT replay them.
-            // The reconnect snapshot already contains the authoritative state
-            // (currentTeam, stones, scores, throw counts) plus lastThrowParams
-            // for replay. Replaying queued opponent_throw + authoritative_state
-            // messages on top of the snapshot causes timing races: the auth state
-            // replaces stones, reverts throw counts, triggers auto-replay, and
-            // can desync currentTeam — leading to throw_rejected loops.
-            // Pattern: boardgame.io / Colyseus — reconnect = fresh snapshot only.
-            if (room.pendingMessages[emptySlot].length > 0) {
-                console.log(`[RECONNECT] Clearing ${room.pendingMessages[emptySlot].length} queued messages for slot ${emptySlot} (snapshot has all needed state)`);
-                room.pendingMessages[emptySlot] = [];
-            }
+            // Clear any queued messages (server state is complete)
+            room.pendingMessages[emptySlot] = [];
 
-            // Notify opponent — wait briefly for token_login to register our session
+            // Notify opponent
             if (opponentWs && opponentWs.readyState === WebSocket.OPEN) {
-                // Small delay to let token_login set the session if it hasn't yet
                 await new Promise(r => setTimeout(r, 300));
                 room.sessions[emptySlot] = playerSessions.get(ws) || room.sessions[emptySlot];
                 const myInfo = await getPlayerInfo(ws);

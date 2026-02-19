@@ -450,3 +450,8 @@ const CurlingPhysics = (() => {
         simulateTrajectory,
     };
 })();
+
+// Node.js module support (for server-side physics)
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = CurlingPhysics;
+}

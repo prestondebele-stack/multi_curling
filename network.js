@@ -14,7 +14,7 @@ const CurlingNetwork = (() => {
     let lastPongTime = Date.now();
     let isReconnecting = false;       // Guard against parallel reconnect cycles
     let hasActiveGame = false;        // True once game_start or reconnected received
-    let lastThrowSeq = 0;            // Sequence number from last throw_ack (for throw_settled validation)
+    // v112: lastThrowSeq removed — server is authoritative, no more throw_settled
 
     // Persist active game session to sessionStorage + localStorage so page refresh,
     // back swipe, AND full tab close/reopen can rejoin.
@@ -47,10 +47,9 @@ const CurlingNetwork = (() => {
     const callbacks = {
         onGameStart: null,
         onThrowRejected: null,
-        onOpponentThrow: null,
-        onOpponentSweepChange: null,
-        onOpponentSweepStart: null,
-        onOpponentSweepStop: null,
+        // v112: New server-authoritative callbacks
+        onThrowResult: null,          // Server finished physics — both players get final state
+        onOpponentThrowStarted: null, // Opponent threw — server is simulating
         onOpponentDisconnected: null,
         onOpponentReconnected: null,
         onOpponentLeft: null,
@@ -89,18 +88,10 @@ const CurlingNetwork = (() => {
         onGameInviteCancelled: null,
         // Search
         onSearchResults: null,
-        // Authoritative state
-        onAuthoritativeState: null,
         // Connection verified (pong received after tab refocus)
         onConnectionVerified: null,
         // Chat
         onChatMessage: null,
-        // Server settle nudge (throw_settled timeout)
-        onSettleNudge: null,
-        // Server turn correction (stale throw_settled detected)
-        onTurnCorrection: null,
-        // End transition (scoring → new end with updated currentTeam)
-        onEndTransition: null,
     };
 
     function send(data) {
@@ -159,11 +150,10 @@ const CurlingNetwork = (() => {
                 if (pongVerifyTimer) {
                     clearTimeout(pongVerifyTimer);
                     pongVerifyTimer = null;
-                    // Notify game that connection is confirmed alive after refocus
-                    // Pass server's authoritative state so client can sync before enabling controls
+                    // v112: Pass server's authoritative state for sync
                     if (callbacks.onConnectionVerified) callbacks.onConnectionVerified({
                         currentTeam: data.currentTeam,
-                        throwSeq: data.throwSeq
+                        throwInProgress: data.throwInProgress,
                     });
                 }
                 break;
@@ -203,8 +193,7 @@ const CurlingNetwork = (() => {
                 break;
 
             case 'throw_ack':
-                if (data.throwSeq) lastThrowSeq = data.throwSeq;
-                console.log('[NET] Throw acknowledged by server, throwSeq=' + lastThrowSeq);
+                console.log('[NET] Throw acknowledged by server — physics running on server');
                 break;
 
             case 'throw_rejected':
@@ -215,31 +204,28 @@ const CurlingNetwork = (() => {
                 });
                 break;
 
+            // v112: Server completed physics — final state for BOTH players
+            case 'throw_result':
+                console.log('[NET] throw_result: currentTeam=' + data.currentTeam + ' stones=' + (data.stones ? data.stones.length : 0) + ' endComplete=' + data.endComplete + ' gameOver=' + data.gameOver);
+                if (callbacks.onThrowResult) callbacks.onThrowResult(data);
+                break;
+
+            // v112: Opponent started a throw — server is simulating
+            case 'opponent_throw_started':
+                console.log('[NET] opponent_throw_started');
+                if (callbacks.onOpponentThrowStarted) callbacks.onOpponentThrowStarted(data);
+                break;
+
+            // Legacy no-ops (kept for backward compatibility)
             case 'opponent_throw':
-                if (callbacks.onOpponentThrow) {
-                    callbacks.onOpponentThrow({
-                        aim: data.aim,
-                        weight: data.weight,
-                        spinDir: data.spinDir,
-                        spinAmount: data.spinAmount,
-                    });
-                }
-                break;
-
             case 'opponent_sweep_change':
-                if (callbacks.onOpponentSweepChange) callbacks.onOpponentSweepChange({ level: data.level });
-                break;
-
             case 'opponent_sweep_start':
-                if (callbacks.onOpponentSweepStart) callbacks.onOpponentSweepStart();
-                break;
-
             case 'opponent_sweep_stop':
-                if (callbacks.onOpponentSweepStop) callbacks.onOpponentSweepStop();
-                break;
-
             case 'opponent_stone_positions':
-                // v88: No-op — position streaming removed. Kept for backward compat.
+            case 'authoritative_state':
+            case 'settle_nudge':
+            case 'turn_correction':
+            case 'end_transition':
                 break;
 
             case 'chat_message':
@@ -268,7 +254,7 @@ const CurlingNetwork = (() => {
                 myTeam = data.yourTeam;
                 hasActiveGame = true;
                 saveActiveSession();
-                if (callbacks.onRematchAccepted) callbacks.onRematchAccepted({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6 });
+                if (callbacks.onRematchAccepted) callbacks.onRematchAccepted({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 4 });
                 break;
 
             case 'reconnected':
@@ -277,14 +263,11 @@ const CurlingNetwork = (() => {
                 isReconnecting = false;
                 hasActiveGame = true;
                 saveActiveSession();
+                // v112: Server sends full authoritative game state
                 if (callbacks.onReconnected) callbacks.onReconnected({
                     yourTeam: data.yourTeam,
-                    currentTeam: data.currentTeam || null, // server's authoritative turn
-                    gameSnapshot: data.gameSnapshot || null,
+                    gameState: data.gameState || null,
                     opponent: data.opponent || null,
-                    lastThrowParams: data.lastThrowParams || null, // for replay on reconnect
-                    lastSweepTimeline: data.lastSweepTimeline || null, // for replay on reconnect
-                    lastPreThrowStones: data.lastPreThrowStones || null, // v108: for replay on reconnect
                 });
                 break;
 
@@ -400,21 +383,7 @@ const CurlingNetwork = (() => {
             case 'search_results':
                 if (callbacks.onSearchResults) callbacks.onSearchResults({ results: data.results || [] });
                 break;
-            // Authoritative state from thrower
-            case 'authoritative_state':
-                if (callbacks.onAuthoritativeState) callbacks.onAuthoritativeState(data);
-                break;
-            case 'settle_nudge':
-                if (callbacks.onSettleNudge) callbacks.onSettleNudge();
-                break;
-            case 'turn_correction':
-                console.log('[NET] Turn correction from server: currentTeam=' + data.currentTeam);
-                if (callbacks.onTurnCorrection) callbacks.onTurnCorrection(data);
-                break;
-            case 'end_transition':
-                console.log('[NET] End transition: currentTeam=' + data.currentTeam + ' hammer=' + data.hammer + ' currentEnd=' + data.currentEnd);
-                if (callbacks.onEndTransition) callbacks.onEndTransition(data);
-                break;
+            // v112: Legacy message types — no-ops (handled above in the combined case block)
         }
     }
 
@@ -693,30 +662,27 @@ const CurlingNetwork = (() => {
         sendPing() { send({ type: 'ping' }); },
 
         // Gameplay
+        // v112: sendThrow includes sweepLevel — server runs physics
         sendThrow(params) {
-            return send({ type: 'throw', aim: params.aim, weight: params.weight, spinDir: params.spinDir, spinAmount: params.spinAmount });
+            return send({
+                type: 'throw',
+                aim: params.aim,
+                weight: params.weight,
+                spinDir: params.spinDir,
+                spinAmount: params.spinAmount,
+                sweepLevel: params.sweepLevel || 'none',
+            });
         },
-        sendSweepChange(level) { send({ type: 'sweep_change', level }); },
-        sendSweepStart() { send({ type: 'sweep_start' }); },
-        sendSweepStop() { send({ type: 'sweep_stop' }); },
-        // v88: Position streaming removed — opponent sees replay instead
-        sendStonePositions(data) { /* no-op */ },
-        sendTurnComplete() { send({ type: 'turn_complete' }); },
         sendRematch() { send({ type: 'rematch' }); },
         sendLeave() { send({ type: 'leave' }); },
         sendChatMessage(text) { send({ type: 'chat_message', text }); },
 
-        // Game state sync (for reconnection)
-        sendGameStateSync(snapshot) { send({ type: 'game_state_sync', snapshot }); },
-        // End transition (after scoring, updates server's authoritative currentTeam)
-        sendEndTransition(data) { send({ type: 'end_transition', ...data }); },
-        // Authoritative throw result (thrower sends after stone settles)
-        sendThrowSettled(data) { return send({ type: 'throw_settled', throwSeq: lastThrowSeq, ...data }); },
-
-        // Game over (record result)
-        sendGameOver(redScore, yellowScore, endCount) {
-            send({ type: 'game_over', redScore, yellowScore, endCount });
-        },
+        // v112: These are no longer needed — server handles everything
+        // Kept as no-ops for any remaining code paths
+        sendGameStateSync() { /* no-op in v112 */ },
+        sendEndTransition() { /* no-op in v112 */ },
+        sendThrowSettled() { return true; /* no-op in v112 */ },
+        sendGameOver() { /* no-op in v112 — server records results */ },
 
         // Auth
         sendLogin(username, password) { send({ type: 'login', username, password }); },
@@ -747,10 +713,9 @@ const CurlingNetwork = (() => {
         // Event registration
         onGameStart(cb) { callbacks.onGameStart = cb; },
         onThrowRejected(cb) { callbacks.onThrowRejected = cb; },
-        onOpponentThrow(cb) { callbacks.onOpponentThrow = cb; },
-        onOpponentSweepChange(cb) { callbacks.onOpponentSweepChange = cb; },
-        onOpponentSweepStart(cb) { callbacks.onOpponentSweepStart = cb; },
-        onOpponentSweepStop(cb) { callbacks.onOpponentSweepStop = cb; },
+        // v112: New server-authoritative callbacks
+        onThrowResult(cb) { callbacks.onThrowResult = cb; },
+        onOpponentThrowStarted(cb) { callbacks.onOpponentThrowStarted = cb; },
         onOpponentDisconnected(cb) { callbacks.onOpponentDisconnected = cb; },
         onOpponentReconnected(cb) { callbacks.onOpponentReconnected = cb; },
         onOpponentLeft(cb) { callbacks.onOpponentLeft = cb; },
@@ -789,17 +754,16 @@ const CurlingNetwork = (() => {
         onGameInviteCancelled(cb) { callbacks.onGameInviteCancelled = cb; },
         // Search
         onSearchResults(cb) { callbacks.onSearchResults = cb; },
-        // Authoritative state
-        onAuthoritativeState(cb) { callbacks.onAuthoritativeState = cb; },
-        // Settle nudge (server timeout)
-        onSettleNudge(cb) { callbacks.onSettleNudge = cb; },
-        // Turn correction (stale throw_settled detected)
-        onTurnCorrection(cb) { callbacks.onTurnCorrection = cb; },
-        onEndTransition(cb) { callbacks.onEndTransition = cb; },
         // Connection verified
         onConnectionVerified(cb) { callbacks.onConnectionVerified = cb; },
         // Chat
         onChatMessage(cb) { callbacks.onChatMessage = cb; },
+        // v112: Legacy no-op registrations (for any old code paths)
+        onOpponentThrow(cb) { /* no-op in v112 */ },
+        onAuthoritativeState(cb) { /* no-op in v112 */ },
+        onSettleNudge(cb) { /* no-op in v112 */ },
+        onTurnCorrection(cb) { /* no-op in v112 */ },
+        onEndTransition(cb) { /* no-op in v112 */ },
 
         // State
         getMyTeam() { return myTeam; },
