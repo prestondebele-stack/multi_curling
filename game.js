@@ -613,6 +613,17 @@
 
         console.log('[DELIVER] Throwing! currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
 
+        // v107: Cancel any pending auto-replay — player wants to throw, not watch replay
+        if (gameState._autoReplayTimeout) {
+            clearTimeout(gameState._autoReplayTimeout);
+            gameState._autoReplayTimeout = null;
+        }
+        // v107: Cancel any in-progress replay (restores real stone state first)
+        if (gameState.isReplaying && gameState._replayRestore) {
+            console.log('[DELIVER] Cancelling in-progress replay before throw');
+            gameState._replayRestore();
+        }
+
         // Hide replay button when throwing
         hideReplayButton();
 
@@ -978,19 +989,23 @@
         console.log('[AUTH] Applied authoritative state: ' + (auth.stones ? auth.stones.length : 0) + ' stones, currentTeam=' + gameState.currentTeam);
 
         // Re-send corrected positions to server so the snapshot is accurate
-        CurlingNetwork.sendGameStateSync({
-            currentTeam: gameState.currentTeam,
-            redScore: gameState.redScore,
-            yellowScore: gameState.yellowScore,
-            currentEnd: gameState.currentEnd,
-            redThrown: gameState.redThrown,
-            yellowThrown: gameState.yellowThrown,
-            hammer: gameState.hammer,
-            endScores: gameState.endScores,
-            stones: gameState.stones.filter(s => s.active).map(s => ({
-                team: s.team, x: s.x, y: s.y,
-            })),
-        });
+        // v107: Don't overwrite the snapshot while our own throw is in-flight —
+        // the snapshot wouldn't include our thrown stone, corrupting reconnect state.
+        if (!gameState._workerActive && gameState.phase !== 'delivering') {
+            CurlingNetwork.sendGameStateSync({
+                currentTeam: gameState.currentTeam,
+                redScore: gameState.redScore,
+                yellowScore: gameState.yellowScore,
+                currentEnd: gameState.currentEnd,
+                redThrown: gameState.redThrown,
+                yellowThrown: gameState.yellowThrown,
+                hammer: gameState.hammer,
+                endScores: gameState.endScores,
+                stones: gameState.stones.filter(s => s.active).map(s => ({
+                    team: s.team, x: s.x, y: s.y,
+                })),
+            });
+        }
     }
 
     function scheduleNextTurn(delayMs) {
@@ -3524,14 +3539,16 @@ function drawStagedStones() {
                     gameState.lastOpponentShot.sweepTimeline = data.sweepTimeline || null;
                 }
 
-                // Clean up delivery state
-                gameState.isSweeping = false;
-                gameState.deliveredStone = null;
-                document.getElementById('sweep-toggle-btn').style.display = 'none';
-                document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
-                document.getElementById('aim-slider').value = 0;
-                document.getElementById('aim-value').textContent = '0.0°';
-                VIEW.followStone = false;
+                // Clean up delivery state — but NOT if our own throw is in-flight (v107)
+                if (!gameState._workerActive && gameState.phase !== 'delivering') {
+                    gameState.isSweeping = false;
+                    gameState.deliveredStone = null;
+                    document.getElementById('sweep-toggle-btn').style.display = 'none';
+                    document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
+                    document.getElementById('aim-slider').value = 0;
+                    document.getElementById('aim-value').textContent = '0.0°';
+                    VIEW.followStone = false;
+                }
 
                 console.log('[AUTH] Applied: currentTeam=' + gameState.currentTeam + ' myTeam=' + gameState.myTeam + ' isMyTurn=' + isMyTurn() +
                     ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
@@ -3554,7 +3571,9 @@ function drawStagedStones() {
                 // Auto-play replay if tab is visible and we have shot data
                 if (!document.hidden && data.throwParams && gameState.lastOpponentShotStones) {
                     // Brief delay so player sees the final positions, then auto-replay
-                    setTimeout(() => {
+                    // v107: Store timeout ID so deliverStone() can cancel it if player throws first
+                    gameState._autoReplayTimeout = setTimeout(() => {
+                        gameState._autoReplayTimeout = null;
                         if (gameState.phase === 'aiming' && !gameState.isReplaying) {
                             replayLastShot();
                         }
