@@ -115,7 +115,7 @@
         redThrown: 0,
         yellowThrown: 0,
         currentEnd: 1,
-        totalEnds: 6,
+        totalEnds: 4,
         redScore: 0,
         yellowScore: 0,
         endScores: [],
@@ -4264,7 +4264,7 @@ function drawStagedStones() {
 
     document.getElementById('lobby-create-confirm').addEventListener('click', () => {
         const activeBtn = document.querySelector('.ends-btn.active');
-        const totalEnds = activeBtn ? parseInt(activeBtn.dataset.ends) : 6;
+        const totalEnds = activeBtn ? parseInt(activeBtn.dataset.ends) : 4;
         CurlingNetwork.createRoom(totalEnds);
     });
 
