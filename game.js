@@ -3680,7 +3680,13 @@ function drawStagedStones() {
         // If the server rejects our throw (not our turn, not in room, etc.),
         // undo the local delivery and go back to aiming.
         CurlingNetwork.onThrowRejected(({ reason, serverCurrentTeam }) => {
-            console.log('[THROW_REJECTED] reason=' + reason + ' serverCurrentTeam=' + serverCurrentTeam + ' phase=' + gameState.phase);
+            console.log('[THROW_REJECTED] reason=' + reason + ' serverCurrentTeam=' + serverCurrentTeam
+                + ' myTeam=' + gameState.myTeam + ' localCurrentTeam=' + gameState.currentTeam
+                + ' phase=' + gameState.phase + ' workerActive=' + gameState._workerActive
+                + ' redThrown=' + gameState.redThrown + ' yellowThrown=' + gameState.yellowThrown);
+
+            // v108: Show visible diagnostic so we can debug in production
+            DebugPanel.log('[THROW_REJECTED] ' + reason + ' server=' + serverCurrentTeam + ' local=' + gameState.currentTeam);
 
             // v106: Stop the Worker if it's running — this throw was rejected
             stopPhysicsWorker();
@@ -3795,7 +3801,7 @@ function drawStagedStones() {
 
         // v101: Simplified onReconnected — popup handles mid-throw recovery now.
         // Just apply the server snapshot and sync controls.
-        CurlingNetwork.onReconnected(({ yourTeam, currentTeam: serverCurrentTeam, gameSnapshot, opponent, lastThrowParams, lastSweepTimeline }) => {
+        CurlingNetwork.onReconnected(({ yourTeam, currentTeam: serverCurrentTeam, gameSnapshot, opponent, lastThrowParams, lastSweepTimeline, lastPreThrowStones }) => {
             console.log('[GAME] onReconnected: myTeam=' + yourTeam + ' serverCurrentTeam=' + serverCurrentTeam + ' snapshot=' + !!gameSnapshot + ' phase=' + gameState.phase);
             gameState._awaitingConnectionVerify = false;
             gameState.myTeam = yourTeam;
@@ -3875,6 +3881,14 @@ function drawStagedStones() {
             if (lastThrowParams) {
                 gameState.lastOpponentShot = lastThrowParams;
                 gameState.lastOpponentShot.sweepTimeline = lastSweepTimeline || null;
+            }
+
+            // v108: Use lastPreThrowStones from reconnect for replay
+            // (since we no longer replay queued authoritative_state messages)
+            if (lastPreThrowStones) {
+                gameState.lastOpponentShotStones = lastPreThrowStones.map(s => ({
+                    team: s.team, x: s.x, y: s.y, vx: 0, vy: 0, omega: 0, active: true, moving: false,
+                }));
             }
 
             // Handle game-over

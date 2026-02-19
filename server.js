@@ -1208,9 +1208,10 @@ async function handleMessage(ws, message) {
             // Store as latest snapshot too
             if (data.snapshot) room.gameSnapshot = data.snapshot;
 
-            // Store sweep level and timeline for reconnect replay
+            // Store sweep level, timeline, and pre-throw stones for reconnect replay
             room.lastSweepLevel = data.sweepLevel || 'none';
             room.lastSweepTimeline = data.sweepTimeline || null;
+            room.lastPreThrowStones = data.preThrowStones || null; // v108: for replay on reconnect
 
             // Keep server's currentTeam in sync with the thrower's authoritative state.
             const prevTeam = room.state.currentTeam;
@@ -1442,19 +1443,20 @@ async function handleMessage(ws, message) {
                 opponent: opponentInfo,
                 lastThrowParams: room.lastThrowParams || null, // for replay on reconnect
                 lastSweepTimeline: room.lastSweepTimeline || null, // for replay on reconnect
+                lastPreThrowStones: room.lastPreThrowStones || null, // v108: for replay on reconnect
             });
 
-            // Replay any messages that were queued while this player was offline
-            // (e.g., opponent_throw, authoritative_state that they missed)
+            // v108: Clear queued messages — do NOT replay them.
+            // The reconnect snapshot already contains the authoritative state
+            // (currentTeam, stones, scores, throw counts) plus lastThrowParams
+            // for replay. Replaying queued opponent_throw + authoritative_state
+            // messages on top of the snapshot causes timing races: the auth state
+            // replaces stones, reverts throw counts, triggers auto-replay, and
+            // can desync currentTeam — leading to throw_rejected loops.
+            // Pattern: boardgame.io / Colyseus — reconnect = fresh snapshot only.
             if (room.pendingMessages[emptySlot].length > 0) {
-                console.log(`[RECONNECT] Replaying ${room.pendingMessages[emptySlot].length} queued messages to slot ${emptySlot}`);
-                // Small delay so the client processes 'reconnected' first
-                setTimeout(() => {
-                    for (const msg of room.pendingMessages[emptySlot]) {
-                        send(ws, msg);
-                    }
-                    room.pendingMessages[emptySlot] = [];
-                }, 500);
+                console.log(`[RECONNECT] Clearing ${room.pendingMessages[emptySlot].length} queued messages for slot ${emptySlot} (snapshot has all needed state)`);
+                room.pendingMessages[emptySlot] = [];
             }
 
             // Notify opponent — wait briefly for token_login to register our session

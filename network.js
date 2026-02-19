@@ -284,6 +284,7 @@ const CurlingNetwork = (() => {
                     opponent: data.opponent || null,
                     lastThrowParams: data.lastThrowParams || null, // for replay on reconnect
                     lastSweepTimeline: data.lastSweepTimeline || null, // for replay on reconnect
+                    lastPreThrowStones: data.lastPreThrowStones || null, // v108: for replay on reconnect
                 });
                 break;
 
