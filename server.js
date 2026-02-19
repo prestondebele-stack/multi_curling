@@ -1290,8 +1290,34 @@ async function handleMessage(ws, message) {
                 });
             }
 
+            // v112a: Safety timeout — if physics takes >5s, force-complete
+            const physicsTimeout = setTimeout(() => {
+                if (room.state.throwInProgress) {
+                    console.error(`[THROW TIMEOUT] Physics took >5s — forcing completion (room ${code})`);
+                    room.state.throwInProgress = false;
+                    room.state.phase = 'playing';
+                    room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
+                    const fallback = {
+                        type: 'throw_result',
+                        stones: room.state.settledStones, currentTeam: room.state.currentTeam,
+                        redThrown: room.state.redThrown, yellowThrown: room.state.yellowThrown,
+                        redScore: room.state.redScore, yellowScore: room.state.yellowScore,
+                        currentEnd: room.state.currentEnd, totalEnds: room.state.totalEnds,
+                        hammer: room.state.hammer, endScores: room.state.endScores,
+                        throwParams, preThrowStones, hogViolation: false, fgzViolation: false,
+                        throwerTeam: team, endComplete: false, gameOver: false,
+                    };
+                    if (ws.readyState === WebSocket.OPEN) send(ws, fallback);
+                    const to = getOpponent(room, ws);
+                    if (to && to.readyState === WebSocket.OPEN) send(to, fallback);
+                }
+            }, 5000);
+
             // Run physics on the server
             runServerPhysics(room, throwParams, (result) => {
+              try {
+                clearTimeout(physicsTimeout);
+
                 // Physics settled — update authoritative state
                 room.state.settledStones = result.stones;
                 room.state.throwInProgress = false;
@@ -1391,6 +1417,27 @@ async function handleMessage(ws, message) {
                         }
                     }
                 }
+              } catch (err) {
+                // v112a: Error recovery — ensure game doesn't get stuck
+                console.error(`[THROW ERROR] Physics callback error (room ${code}):`, err);
+                clearTimeout(physicsTimeout);
+                room.state.throwInProgress = false;
+                room.state.phase = 'playing';
+                room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
+                const fallback = {
+                    type: 'throw_result',
+                    stones: room.state.settledStones, currentTeam: room.state.currentTeam,
+                    redThrown: room.state.redThrown, yellowThrown: room.state.yellowThrown,
+                    redScore: room.state.redScore, yellowScore: room.state.yellowScore,
+                    currentEnd: room.state.currentEnd, totalEnds: room.state.totalEnds,
+                    hammer: room.state.hammer, endScores: room.state.endScores,
+                    throwParams, preThrowStones, hogViolation: false, fgzViolation: false,
+                    throwerTeam: team, endComplete: false, gameOver: false,
+                };
+                if (ws.readyState === WebSocket.OPEN) send(ws, fallback);
+                const opp2 = getOpponent(room, ws);
+                if (opp2 && opp2.readyState === WebSocket.OPEN) send(opp2, fallback);
+              }
             });
             break;
         }

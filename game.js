@@ -1933,7 +1933,10 @@
         document.getElementById('skip-replay-btn').style.display = 'none';
     }
 
-    function replayLastShot() {
+    // v112a: replayLastShot accepts optional speed and team override
+    // speed: simSpeed value (3.0 = normal 1x, 9.0 = 3x fast)
+    // throwerTeam: which team threw (defaults to opponent)
+    function replayLastShot(speed, throwerTeam) {
         if (!gameState.lastOpponentShot || !gameState.lastOpponentShotStones || gameState.isReplaying) return;
 
         const shot = gameState.lastOpponentShot;
@@ -1952,12 +1955,12 @@
 
         // Deliver the shot on the snapshot board
         gameState.isReplaying = true;
-        gameState.simSpeed = 9.0; // 3x faster than normal for quick replay
+        gameState.simSpeed = speed || 9.0; // default 3x for opponent replays
         hideReplayButton();
         document.getElementById('skip-replay-btn').style.display = '';
 
-        // Determine the team that threw (opponent)
-        const replayTeam = gameState.myTeam === 'red' ? 'yellow' : 'red';
+        // Determine the team that threw
+        const replayTeam = throwerTeam || (gameState.myTeam === 'red' ? 'yellow' : 'red');
         const prevTeam = gameState.currentTeam;
         gameState.currentTeam = replayTeam;
 
@@ -3549,12 +3552,14 @@ function drawStagedStones() {
                 updateUI();
                 setupTurnControls();
 
-                // Auto-play replay if tab is visible and we have shot data
+                // v112a: Auto-play replay — thrower sees 1x speed, opponent sees 3x
+                const wasMyThrow = data.throwerTeam === gameState.myTeam;
+                const replaySpeed = wasMyThrow ? 3.0 : 9.0; // 1x for my throw, 3x for opponent
                 if (!document.hidden && data.throwParams && gameState.lastOpponentShotStones) {
                     gameState._autoReplayTimeout = setTimeout(() => {
                         gameState._autoReplayTimeout = null;
                         if (gameState.phase === 'aiming' && !gameState.isReplaying) {
-                            replayLastShot();
+                            replayLastShot(replaySpeed, data.throwerTeam);
                         }
                     }, 300);
                 } else if (data.throwParams) {
