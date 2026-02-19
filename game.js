@@ -926,6 +926,37 @@
         }
     }
 
+    // v110: "Nobody's turn" safeguard — if we're in aiming phase in online mode
+    // but the throw button is disabled (greyed out) for 15+ seconds, something
+    // got confused. Force a server sync to recover. This handles the case where
+    // both players minimize and return but the game thinks it's neither's turn.
+    let _nobodysTurnTimer = 0;
+    function checkNobodysTurnStuck(dt) {
+        if (!gameState.onlineMode || document.hidden) {
+            _nobodysTurnTimer = 0;
+            return;
+        }
+        if (gameState.phase === 'aiming' && !gameState._opponentThrowPending
+            && !gameState._workerActive && !gameState.isReplaying) {
+            const throwBtn = document.getElementById('throw-btn');
+            if (throwBtn && throwBtn.disabled) {
+                _nobodysTurnTimer += dt;
+                if (_nobodysTurnTimer > 15.0) {
+                    _nobodysTurnTimer = 0;
+                    console.log('[SAFETY] Throw button disabled for 15s in aiming phase — forcing sync');
+                    DebugPanel.log('[SAFETY] Stuck turn detected — syncing with server');
+                    gameState._awaitingConnectionVerify = true;
+                    CurlingNetwork.sendPing();
+                    setupTurnControls();
+                }
+            } else {
+                _nobodysTurnTimer = 0;
+            }
+        } else {
+            _nobodysTurnTimer = 0;
+        }
+    }
+
     // --------------------------------------------------------
     // UI
     // --------------------------------------------------------
@@ -2271,6 +2302,7 @@
         if (gameState.onlineMode) {
             checkEndOfEndStuckPeriodic(frameTime);
             checkOpponentThrowPendingTimeout(frameTime);
+            checkNobodysTurnStuck(frameTime); // v110
         }
 
         // Tick stone animations (settle bounce + fade-out)
@@ -3657,12 +3689,19 @@ function drawStagedStones() {
         // If MY throw physics froze (tab hidden), fast-forward and send throw_settled.
         // v101: Removed _throwSettledPending branch — popup handles deferred throws now.
         CurlingNetwork.onSettleNudge(() => {
-            console.log('[SETTLE_NUDGE] Server nudge received — phase=' + gameState.phase);
+            console.log('[SETTLE_NUDGE] Server nudge received — phase=' + gameState.phase
+                + ' workerActive=' + gameState._workerActive);
             // Receiving a message from the server proves connection is alive
             gameState._awaitingConnectionVerify = false;
 
             if (gameState.phase === 'delivering' || gameState.phase === 'settling') {
                 // I'm the THROWER — my physics froze. Fast-forward now.
+                // v110: Stop the Worker first if it's running (it may be stuck)
+                if (physicsWorker && gameState._workerActive) {
+                    console.log('[SETTLE_NUDGE] Stopping stuck Worker before fast-forward');
+                    physicsWorker.postMessage({ type: 'stop' });
+                    gameState._workerActive = false;
+                }
                 console.log('[SETTLE_NUDGE] Fast-forwarding physics');
                 fastForwardPhysics();
                 checkFGZViolation();

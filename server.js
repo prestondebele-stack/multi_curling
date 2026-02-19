@@ -1148,6 +1148,17 @@ async function handleMessage(ws, message) {
                 const opponentIdx = getPlayerIndex(room, ws) === 0 ? 1 : 0;
                 room.pendingMessages[opponentIdx].push({ type: 'end_transition', ...data });
             }
+
+            // v110: Send push notification to the player who throws first in the new end
+            if (data.currentTeam && process.env.VAPID_PUBLIC_KEY) {
+                const nextIdx = data.currentTeam === 'red' ? 0 : 1;
+                const nextWs = room.players[nextIdx];
+                const nextSession = nextWs ? playerSessions.get(nextWs) : null;
+                if (nextSession?.userId) {
+                    sendPushNotification(nextSession.userId, 'New end starting!',
+                        `End ${data.currentEnd} is starting. You throw first!`);
+                }
+            }
             break;
         }
 
