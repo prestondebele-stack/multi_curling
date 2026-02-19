@@ -138,7 +138,7 @@ function createRoom(hostWs, totalEnds) {
     const code = generateRoomCode();
     // Validate totalEnds to one of the allowed values
     const allowedEnds = [4, 6, 8, 10];
-    const ends = allowedEnds.includes(totalEnds) ? totalEnds : 6;
+    const ends = allowedEnds.includes(totalEnds) ? totalEnds : 4;
     const room = {
         code,
         players: [hostWs, null], // index 0 = red (host), index 1 = yellow
