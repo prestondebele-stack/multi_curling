@@ -1091,8 +1091,20 @@
         const thrown = gameState.currentTeam === TEAMS.RED ? gameState.redThrown : gameState.yellowThrown;
         stonesLabel.textContent = `Stone ${Math.min(thrown + 1, 8)} of 8`;
 
-        document.getElementById('throw-btn').style.display = 'block';
-        document.getElementById('sweep-toggle-btn').style.display = 'none';
+        // v115b: Only show throw/sweep buttons based on current state
+        if (gameState._myThrowInFlight) {
+            // Thrower's stone is in flight — show sweep, hide throw
+            document.getElementById('throw-btn').style.display = 'none';
+            document.getElementById('sweep-toggle-btn').style.display = 'block';
+        } else if (gameState._opponentThrowPending) {
+            // Watching opponent's throw — hide both (opponent sweeps their own)
+            document.getElementById('throw-btn').style.display = 'none';
+            document.getElementById('sweep-toggle-btn').style.display = 'none';
+        } else {
+            // Default: aiming phase — show throw, hide sweep
+            document.getElementById('throw-btn').style.display = 'block';
+            document.getElementById('sweep-toggle-btn').style.display = 'none';
+        }
 
         // Update scores and end number (v115: was missing — only local endEnd() updated these)
         document.getElementById('red-total').textContent = gameState.redScore;
