@@ -689,11 +689,11 @@ function cleanupPlayer(ws) {
     room.players[playerIdx] = null;
     playerRooms.delete(ws);
 
-    // v113: If the disconnected player was the sweeper (non-throwing team) during a throw,
+    // v115b: If the disconnected player was the sweeper (throwing team) during a throw,
     // reset sweep to 'none' so physics continues without sweep influence
     if (room.state.throwInProgress) {
         const disconnectedTeam = playerIdx === 0 ? 'red' : 'yellow';
-        if (disconnectedTeam !== room.state.currentTeam) {
+        if (disconnectedTeam === room.state.currentTeam) {
             room.state.liveSweepLevel = 'none';
         }
     }
@@ -1490,10 +1490,10 @@ async function handleMessage(ws, message) {
             if (!room || !room.state.throwInProgress) break;
 
             const team = getPlayerTeam(room, ws);
-            // v113: Only the NON-throwing team can sweep (sweeper watches opponent's stone)
-            if (team !== room.state.currentTeam) {
+            // v115b: Only the THROWING team can sweep their own stone
+            if (team === room.state.currentTeam) {
                 room.state.liveSweepLevel = data.level; // 'none', 'light', 'hard'
-                // Broadcast to the thrower so they see sweep feedback
+                // Broadcast to opponent so they see sweep feedback
                 const opp = getOpponent(room, ws);
                 if (opp && opp.readyState === WebSocket.OPEN) {
                     send(opp, { type: 'opponent_sweep_change', level: data.level });

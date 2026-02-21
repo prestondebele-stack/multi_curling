@@ -137,6 +137,7 @@
         _nextTurnScheduled: false,      // guard: prevents double nextTurn() calls
         _awaitingConnectionVerify: false, // true while waiting for pong after tab refocus
         _opponentThrowPending: false,   // true while waiting for opponent's throw to settle
+        _myThrowInFlight: false,        // v115b: true while my own throw is in flight (for sweep)
         // Legacy fields kept for local/bot mode
         _preThrowSnapshot: null,
         _throwSweepLevel: 'none',
@@ -712,11 +713,17 @@
             stoneTrail = [{ x: startX, y: startY }];
 
             gameState.phase = 'delivering';
+            gameState._myThrowInFlight = true; // v115b: thrower can sweep their own stone
             VIEW.followStone = true;
             document.getElementById('throw-btn').disabled = true;
             document.getElementById('throw-btn').style.display = 'none';
-            // v113: Thrower doesn't sweep — opponent will sweep
-            document.getElementById('sweep-toggle-btn').style.display = 'none';
+            // v115b: Show sweep button for the thrower
+            const sweepBtn = document.getElementById('sweep-toggle-btn');
+            sweepBtn.style.display = 'block';
+            sweepBtn.textContent = 'HOLD TO SWEEP';
+            sweepBtn.classList.remove('sweeping', 'opponent-sweeping');
+            gameState.isSweeping = false;
+            gameState.sweepLevel = 'none';
             updateUI();
             return; // Server will send sync_positions + throw_result
         }
@@ -812,6 +819,7 @@
         gameState._nextTurnScheduled = false;
         gameState._awaitingConnectionVerify = false;
         gameState._opponentThrowPending = false;
+        gameState._myThrowInFlight = false;
 
         updateUI();
 
@@ -991,16 +999,17 @@
     // Periodic safety: auto-detect stuck end-of-end in the game loop.
     // Only triggers when the game is in a PASSIVE phase (aiming/waitingNextTurn)
     // with all 16 stones thrown — never during active delivery or settling.
-    // v112: Safety: if _opponentThrowPending stays true for too long
+    // v112: Safety: if _opponentThrowPending or _myThrowInFlight stays true for too long
     // (e.g. throw_result was lost), recover after 10 seconds via ping.
-    let _opponentThrowPendingTimer = 0;
+    let _throwPendingTimer = 0;
     function checkOpponentThrowPendingTimeout(dt) {
-        if (gameState._opponentThrowPending && !document.hidden) {
-            _opponentThrowPendingTimer += dt;
-            if (_opponentThrowPendingTimer > 10.0) {
-                _opponentThrowPendingTimer = 0;
-                console.log('[SAFETY] _opponentThrowPending stuck for 10s — forcing recovery');
+        if ((gameState._opponentThrowPending || gameState._myThrowInFlight) && !document.hidden) {
+            _throwPendingTimer += dt;
+            if (_throwPendingTimer > 10.0) {
+                _throwPendingTimer = 0;
+                console.log('[SAFETY] throw pending stuck for 10s — forcing recovery');
                 gameState._opponentThrowPending = false;
+                gameState._myThrowInFlight = false;
                 gameState.phase = 'aiming';
                 updateUI();
                 // Send a ping to get the server's authoritative currentTeam
@@ -1010,7 +1019,7 @@
                 setupTurnControls();
             }
         } else {
-            _opponentThrowPendingTimer = 0;
+            _throwPendingTimer = 0;
         }
     }
 
@@ -2697,6 +2706,7 @@
 
         // Clear any stuck pending state
         gameState._opponentThrowPending = false;
+        gameState._myThrowInFlight = false;
 
         // v112: Send a ping to get authoritative state from server
         if (CurlingNetwork.isConnected()) {
@@ -2749,8 +2759,8 @@
     function setSweepLevel(level) {
         gameState.sweepLevel = level;
 
-        // v113: Online mode — send live sweep change to server (non-thrower sweeping)
-        if (gameState.onlineMode && gameState._opponentThrowPending && !gameState.isReplaying) {
+        // v115b: Online mode — send live sweep change to server (thrower sweeping)
+        if (gameState.onlineMode && gameState._myThrowInFlight && !gameState.isReplaying) {
             CurlingNetwork.sendSweepChange(level);
         }
 
@@ -2801,11 +2811,11 @@
     });
 
     function startSweeping() {
-        // v113: Online mode — only the NON-throwing player can sweep
+        // v115b: Online mode — the THROWING player sweeps their own stone
         if (gameState.onlineMode) {
-            // Must be watching opponent's throw in progress
-            if (!gameState._opponentThrowPending) return;
-            // Need a stone in motion (delivered stone tracked via sync_positions)
+            // Must have my own throw in flight
+            if (!gameState._myThrowInFlight) return;
+            // Need a stone in motion
             if (!gameState.deliveredStone?.moving) return;
             if (gameState.isReplaying) return;
 
@@ -2856,7 +2866,8 @@
         }
         const sweepBtnEl = document.getElementById('sweep-toggle-btn');
         sweepBtnEl.classList.remove('sweeping');
-        sweepBtnEl.textContent = gameState.onlineMode && gameState._opponentThrowPending ? 'HOLD TO SWEEP' : 'SWEEP';
+        // v115b: Show "HOLD TO SWEEP" if my throw is in flight
+        sweepBtnEl.textContent = gameState.onlineMode && gameState._myThrowInFlight ? 'HOLD TO SWEEP' : 'SWEEP';
         // Notify Worker of sweep stop (local/bot only)
         if (physicsWorker && gameState._workerActive && !gameState.onlineMode) {
             physicsWorker.postMessage({ type: 'sweep', sweepLevel: 'none' });
@@ -2941,6 +2952,7 @@
             _nextTurnScheduled: false,
             _awaitingConnectionVerify: false,
             _opponentThrowPending: false,
+            _myThrowInFlight: false,
             _preThrowSnapshot: null,
             _throwSweepLevel: 'none',
             _sweepTimeline: [],
@@ -3011,6 +3023,7 @@
         gameState.roomCode = null;
         gameState.opponentInfo = null;
         gameState._opponentThrowPending = false;
+        gameState._myThrowInFlight = false;
         gameState._preThrowSnapshot = null;
         gameState.isSweeping = false;
         gameState.sweepLevel = 'none';
@@ -3606,13 +3619,10 @@
 
             gameState.phase = 'delivering'; // Enable physics prediction in gameLoop
 
-            // v113: Show sweep button — non-throwing player can sweep live
+            // v115b: Non-thrower does NOT sweep — hide sweep button, just watch
             gameState.sweepLevel = 'none';
             gameState.isSweeping = false;
-            const sweepBtn = document.getElementById('sweep-toggle-btn');
-            sweepBtn.style.display = 'block';
-            sweepBtn.textContent = 'HOLD TO SWEEP';
-            sweepBtn.classList.remove('sweeping', 'opponent-sweeping');
+            document.getElementById('sweep-toggle-btn').style.display = 'none';
 
             updateUI();
 
@@ -3684,6 +3694,7 @@
                 // Connection is alive — reset all throw-in-progress state
                 gameState._awaitingConnectionVerify = false;
                 gameState._opponentThrowPending = false;
+                gameState._myThrowInFlight = false; // v115b
                 physicsAccumulator = 0; // v114: Stop client-side prediction
 
                 // Apply stone positions from server (authoritative)
@@ -3779,6 +3790,7 @@
                 gameState.phase = 'aiming';
                 gameState.deliveredStone = null;
                 gameState._opponentThrowPending = false;
+                gameState._myThrowInFlight = false;
                 if (data.currentTeam) gameState.currentTeam = data.currentTeam;
                 updateUI();
                 setupTurnControls();
@@ -3929,6 +3941,7 @@
             gameState.opponentConnected = true;
             gameState.opponentInfo = opponent;
             gameState._opponentThrowPending = false;
+            gameState._myThrowInFlight = false;
             hideDisconnectOverlay();
             dismissWelcome();
             showOnlineTeamBadge();
@@ -3991,15 +4004,18 @@
                     document.getElementById('throw-btn').disabled = true;
                     document.getElementById('throw-btn').style.display = 'none';
 
-                    // v113: If I'm the non-throwing player, show sweep controls
-                    if (serverState.currentTeam !== yourTeam) {
-                        gameState._opponentThrowPending = true;
+                    // v115b: If I'm the throwing player, show sweep controls
+                    if (serverState.currentTeam === yourTeam) {
+                        gameState._myThrowInFlight = true;
                         gameState.sweepLevel = 'none';
                         gameState.isSweeping = false;
                         const sweepBtn = document.getElementById('sweep-toggle-btn');
                         sweepBtn.style.display = 'block';
                         sweepBtn.textContent = 'HOLD TO SWEEP';
                         sweepBtn.classList.remove('sweeping', 'opponent-sweeping');
+                    } else {
+                        // Non-thrower: just mark opponent throw pending, no sweep button
+                        gameState._opponentThrowPending = true;
                     }
 
                     updateUI();
