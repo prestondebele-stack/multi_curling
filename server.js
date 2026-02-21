@@ -494,7 +494,7 @@ function runServerPhysics(room, throwParams, callback) {
 
             const finalStones = stones
                 .filter(s => s.active)
-                .map(s => ({ team: s.team, x: s.x, y: s.y }));
+                .map(s => ({ team: s.team, x: s.x, y: s.y, active: true }));
 
             delete room.state.liveSweepLevel;
             delete room.state.liveStones;
