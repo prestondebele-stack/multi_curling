@@ -2161,6 +2161,35 @@
                     gameState.isSweeping = false;
                 }
 
+            // v114: Online mode — client-side prediction for smooth 60fps rendering.
+            // Server's sync_positions corrects drift, throw_result is the final authority.
+            } else if (gameState.onlineMode) {
+                physicsAccumulator += frameTime * 1.0; // 1x speed to match server's real-time rate
+
+                while (physicsAccumulator >= PHYSICS_DT) {
+                    const sweep = gameState.isSweeping ? gameState.sweepLevel : 'none';
+                    const anyMoving = CurlingPhysics.simulate(gameState.stones, PHYSICS_DT, sweep);
+
+                    // Record trail for the delivered stone
+                    if (gameState.deliveredStone && gameState.deliveredStone.moving) {
+                        const ds = gameState.deliveredStone;
+                        const last = stoneTrail[stoneTrail.length - 1];
+                        if (last) {
+                            const dx = ds.x - last.x;
+                            const dy = ds.y - last.y;
+                            if (dx * dx + dy * dy > 0.04) {
+                                stoneTrail.push({ x: ds.x, y: ds.y });
+                            }
+                        }
+                    }
+
+                    physicsAccumulator -= PHYSICS_DT;
+                    if (!anyMoving) {
+                        physicsAccumulator = 0;
+                        break; // Don't scheduleNextTurn — server handles via throw_result
+                    }
+                }
+
                 // Main-thread physics path — bot mode, replay, or Worker failed to load
             } else {
                 // v88: Only local physics (my throw, bot mode, or replay). No remote delivery branch.
@@ -3490,6 +3519,28 @@
             document.getElementById('throw-btn').disabled = true;
             document.getElementById('throw-btn').style.display = 'none';
 
+            // v114: Create local prediction stone for smooth rendering
+            if (data.throwParams) {
+                const tp = data.throwParams;
+                const stoneSpeed = CurlingPhysics.weightToSpeed(tp.weight);
+                const aimRad = tp.aim * Math.PI / 180;
+                const startX = 0;
+                const startY = P.hack + 1.0;
+                const vx = stoneSpeed * Math.sin(aimRad);
+                const vy = stoneSpeed * Math.cos(aimRad);
+                const omega = CurlingPhysics.rotationsToAngularVelocity(tp.spinAmount, stoneSpeed) * tp.spinDir;
+
+                const throwingTeam = gameState.currentTeam;
+                const stone = createStone(throwingTeam, startX, startY, vx, vy, omega);
+                stone.moving = true;
+                gameState.stones.push(stone);
+                gameState.deliveredStone = stone;
+                stoneTrail = [{ x: startX, y: startY }];
+                VIEW.followStone = true;
+            }
+
+            gameState.phase = 'delivering'; // Enable physics prediction in gameLoop
+
             // v113: Show sweep button — non-throwing player can sweep live
             gameState.sweepLevel = 'none';
             gameState.isSweeping = false;
@@ -3507,13 +3558,13 @@
             }
         });
 
-        // v112: sync_positions — periodically update from server physics
+        // v114: sync_positions — server correction for client-side prediction.
+        // Corrects position drift every ~100ms. Does NOT change phase (keeps 'delivering'
+        // so client physics prediction continues running in gameLoop).
         CurlingNetwork.onSyncPositions((data) => {
-            // Only sync if we are basically waiting for a throw to finish
             if (gameState.phase !== 'delivering' && gameState.phase !== 'settling' && !gameState._opponentThrowPending) return;
 
             if (data.stones && data.stones.length > 0) {
-                // If local stones array doesn't match in length, we just extend or map exactly.
                 for (let i = 0; i < data.stones.length; i++) {
                     const serverStone = data.stones[i];
                     let localStone = gameState.stones[i];
@@ -3523,6 +3574,7 @@
                         gameState.stones[i] = localStone;
                     }
 
+                    // Correct position from server (overrides local prediction drift)
                     localStone.x = serverStone.x;
                     localStone.y = serverStone.y;
                     localStone.angle = serverStone.angle;
@@ -3530,15 +3582,11 @@
                     localStone.moving = serverStone.moving;
                 }
 
-                // Track delivered stone view if moving
+                // Ensure delivered stone and camera are tracking
                 const delivered = gameState.stones[gameState.stones.length - 1];
                 if (delivered && delivered.moving) {
                     gameState.deliveredStone = delivered;
                     VIEW.followStone = true;
-                    if (gameState.phase !== 'settling') {
-                        gameState.phase = 'settling';
-                        updateUI();
-                    }
                 }
             }
         });
