@@ -825,6 +825,63 @@
         }, 500);
     }
 
+    // v115: End summary popup — shown when an end completes in online (or local/bot) mode
+    function showEndSummary(endNumber, scoringTeam, points, hammerTeam) {
+        const overlay = document.getElementById('end-summary-overlay');
+        const title = document.getElementById('end-summary-title');
+        const result = document.getElementById('end-summary-result');
+        const hammer = document.getElementById('end-summary-hammer');
+
+        title.textContent = 'End ' + endNumber + ' Complete';
+
+        if (!scoringTeam || points === 0) {
+            // Blank end — no score
+            result.textContent = 'Blank End \u2014 No Score';
+            result.style.color = '#888';
+        } else {
+            // A team scored
+            let teamName;
+            if (gameState.onlineMode) {
+                teamName = (scoringTeam === gameState.myTeam) ? 'You scored' : 'Opponent scored';
+            } else if (gameState.botMode) {
+                teamName = (scoringTeam === TEAMS.RED) ? 'You scored' : 'Bot scored';
+            } else {
+                teamName = scoringTeam.charAt(0).toUpperCase() + scoringTeam.slice(1) + ' scored';
+            }
+            result.textContent = teamName + ' ' + points + (points === 1 ? ' point' : ' points') + '!';
+            result.style.color = (scoringTeam === TEAMS.RED) ? '#e53935' : '#fdd835';
+        }
+
+        // Hammer info for next end
+        let hammerName;
+        if (gameState.onlineMode) {
+            hammerName = (hammerTeam === gameState.myTeam) ? 'You have' : 'Opponent has';
+        } else if (gameState.botMode) {
+            hammerName = (hammerTeam === TEAMS.RED) ? 'You have' : 'Bot has';
+        } else {
+            hammerName = hammerTeam.charAt(0).toUpperCase() + hammerTeam.slice(1) + ' has';
+        }
+        hammer.textContent = hammerName + ' the hammer \u{1F528}';
+
+        overlay.style.display = 'flex';
+    }
+
+    // Continue button dismisses the end summary and sets up next turn
+    document.getElementById('end-summary-continue').addEventListener('click', () => {
+        document.getElementById('end-summary-overlay').style.display = 'none';
+        gameState.phase = 'aiming';
+        updateUI();
+        setupTurnControls();
+
+        // For local/bot mode, trigger bot turn if applicable
+        if (!gameState.onlineMode && isBotTurn()) {
+            triggerBotTurn();
+        } else if (!gameState.onlineMode) {
+            enableControlsForHuman();
+            document.getElementById('throw-btn').disabled = false;
+        }
+    });
+
     function showGameOver() {
         // Game is over — clear the active session so page refresh doesn't try to rejoin
         CurlingNetwork.clearActiveSession();
@@ -1027,6 +1084,11 @@
 
         document.getElementById('throw-btn').style.display = 'block';
         document.getElementById('sweep-toggle-btn').style.display = 'none';
+
+        // Update scores and end number (v115: was missing — only local endEnd() updated these)
+        document.getElementById('red-total').textContent = gameState.redScore;
+        document.getElementById('yellow-total').textContent = gameState.yellowScore;
+        document.getElementById('current-end').textContent = gameState.currentEnd;
 
         // Update total ends display
         document.getElementById('total-ends-display').textContent = '/ ' + gameState.totalEnds;
@@ -3681,6 +3743,12 @@
 
                 // End complete (but game continues)?
                 if (data.endComplete) {
+                    // v115: Get the scoring result from the last endScores entry
+                    const lastEndResult = (data.endScores && data.endScores.length > 0)
+                        ? data.endScores[data.endScores.length - 1]
+                        : { team: null, points: 0 };
+                    const completedEnd = data.currentEnd - 1; // server already incremented
+
                     // Reset local state for new end
                     gameState.stones = [];
                     gameState.deliveredStone = null;
@@ -3688,12 +3756,8 @@
                     gameState.lastOpponentShotStones = null;
                     updateUI();
 
-                    // Brief delay to show the score, then set up for new end
-                    setTimeout(() => {
-                        gameState.phase = 'aiming';
-                        updateUI();
-                        setupTurnControls();
-                    }, 1500);
+                    // Show end summary popup — Continue button sets up next turn
+                    showEndSummary(completedEnd, lastEndResult.team, lastEndResult.points, data.hammer);
                     return;
                 }
 
