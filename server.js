@@ -448,7 +448,7 @@ function runServerPhysics(room, throwParams, callback) {
     const sweep = sweepLevel || 'none';
     let stepCount = 0;
     let syncAccumulator = 0;
-    const STEPS_PER_TICK = 4; // 240Hz physics * 16.6ms tick = 4 steps per tick
+    const STEPS_PER_TICK = 12; // v114: 3x speed (12 steps per 16ms = 720Hz effective)
 
     function checkOOB() {
         for (const stone of stones) {

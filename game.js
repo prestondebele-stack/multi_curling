@@ -2164,7 +2164,7 @@
             // v114: Online mode — client-side prediction for smooth 60fps rendering.
             // Server's sync_positions corrects drift, throw_result is the final authority.
             } else if (gameState.onlineMode) {
-                physicsAccumulator += frameTime * 1.0; // 1x speed to match server's real-time rate
+                physicsAccumulator += frameTime * gameState.simSpeed; // 3x speed to match server rate
 
                 while (physicsAccumulator >= PHYSICS_DT) {
                     const sweep = gameState.isSweeping ? gameState.sweepLevel : 'none';
@@ -3616,11 +3616,12 @@
                     ' currentTeam=' + data.currentTeam + ' endComplete=' + data.endComplete +
                     ' gameOver=' + data.gameOver + ' hog=' + data.hogViolation + ' fgz=' + data.fgzViolation);
 
-                // Connection is alive
+                // Connection is alive — reset all throw-in-progress state
                 gameState._awaitingConnectionVerify = false;
                 gameState._opponentThrowPending = false;
+                physicsAccumulator = 0; // v114: Stop client-side prediction
 
-                // Apply stone positions from server
+                // Apply stone positions from server (authoritative)
                 if (data.stones && data.stones.length >= 0) {
                     gameState.stones = data.stones.map(s => {
                         const stone = createStone(s.team, s.x, s.y, 0, 0, 0);
@@ -3700,16 +3701,9 @@
                 updateUI();
                 setupTurnControls();
 
-                // v113d: Auto-replay only for opponent's throws (thrower already saw theirs in real-time)
-                const wasMyThrow = data.throwerTeam === gameState.myTeam;
-                if (!wasMyThrow && !document.hidden && data.throwParams && gameState.lastOpponentShotStones) {
-                    gameState._autoReplayTimeout = setTimeout(() => {
-                        gameState._autoReplayTimeout = null;
-                        if (gameState.phase === 'aiming' && !gameState.isReplaying) {
-                            replayLastShot(9.0, data.throwerTeam); // 9x speed for opponent replay
-                        }
-                    }, 300);
-                } else if (data.throwParams) {
+                // v114: Both players see throws live now — no auto-replay needed.
+                // Just show the replay button if they want to watch it again.
+                if (data.throwParams && gameState.lastOpponentShotStones) {
                     showReplayButton();
                 }
             } catch (err) {
