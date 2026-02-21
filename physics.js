@@ -116,19 +116,18 @@ const CurlingPhysics = (() => {
 
     // Sweeping parameters
     const SWEEPING = {
-        // Sweeping reduces friction by creating a water film
-        // Light sweep: ~15% friction reduction
-        // Hard sweep: ~30% friction reduction
+        // v115d: Tuned for ~6ft extra (light) and ~8ft extra (hard) at draw weight
+        // Previous values (0.85/0.70) added ~28ft/~68ft — way too much
         frictionReduction: {
             none: 1.0,
-            light: 0.85,
-            hard: 0.70
+            light: 0.96,
+            hard: 0.95
         },
-        // Sweeping also reduces curl
+        // Sweeping also reduces curl (straightens the stone)
         curlReduction: {
             none: 1.0,
-            light: 0.75,
-            hard: 0.50
+            light: 0.95,
+            hard: 0.90
         }
     };
 
