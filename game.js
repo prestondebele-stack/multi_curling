@@ -137,8 +137,6 @@
         _nextTurnScheduled: false,      // guard: prevents double nextTurn() calls
         _awaitingConnectionVerify: false, // true while waiting for pong after tab refocus
         _opponentThrowPending: false,   // true while waiting for opponent's throw to settle
-        // v112: Simplified state for server-authoritative online mode
-        onlineSweepLevel: 'none',       // pre-selected sweep level for online throws
         // Legacy fields kept for local/bot mode
         _preThrowSnapshot: null,
         _throwSweepLevel: 'none',
@@ -472,11 +470,6 @@
             throwBtn.classList.remove('connecting');
             TabNotify.notify();
 
-            // v112: Show sweep pre-selection for online aiming phase
-            if (gameState.onlineMode) {
-                document.getElementById('sweep-control').style.display = '';
-            }
-
             if (gameState.lastOpponentShot) {
                 showReplayButton();
             }
@@ -682,17 +675,15 @@
         // Hide replay button when throwing
         hideReplayButton();
 
-        // v112: Online mode — send throw to server, server runs physics
+        // v113: Online mode — send throw to server, server runs physics
+        // Sweep is controlled by the NON-throwing player, not the thrower
         if (gameState.onlineMode) {
-            // Get sweep level from aiming-phase sweep selector
-            const sweepLevel = gameState.onlineSweepLevel || 'none';
-
             const sent = CurlingNetwork.sendThrow({
                 aim: aimDeg,
                 weight: weightPct,
                 spinDir,
                 spinAmount,
-                sweepLevel,
+                sweepLevel: 'none',
             });
             if (!sent) {
                 console.error('[DELIVER] sendThrow failed — WS dead');
@@ -704,10 +695,12 @@
                 return;
             }
 
-            // Show "throwing" state while server simulates (~200ms)
+            // Show "throwing" state while server simulates
+            // v113: Thrower doesn't sweep — hide sweep controls, opponent will sweep
             gameState.phase = 'delivering';
             document.getElementById('throw-btn').disabled = true;
             document.getElementById('throw-btn').style.display = 'none';
+            document.getElementById('sweep-toggle-btn').style.display = 'none';
             updateUI();
             return; // Server will send throw_result when physics settles
         }
@@ -2646,9 +2639,9 @@
     function setSweepLevel(level) {
         gameState.sweepLevel = level;
 
-        // v112: Online aiming phase — store pre-selected sweep level
-        if (gameState.onlineMode && gameState.phase === 'aiming') {
-            gameState.onlineSweepLevel = level;
+        // v113: Online mode — send live sweep change to server (non-thrower sweeping)
+        if (gameState.onlineMode && gameState._opponentThrowPending && !gameState.isReplaying) {
+            CurlingNetwork.sendSweepChange(level);
         }
 
         // Track sweep level during local/bot throw for replay
@@ -2698,8 +2691,25 @@
     });
 
     function startSweeping() {
+        // v113: Online mode — only the NON-throwing player can sweep
+        if (gameState.onlineMode) {
+            // Must be watching opponent's throw in progress
+            if (!gameState._opponentThrowPending) return;
+            // Need a stone in motion (delivered stone tracked via sync_positions)
+            if (!gameState.deliveredStone?.moving) return;
+            if (gameState.isReplaying) return;
+
+            gameState.isSweeping = true;
+            gameState.sweepLevel = 'hard';
+            CurlingNetwork.sendSweepChange('hard');
+
+            document.getElementById('sweep-toggle-btn').classList.add('sweeping');
+            document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
+            return;
+        }
+
+        // Local/bot mode — original behavior
         if (gameState.phase === 'delivering' && gameState.deliveredStone?.moving) {
-            if (gameState._opponentThrowPending) return; // can't sweep opponent's stone
             gameState.isSweeping = true;
             if (gameState.sweepLevel === 'none') {
                 gameState.sweepLevel = 'hard';
@@ -2713,13 +2723,8 @@
             document.getElementById('sweep-toggle-btn').classList.add('sweeping');
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
 
-            // v112b: Notify server of live sweep
-            if (gameState.onlineMode && !gameState.isReplaying) {
-                CurlingNetwork.sendSweepChange(gameState.sweepLevel);
-            }
-
             // Notify Worker of sweep change (local/bot only)
-            if (physicsWorker && gameState._workerActive && !gameState.onlineMode) {
+            if (physicsWorker && gameState._workerActive) {
                 physicsWorker.postMessage({ type: 'sweep', sweepLevel: gameState.sweepLevel });
             }
         }
@@ -2728,8 +2733,9 @@
     function stopSweeping() {
         const wasSweeping = gameState.isSweeping;
         gameState.isSweeping = false;
+        gameState.sweepLevel = 'none';
 
-        // v112b: Notify server of sweep stop
+        // v113: Notify server of sweep stop (non-thrower releasing sweep)
         if (gameState.onlineMode && wasSweeping && !gameState.isReplaying) {
             CurlingNetwork.sendSweepChange('none');
         }
@@ -2738,8 +2744,9 @@
         if (wasSweeping && gameState.phase === 'delivering' && !gameState.isReplaying && !gameState.onlineMode) {
             gameState._sweepTimeline.push({ step: gameState._simStepCount, sweeping: false, level: 'none' });
         }
-        document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
-        document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
+        const sweepBtnEl = document.getElementById('sweep-toggle-btn');
+        sweepBtnEl.classList.remove('sweeping');
+        sweepBtnEl.textContent = gameState.onlineMode && gameState._opponentThrowPending ? 'HOLD TO SWEEP' : 'SWEEP';
         // Notify Worker of sweep stop (local/bot only)
         if (physicsWorker && gameState._workerActive && !gameState.onlineMode) {
             physicsWorker.postMessage({ type: 'sweep', sweepLevel: 'none' });
@@ -2824,7 +2831,6 @@
             _nextTurnScheduled: false,
             _awaitingConnectionVerify: false,
             _opponentThrowPending: false,
-            onlineSweepLevel: 'none',       // v112: pre-selected sweep for online
             _preThrowSnapshot: null,
             _throwSweepLevel: 'none',
             _sweepTimeline: [],
@@ -2896,10 +2902,14 @@
         gameState.opponentInfo = null;
         gameState._opponentThrowPending = false;
         gameState._preThrowSnapshot = null;
+        gameState.isSweeping = false;
+        gameState.sweepLevel = 'none';
         document.getElementById('online-team-badge').style.display = 'none';
         document.getElementById('chat-btn').style.display = 'none';
         document.getElementById('chat-popup').style.display = 'none';
         document.getElementById('sync-btn').style.display = 'none';
+        document.getElementById('sweep-toggle-btn').style.display = 'none';
+        document.getElementById('sweep-toggle-btn').classList.remove('sweeping', 'opponent-sweeping');
         hideReplayButton();
         // Clear player names from scoreboard
         document.getElementById('red-player-name').textContent = '';
@@ -3460,10 +3470,18 @@
 
             gameState._opponentThrowPending = true;
 
-            // Disable controls — opponent is throwing
-            disableControlsForBot();
+            // Disable throw controls — opponent is throwing
             document.getElementById('throw-btn').disabled = true;
             document.getElementById('throw-btn').style.display = 'none';
+
+            // v113: Show sweep button — non-throwing player can sweep live
+            gameState.sweepLevel = 'none';
+            gameState.isSweeping = false;
+            const sweepBtn = document.getElementById('sweep-toggle-btn');
+            sweepBtn.style.display = 'block';
+            sweepBtn.textContent = 'HOLD TO SWEEP';
+            sweepBtn.classList.remove('sweeping', 'opponent-sweeping');
+
             updateUI();
 
             // Animate sliders for visual feedback (non-blocking)
@@ -3573,8 +3591,9 @@
                 // Clean up delivery state
                 gameState.deliveredStone = null;
                 gameState.isSweeping = false;
+                gameState.sweepLevel = 'none';
                 document.getElementById('sweep-toggle-btn').style.display = 'none';
-                document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
+                document.getElementById('sweep-toggle-btn').classList.remove('sweeping', 'opponent-sweeping');
                 VIEW.followStone = false;
 
                 // Hide welcome-back popup if showing
@@ -3845,8 +3864,20 @@
                 if (serverState.throwInProgress) {
                     console.log('[GAME] onReconnected — throw in progress on server, waiting for result');
                     gameState.phase = 'delivering';
-                    disableControlsForBot();
                     document.getElementById('throw-btn').disabled = true;
+                    document.getElementById('throw-btn').style.display = 'none';
+
+                    // v113: If I'm the non-throwing player, show sweep controls
+                    if (serverState.currentTeam !== yourTeam) {
+                        gameState._opponentThrowPending = true;
+                        gameState.sweepLevel = 'none';
+                        gameState.isSweeping = false;
+                        const sweepBtn = document.getElementById('sweep-toggle-btn');
+                        sweepBtn.style.display = 'block';
+                        sweepBtn.textContent = 'HOLD TO SWEEP';
+                        sweepBtn.classList.remove('sweeping', 'opponent-sweeping');
+                    }
+
                     updateUI();
                     return; // throw_result will arrive when server physics completes
                 }
@@ -4111,11 +4142,12 @@
                 document.getElementById('user-info-bar').style.display = 'none';
                 document.getElementById('lobby-menu').style.display = 'none';
             }
-        }).catch(() => {
+        }).catch((err) => {
+            console.error('[CONNECT] Failed to connect to server:', err);
             document.getElementById('mode-online').classList.remove('active');
             document.getElementById('mode-1p').classList.add('active');
             document.getElementById('difficulty-selector').classList.remove('hidden');
-            alert('Could not connect to server. Make sure the server is running.');
+            alert('Could not connect to server. Please check your internet connection and try again.');
         });
     });
 
