@@ -2968,12 +2968,14 @@
     const SERVER_URL = (() => {
         const loc = window.location;
         const wsProtocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-        // When served by our Node server, use the same host:port
-        // When opened as file://, fall back to localhost:3000
-        if (loc.protocol === 'file:') {
+
+        // Localhost development
+        if (loc.hostname === 'localhost' || loc.hostname === '127.0.0.1' || loc.protocol === 'file:') {
             return 'ws://localhost:3000';
         }
-        return `${wsProtocol}//${loc.host}`;
+
+        // Production: explicit Railway URL (backend), since frontend is on Netlify
+        return 'wss://multicurling-production.up.railway.app';
     })();
 
     function updateRankBadge(rank) {
