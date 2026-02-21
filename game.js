@@ -2057,12 +2057,12 @@
         // v112: For online mode, server runs physics — just wait for throw_result.
         // For local/bot mode: safety net if throw is still in-flight.
         if (gameState.onlineMode) {
-            // Server is authoritative — if delivering, throw_result will arrive.
-            // If stuck, ping will trigger onConnectionVerified to sync.
-            if (gameState.phase !== 'delivering') {
-                gameState._awaitingConnectionVerify = true;
-                CurlingNetwork.sendPing();
-            }
+            // v114c: ALWAYS ping — don't skip based on phase.
+            // If throw_result hasn't arrived yet, the pong response will include
+            // throwInProgress=true and onConnectionVerified will handle it.
+            // If throw_result already arrived, pong gives us correct currentTeam.
+            gameState._awaitingConnectionVerify = true;
+            CurlingNetwork.sendPing();
         } else if ((gameState.phase === 'delivering' || gameState.phase === 'settling')
             && !gameState.isReplaying) {
             console.log('[WELCOME_BACK] Local throw still in-flight — fast-forwarding');
@@ -2082,8 +2082,11 @@
             nextTurn();
         }
 
-        // Clear ALL recovery flags — popup is the single gate now
-        gameState._awaitingConnectionVerify = false;
+        // v114c: Don't clear here for online mode — let onConnectionVerified
+        // clear it after pong arrives with correct state.
+        if (!gameState.onlineMode) {
+            gameState._awaitingConnectionVerify = false;
+        }
 
         // Re-sync UI
         updateUI();
