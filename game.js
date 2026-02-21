@@ -1958,13 +1958,13 @@
         gameState.currentTeam = replayTeam;
 
         // Create the stone with correct physics
-        const speed = CurlingPhysics.weightToSpeed(shot.weight);
+        const stoneSpeed = CurlingPhysics.weightToSpeed(shot.weight);
         const aimRad = shot.aim * Math.PI / 180;
         const startX = 0;
         const startY = P.hack + 1.0;
-        const vx = speed * Math.sin(aimRad);
-        const vy = speed * Math.cos(aimRad);
-        const omega = CurlingPhysics.rotationsToAngularVelocity(shot.spinAmount, speed) * shot.spinDir;
+        const vx = stoneSpeed * Math.sin(aimRad);
+        const vy = stoneSpeed * Math.cos(aimRad);
+        const omega = CurlingPhysics.rotationsToAngularVelocity(shot.spinAmount, stoneSpeed) * shot.spinDir;
 
         const stone = createStone(replayTeam, startX, startY, vx, vy, omega);
         stone.moving = true;
