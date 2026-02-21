@@ -2977,15 +2977,15 @@
     // --------------------------------------------------------
     const SERVER_URL = (() => {
         const loc = window.location;
-        const wsProtocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
 
         // Localhost development
         if (loc.hostname === 'localhost' || loc.hostname === '127.0.0.1' || loc.protocol === 'file:') {
             return 'ws://localhost:3000';
         }
 
-        // Production: explicit Railway URL (backend), since frontend is on Netlify
-        return 'wss://multicurling-production.up.railway.app';
+        // Production: derive WebSocket URL from current page host (Railway serves everything)
+        const wsProtocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+        return wsProtocol + '//' + loc.host;
     })();
 
     function updateRankBadge(rank) {
