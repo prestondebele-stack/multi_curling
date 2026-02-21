@@ -297,9 +297,9 @@
             while (logEl.children.length > MAX_LINES) logEl.removeChild(logEl.firstChild);
         }
 
-        console.log = function() { origLog.apply(console, arguments); addLine('log', arguments); };
-        console.warn = function() { origWarn.apply(console, arguments); addLine('warn', arguments); };
-        console.error = function() { origError.apply(console, arguments); addLine('error', arguments); };
+        console.log = function () { origLog.apply(console, arguments); addLine('log', arguments); };
+        console.warn = function () { origWarn.apply(console, arguments); addLine('warn', arguments); };
+        console.error = function () { origError.apply(console, arguments); addLine('error', arguments); };
 
         // v111: Direct log entry (bypasses console to avoid double-capture)
         function log(msg) {
@@ -372,7 +372,7 @@
     // --------------------------------------------------------
     // GLOBAL ERROR HANDLERS (v111 — feed into DebugPanel buffer)
     // --------------------------------------------------------
-    window.onerror = function(message, source, lineno, colno, error) {
+    window.onerror = function (message, source, lineno, colno, error) {
         const file = (source || '').split('/').pop();
         console.error('[UNCAUGHT] ' + message + ' @ ' + file + ':' + lineno + ':' + colno);
         if (error && error.stack) {
@@ -381,7 +381,7 @@
         return false;
     };
 
-    window.addEventListener('unhandledrejection', function(event) {
+    window.addEventListener('unhandledrejection', function (event) {
         const reason = event.reason;
         const msg = reason instanceof Error
             ? reason.message + (reason.stack ? ' | ' + reason.stack.substring(0, 400) : '')
@@ -1271,9 +1271,9 @@
 
         // Ring centers: top row (blue, black, red), bottom row (yellow, green)
         const rings = [
-            { x: centerX - dx,     y: topY, color: '#0081C8' },  // blue
-            { x: centerX,          y: topY, color: '#222222' },  // black (slightly lighter for ice visibility)
-            { x: centerX + dx,     y: topY, color: '#EE334E' },  // red
+            { x: centerX - dx, y: topY, color: '#0081C8' },  // blue
+            { x: centerX, y: topY, color: '#222222' },  // black (slightly lighter for ice visibility)
+            { x: centerX + dx, y: topY, color: '#EE334E' },  // red
             { x: centerX - dx / 2, y: botY, color: '#FCB131' },  // yellow
             { x: centerX + dx / 2, y: botY, color: '#00A651' },  // green
         ];
@@ -2152,7 +2152,7 @@
                     gameState.isSweeping = false;
                 }
 
-            // Main-thread physics path — bot mode, replay, or Worker failed to load
+                // Main-thread physics path — bot mode, replay, or Worker failed to load
             } else {
                 // v88: Only local physics (my throw, bot mode, or replay). No remote delivery branch.
                 // Bot sweep decision (runs each frame for bot's stones)
@@ -2419,85 +2419,85 @@
         ctx.restore();
     }
 
-// Stone staging display — shows each team's 8 stones on the ice
-// Red stones: top-left corner, Yellow stones: top-right corner
-// 2 columns × 4 rows, ordered by throw number
-// Stones appear on the grid only when out of play; in-play spots are empty
-function drawStagedStones() {
-    const halfW = CurlingPhysics.SHEET.width / 2;
-    const stoneSize = STONE_R * 0.7; // slightly smaller than real stones
+    // Stone staging display — shows each team's 8 stones on the ice
+    // Red stones: top-left corner, Yellow stones: top-right corner
+    // 2 columns × 4 rows, ordered by throw number
+    // Stones appear on the grid only when out of play; in-play spots are empty
+    function drawStagedStones() {
+        const halfW = CurlingPhysics.SHEET.width / 2;
+        const stoneSize = STONE_R * 0.7; // slightly smaller than real stones
 
-    // World-space layout: place stones just past the far back line
-    const startY = P.farBackLine + STONE_R * 2.5;
-    const gapX = STONE_R * 2.8;
-    const gapY = STONE_R * 2.8;
+        // World-space layout: place stones just past the far back line
+        const startY = P.farBackLine + STONE_R * 2.5;
+        const gapX = STONE_R * 2.8;
+        const gapY = STONE_R * 2.8;
 
-    // Gather thrown stones per team in throw order
-    const redStones = gameState.stones.filter(s => s.team === TEAMS.RED);
-    const yellowStones = gameState.stones.filter(s => s.team === TEAMS.YELLOW);
+        // Gather thrown stones per team in throw order
+        const redStones = gameState.stones.filter(s => s.team === TEAMS.RED);
+        const yellowStones = gameState.stones.filter(s => s.team === TEAMS.YELLOW);
 
-    for (let teamIdx = 0; teamIdx < 2; teamIdx++) {
-        const isRed = teamIdx === 0;
-        const teamStones = isRed ? redStones : yellowStones;
-        const thrown = isRed ? gameState.redThrown : gameState.yellowThrown;
-        const baseColor = isRed ? '#e53935' : '#fdd835';
-        const darkColor = isRed ? '#b71c1c' : '#f9a825';
-        const lightColor = isRed ? '#ef5350' : '#ffee58';
+        for (let teamIdx = 0; teamIdx < 2; teamIdx++) {
+            const isRed = teamIdx === 0;
+            const teamStones = isRed ? redStones : yellowStones;
+            const thrown = isRed ? gameState.redThrown : gameState.yellowThrown;
+            const baseColor = isRed ? '#e53935' : '#fdd835';
+            const darkColor = isRed ? '#b71c1c' : '#f9a825';
+            const lightColor = isRed ? '#ef5350' : '#ffee58';
 
-        // World x anchor: red on left side, yellow on right side
-        const anchorX = isRed
-            ? -halfW + STONE_R * 2.5
-            : halfW - STONE_R * 2.5 - gapX;
+            // World x anchor: red on left side, yellow on right side
+            const anchorX = isRed
+                ? -halfW + STONE_R * 2.5
+                : halfW - STONE_R * 2.5 - gapX;
 
-        for (let i = 0; i < 8; i++) {
-            const col = i % 2;
-            const row = Math.floor(i / 2);
-            const worldX = anchorX + col * gapX;
-            const worldY = startY + row * gapY;
+            for (let i = 0; i < 8; i++) {
+                const col = i % 2;
+                const row = Math.floor(i / 2);
+                const worldX = anchorX + col * gapX;
+                const worldY = startY + row * gapY;
 
-            // Convert to canvas coordinates
-            const cx = toCanvasX(worldX);
-            const cy = toCanvasY(worldY);
-            const r = toCanvasLen(stoneSize);
+                // Convert to canvas coordinates
+                const cx = toCanvasX(worldX);
+                const cy = toCanvasY(worldY);
+                const r = toCanvasLen(stoneSize);
 
-            const hasBeenThrown = i < thrown;
-            const stoneObj = teamStones[i];
-            const isActive = stoneObj ? stoneObj.active : false;
+                const hasBeenThrown = i < thrown;
+                const stoneObj = teamStones[i];
+                const isActive = stoneObj ? stoneObj.active : false;
 
-            // Skip if not thrown yet or still in play — leave spot empty
-            if (!hasBeenThrown || isActive) continue;
+                // Skip if not thrown yet or still in play — leave spot empty
+                if (!hasBeenThrown || isActive) continue;
 
-            // Stone is out of play — draw it on the grid
-            ctx.save();
-            ctx.globalAlpha = 0.85;
+                // Stone is out of play — draw it on the grid
+                ctx.save();
+                ctx.globalAlpha = 0.85;
 
-            // Shadow
-            ctx.fillStyle = 'rgba(0,0,0,0.15)';
-            ctx.beginPath();
-            ctx.arc(cx + 1, cy + 1, r, 0, Math.PI * 2);
-            ctx.fill();
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.15)';
+                ctx.beginPath();
+                ctx.arc(cx + 1, cy + 1, r, 0, Math.PI * 2);
+                ctx.fill();
 
-            // Body gradient
-            const grad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.2, r * 0.1, cx, cy, r);
-            grad.addColorStop(0, lightColor);
-            grad.addColorStop(0.6, baseColor);
-            grad.addColorStop(1, darkColor);
-            ctx.fillStyle = grad;
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
-            ctx.fill();
+                // Body gradient
+                const grad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.2, r * 0.1, cx, cy, r);
+                grad.addColorStop(0, lightColor);
+                grad.addColorStop(0.6, baseColor);
+                grad.addColorStop(1, darkColor);
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.fill();
 
-            // Edge highlight
-            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-            ctx.lineWidth = Math.max(0.5, r * 0.06);
-            ctx.beginPath();
-            ctx.arc(cx, cy, r - 0.5, 0, Math.PI * 2);
-            ctx.stroke();
+                // Edge highlight
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.lineWidth = Math.max(0.5, r * 0.06);
+                ctx.beginPath();
+                ctx.arc(cx, cy, r - 0.5, 0, Math.PI * 2);
+                ctx.stroke();
 
-            ctx.restore();
+                ctx.restore();
+            }
         }
     }
-}
     function drawVignette() {
         const cx = canvas.width / 2;
         const cy = canvas.height / 2;
@@ -2698,9 +2698,6 @@ function drawStagedStones() {
     });
 
     function startSweeping() {
-        // v112: Online mode uses pre-selected sweep (no real-time sweeping)
-        if (gameState.onlineMode && !gameState.isReplaying) return;
-
         if (gameState.phase === 'delivering' && gameState.deliveredStone?.moving) {
             if (gameState._opponentThrowPending) return; // can't sweep opponent's stone
             gameState.isSweeping = true;
@@ -2715,8 +2712,14 @@ function drawStagedStones() {
             }
             document.getElementById('sweep-toggle-btn').classList.add('sweeping');
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEPING!';
+
+            // v112b: Notify server of live sweep
+            if (gameState.onlineMode && !gameState.isReplaying) {
+                CurlingNetwork.sendSweepChange(gameState.sweepLevel);
+            }
+
             // Notify Worker of sweep change (local/bot only)
-            if (physicsWorker && gameState._workerActive) {
+            if (physicsWorker && gameState._workerActive && !gameState.onlineMode) {
                 physicsWorker.postMessage({ type: 'sweep', sweepLevel: gameState.sweepLevel });
             }
         }
@@ -2725,6 +2728,12 @@ function drawStagedStones() {
     function stopSweeping() {
         const wasSweeping = gameState.isSweeping;
         gameState.isSweeping = false;
+
+        // v112b: Notify server of sweep stop
+        if (gameState.onlineMode && wasSweeping && !gameState.isReplaying) {
+            CurlingNetwork.sendSweepChange('none');
+        }
+
         // Record sweep OFF event in timeline (local/bot only)
         if (wasSweeping && gameState.phase === 'delivering' && !gameState.isReplaying && !gameState.onlineMode) {
             gameState._sweepTimeline.push({ step: gameState._simStepCount, sweeping: false, level: 'none' });
@@ -3458,7 +3467,61 @@ function drawStagedStones() {
             // Animate sliders for visual feedback (non-blocking)
             if (!document.hidden && data.throwParams) {
                 const tp = data.throwParams;
-                animateOpponentSliders(tp.aim, tp.weight, tp.spinDir, tp.spinAmount, () => {});
+                animateOpponentSliders(tp.aim, tp.weight, tp.spinDir, tp.spinAmount, () => { });
+            }
+        });
+
+        // v112: sync_positions — periodically update from server physics
+        CurlingNetwork.onSyncPositions((data) => {
+            // Only sync if we are basically waiting for a throw to finish
+            if (gameState.phase !== 'delivering' && gameState.phase !== 'settling' && !gameState._opponentThrowPending) return;
+
+            if (data.stones && data.stones.length > 0) {
+                // If local stones array doesn't match in length, we just extend or map exactly.
+                for (let i = 0; i < data.stones.length; i++) {
+                    const serverStone = data.stones[i];
+                    let localStone = gameState.stones[i];
+
+                    if (!localStone) {
+                        localStone = createStone(serverStone.team, serverStone.x, serverStone.y, 0, 0, 0);
+                        gameState.stones[i] = localStone;
+                    }
+
+                    localStone.x = serverStone.x;
+                    localStone.y = serverStone.y;
+                    localStone.angle = serverStone.angle;
+                    localStone.active = serverStone.active;
+                    localStone.moving = serverStone.moving;
+                }
+
+                // Track delivered stone view if moving
+                const delivered = gameState.stones[gameState.stones.length - 1];
+                if (delivered && delivered.moving) {
+                    gameState.deliveredStone = delivered;
+                    VIEW.followStone = true;
+                    if (gameState.phase !== 'settling') {
+                        gameState.phase = 'settling';
+                        updateUI();
+                    }
+                }
+            }
+        });
+
+        // v112: opponent_sweep_change — show visual sweep feedback for opponent
+        CurlingNetwork.onOpponentSweepChange((data) => {
+            const btn = document.getElementById('sweep-toggle-btn');
+            if (data.level === 'hard') {
+                btn.classList.add('sweeping', 'opponent-sweeping');
+                btn.innerText = "OPPONENT SWEEPING";
+                btn.style.display = 'block';
+            } else if (data.level === 'light') {
+                btn.classList.add('sweeping', 'opponent-sweeping');
+                btn.innerText = "OPPONENT (LIGHT)";
+                btn.style.display = 'block';
+            } else {
+                btn.classList.remove('sweeping', 'opponent-sweeping');
+                btn.innerText = "SWEEP";
+                btn.style.display = 'none';
             }
         });
 
@@ -4602,7 +4665,7 @@ function drawStagedStones() {
                 const el = document.getElementById('beta-version');
                 if (el) el.textContent = ver;
             }
-        }).catch(() => {});
+        }).catch(() => { });
     }
 
     resizeCanvas();

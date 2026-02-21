@@ -410,7 +410,7 @@ function serverCalculateEndScore(settledStones) {
     return { team: closestTeam, points };
 }
 
-// Run server-side physics for a throw. Non-blocking via setImmediate batching.
+// Run server-side physics for a throw. Real-time tick loop for live sweeping.
 function runServerPhysics(room, throwParams, callback) {
     const { aim, weight, spinDir, spinAmount, sweepLevel } = throwParams;
     const throwingTeam = room.state.currentTeam;
@@ -442,9 +442,13 @@ function runServerPhysics(room, throwParams, callback) {
         _isDelivered: true, _hogViolation: false
     });
 
+    room.state.liveSweepLevel = sweepLevel || 'none';
+    room.state.liveStones = stones;
+
     const sweep = sweepLevel || 'none';
     let stepCount = 0;
-    const STEPS_PER_BATCH = 500; // yield to event loop every 500 steps
+    let syncAccumulator = 0;
+    const STEPS_PER_TICK = 4; // 240Hz physics * 16.6ms tick = 4 steps per tick
 
     function checkOOB() {
         for (const stone of stones) {
@@ -468,41 +472,68 @@ function runServerPhysics(room, throwParams, callback) {
         }
     }
 
-    function batch() {
-        for (let i = 0; i < STEPS_PER_BATCH; i++) {
-            const anyMoving = CurlingPhysics.simulate(stones, PHYSICS_DT, sweep);
+    const physicsInterval = setInterval(() => {
+        let anyMoving = false;
+        const currentSweep = room.state.liveSweepLevel || 'none';
+
+        for (let i = 0; i < STEPS_PER_TICK; i++) {
+            anyMoving = CurlingPhysics.simulate(stones, PHYSICS_DT, currentSweep);
             stepCount++;
             checkOOB();
+            if (!anyMoving) break;
+        }
 
-            if (!anyMoving) {
-                // Physics settled — gather results
-                const delivered = stones[deliveredIdx];
-                const hogViolation = delivered ? delivered._hogViolation : false;
+        if (!anyMoving) {
+            // Physics settled
+            clearInterval(physicsInterval);
+            delete room.state.physicsInterval;
 
-                // Check FGZ violation
-                const fgzViolation = serverCheckFGZViolation(room, stones, deliveredIdx);
+            const delivered = stones[deliveredIdx];
+            const hogViolation = delivered ? delivered._hogViolation : false;
+            const fgzViolation = serverCheckFGZViolation(room, stones, deliveredIdx);
 
-                // Build final settled stones (only active ones)
-                const finalStones = stones
-                    .filter(s => s.active)
-                    .map(s => ({ team: s.team, x: s.x, y: s.y }));
+            const finalStones = stones
+                .filter(s => s.active)
+                .map(s => ({ team: s.team, x: s.x, y: s.y }));
 
-                callback({
-                    stones: finalStones,
-                    hogViolation,
-                    fgzViolation,
-                    deliveredStoneActive: delivered ? delivered.active : false,
-                    stepCount
-                });
-                return;
+            delete room.state.liveSweepLevel;
+            delete room.state.liveStones;
+
+            callback({
+                stones: finalStones,
+                hogViolation,
+                fgzViolation,
+                deliveredStoneActive: delivered ? delivered.active : false,
+                stepCount
+            });
+            return;
+        }
+
+        // Broadcast sync occasionally (e.g. every 6 ticks = 100ms)
+        syncAccumulator++;
+        if (syncAccumulator >= 6) {
+            syncAccumulator = 0;
+            const syncData = {
+                type: 'sync_positions',
+                stones: stones.map(s => ({
+                    team: s.team,
+                    active: s.active,
+                    x: s.x,
+                    y: s.y,
+                    angle: s.angle,
+                    moving: s.moving
+                }))
+            };
+            if (room.players[0] && room.players[0].readyState === WebSocket.OPEN) {
+                send(room.players[0], syncData);
+            }
+            if (room.players[1] && room.players[1].readyState === WebSocket.OPEN) {
+                send(room.players[1], syncData);
             }
         }
-        // Yield to event loop and continue
-        setImmediate(batch);
-    }
+    }, 16);
 
-    // Start the physics simulation
-    setImmediate(batch);
+    room.state.physicsInterval = physicsInterval;
 }
 
 // Process end-of-end: score, check for game over, advance
@@ -1290,10 +1321,11 @@ async function handleMessage(ws, message) {
                 });
             }
 
-            // v112a: Safety timeout — if physics takes >5s, force-complete
+            // v112a: Safety timeout — if physics takes >30s, force-complete
             const physicsTimeout = setTimeout(() => {
                 if (room.state.throwInProgress) {
-                    console.error(`[THROW TIMEOUT] Physics took >5s — forcing completion (room ${code})`);
+                    console.error(`[THROW TIMEOUT] Physics took >30s — forcing completion (room ${code})`);
+                    if (room.state.physicsInterval) clearInterval(room.state.physicsInterval);
                     room.state.throwInProgress = false;
                     room.state.phase = 'playing';
                     room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
@@ -1311,141 +1343,158 @@ async function handleMessage(ws, message) {
                     const to = getOpponent(room, ws);
                     if (to && to.readyState === WebSocket.OPEN) send(to, fallback);
                 }
-            }, 5000);
+            }, 30000);
 
             // Run physics on the server
             runServerPhysics(room, throwParams, (result) => {
-              try {
-                clearTimeout(physicsTimeout);
+                try {
+                    clearTimeout(physicsTimeout);
 
-                // Physics settled — update authoritative state
-                room.state.settledStones = result.stones;
-                room.state.throwInProgress = false;
-                room.state.phase = 'playing';
+                    // Physics settled — update authoritative state
+                    room.state.settledStones = result.stones;
+                    room.state.throwInProgress = false;
+                    room.state.phase = 'playing';
 
-                // Check if end is complete (all 16 stones thrown)
-                let endResult = null;
-                let gameOver = false;
-                if (room.state.redThrown >= 8 && room.state.yellowThrown >= 8) {
-                    endResult = serverEndOfEnd(room);
-                    gameOver = endResult.gameOver;
-                } else {
-                    // Toggle turn (ONCE — server is sole authority)
+                    // Check if end is complete (all 16 stones thrown)
+                    let endResult = null;
+                    let gameOver = false;
+                    if (room.state.redThrown >= 8 && room.state.yellowThrown >= 8) {
+                        endResult = serverEndOfEnd(room);
+                        gameOver = endResult.gameOver;
+                    } else {
+                        // Toggle turn (ONCE — server is sole authority)
+                        room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
+                        // If current team has thrown all 8, switch again
+                        if (room.state.currentTeam === 'red' && room.state.redThrown >= 8) {
+                            room.state.currentTeam = 'yellow';
+                        } else if (room.state.currentTeam === 'yellow' && room.state.yellowThrown >= 8) {
+                            room.state.currentTeam = 'red';
+                        }
+                    }
+
+                    console.log(`[THROW SETTLED] ${team} -> stones=${result.stones.length} hog=${result.hogViolation} fgz=${result.fgzViolation} steps=${result.stepCount} currentTeam=${room.state.currentTeam} (room ${code})`);
+
+                    // Build the throw_result message for BOTH players
+                    const throwResultMsg = {
+                        type: 'throw_result',
+                        stones: room.state.settledStones,
+                        currentTeam: room.state.currentTeam,
+                        redThrown: room.state.redThrown,
+                        yellowThrown: room.state.yellowThrown,
+                        redScore: room.state.redScore,
+                        yellowScore: room.state.yellowScore,
+                        currentEnd: room.state.currentEnd,
+                        totalEnds: room.state.totalEnds,
+                        hammer: room.state.hammer,
+                        endScores: room.state.endScores,
+                        throwParams,
+                        preThrowStones,
+                        hogViolation: result.hogViolation,
+                        fgzViolation: result.fgzViolation,
+                        throwerTeam: team,
+                        endComplete: !!endResult,
+                        gameOver,
+                    };
+
+                    // Send to both players
+                    if (ws.readyState === WebSocket.OPEN) {
+                        send(ws, throwResultMsg);
+                    }
+                    const opp = getOpponent(room, ws);
+                    if (opp && opp.readyState === WebSocket.OPEN) {
+                        send(opp, throwResultMsg);
+                    }
+
+                    // Record game result if game over
+                    if (gameOver) {
+                        room.state.phase = 'finished';
+                        // Auto-record game result on server
+                        if (!room.resultRecorded) {
+                            room.resultRecorded = true;
+                            const redSession = (room.players[0] ? playerSessions.get(room.players[0]) : null) || room.sessions[0];
+                            const yellowSession = (room.players[1] ? playerSessions.get(room.players[1]) : null) || room.sessions[1];
+                            if (redSession && yellowSession) {
+                                auth.recordGameResult(
+                                    redSession.userId,
+                                    yellowSession.userId,
+                                    room.state.redScore,
+                                    room.state.yellowScore,
+                                    room.state.currentEnd
+                                ).then(ratingResult => {
+                                    if (ratingResult) {
+                                        if (room.players[0] && room.players[0].readyState === WebSocket.OPEN) {
+                                            send(room.players[0], { type: 'rating_update', rank: ratingResult.red.rank });
+                                        }
+                                        if (room.players[1] && room.players[1].readyState === WebSocket.OPEN) {
+                                            send(room.players[1], { type: 'rating_update', rank: ratingResult.yellow.rank });
+                                        }
+                                    }
+                                }).catch(err => console.error('Game result recording error:', err));
+                            }
+                        }
+                    }
+
+                    // Send push notification to next player (if not game over)
+                    if (!gameOver && process.env.VAPID_PUBLIC_KEY) {
+                        const nextIdx = room.state.currentTeam === 'red' ? 0 : 1;
+                        const nextWs = room.players[nextIdx];
+                        const nextSession = nextWs ? playerSessions.get(nextWs) : null;
+                        if (nextSession?.userId) {
+                            if (endResult) {
+                                sendPushNotification(nextSession.userId, 'New end starting!',
+                                    `End ${room.state.currentEnd} is starting. You throw first!`);
+                            } else {
+                                sendPushNotification(nextSession.userId, "It's your turn!",
+                                    'Your opponent has thrown. Time to deliver your stone!');
+                            }
+                        }
+                    }
+                } catch (err) {
+                    // v112a: Error recovery — ensure game doesn't get stuck
+                    console.error(`[THROW ERROR] Physics callback error (room ${code}):`, err);
+                    clearTimeout(physicsTimeout);
+                    room.state.throwInProgress = false;
+                    room.state.phase = 'playing';
                     room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
-                    // If current team has thrown all 8, switch again
-                    if (room.state.currentTeam === 'red' && room.state.redThrown >= 8) {
-                        room.state.currentTeam = 'yellow';
-                    } else if (room.state.currentTeam === 'yellow' && room.state.yellowThrown >= 8) {
-                        room.state.currentTeam = 'red';
-                    }
+                    const fallback = {
+                        type: 'throw_result',
+                        stones: room.state.settledStones, currentTeam: room.state.currentTeam,
+                        redThrown: room.state.redThrown, yellowThrown: room.state.yellowThrown,
+                        redScore: room.state.redScore, yellowScore: room.state.yellowScore,
+                        currentEnd: room.state.currentEnd, totalEnds: room.state.totalEnds,
+                        hammer: room.state.hammer, endScores: room.state.endScores,
+                        throwParams, preThrowStones, hogViolation: false, fgzViolation: false,
+                        throwerTeam: team, endComplete: false, gameOver: false,
+                    };
+                    if (ws.readyState === WebSocket.OPEN) send(ws, fallback);
+                    const opp2 = getOpponent(room, ws);
+                    if (opp2 && opp2.readyState === WebSocket.OPEN) send(opp2, fallback);
                 }
-
-                console.log(`[THROW SETTLED] ${team} -> stones=${result.stones.length} hog=${result.hogViolation} fgz=${result.fgzViolation} steps=${result.stepCount} currentTeam=${room.state.currentTeam} (room ${code})`);
-
-                // Build the throw_result message for BOTH players
-                const throwResultMsg = {
-                    type: 'throw_result',
-                    stones: room.state.settledStones,
-                    currentTeam: room.state.currentTeam,
-                    redThrown: room.state.redThrown,
-                    yellowThrown: room.state.yellowThrown,
-                    redScore: room.state.redScore,
-                    yellowScore: room.state.yellowScore,
-                    currentEnd: room.state.currentEnd,
-                    totalEnds: room.state.totalEnds,
-                    hammer: room.state.hammer,
-                    endScores: room.state.endScores,
-                    throwParams,
-                    preThrowStones,
-                    hogViolation: result.hogViolation,
-                    fgzViolation: result.fgzViolation,
-                    throwerTeam: team,
-                    endComplete: !!endResult,
-                    gameOver,
-                };
-
-                // Send to both players
-                if (ws.readyState === WebSocket.OPEN) {
-                    send(ws, throwResultMsg);
-                }
-                const opp = getOpponent(room, ws);
-                if (opp && opp.readyState === WebSocket.OPEN) {
-                    send(opp, throwResultMsg);
-                }
-
-                // Record game result if game over
-                if (gameOver) {
-                    room.state.phase = 'finished';
-                    // Auto-record game result on server
-                    if (!room.resultRecorded) {
-                        room.resultRecorded = true;
-                        const redSession = (room.players[0] ? playerSessions.get(room.players[0]) : null) || room.sessions[0];
-                        const yellowSession = (room.players[1] ? playerSessions.get(room.players[1]) : null) || room.sessions[1];
-                        if (redSession && yellowSession) {
-                            auth.recordGameResult(
-                                redSession.userId,
-                                yellowSession.userId,
-                                room.state.redScore,
-                                room.state.yellowScore,
-                                room.state.currentEnd
-                            ).then(ratingResult => {
-                                if (ratingResult) {
-                                    if (room.players[0] && room.players[0].readyState === WebSocket.OPEN) {
-                                        send(room.players[0], { type: 'rating_update', rank: ratingResult.red.rank });
-                                    }
-                                    if (room.players[1] && room.players[1].readyState === WebSocket.OPEN) {
-                                        send(room.players[1], { type: 'rating_update', rank: ratingResult.yellow.rank });
-                                    }
-                                }
-                            }).catch(err => console.error('Game result recording error:', err));
-                        }
-                    }
-                }
-
-                // Send push notification to next player (if not game over)
-                if (!gameOver && process.env.VAPID_PUBLIC_KEY) {
-                    const nextIdx = room.state.currentTeam === 'red' ? 0 : 1;
-                    const nextWs = room.players[nextIdx];
-                    const nextSession = nextWs ? playerSessions.get(nextWs) : null;
-                    if (nextSession?.userId) {
-                        if (endResult) {
-                            sendPushNotification(nextSession.userId, 'New end starting!',
-                                `End ${room.state.currentEnd} is starting. You throw first!`);
-                        } else {
-                            sendPushNotification(nextSession.userId, "It's your turn!",
-                                'Your opponent has thrown. Time to deliver your stone!');
-                        }
-                    }
-                }
-              } catch (err) {
-                // v112a: Error recovery — ensure game doesn't get stuck
-                console.error(`[THROW ERROR] Physics callback error (room ${code}):`, err);
-                clearTimeout(physicsTimeout);
-                room.state.throwInProgress = false;
-                room.state.phase = 'playing';
-                room.state.currentTeam = room.state.currentTeam === 'red' ? 'yellow' : 'red';
-                const fallback = {
-                    type: 'throw_result',
-                    stones: room.state.settledStones, currentTeam: room.state.currentTeam,
-                    redThrown: room.state.redThrown, yellowThrown: room.state.yellowThrown,
-                    redScore: room.state.redScore, yellowScore: room.state.yellowScore,
-                    currentEnd: room.state.currentEnd, totalEnds: room.state.totalEnds,
-                    hammer: room.state.hammer, endScores: room.state.endScores,
-                    throwParams, preThrowStones, hogViolation: false, fgzViolation: false,
-                    throwerTeam: team, endComplete: false, gameOver: false,
-                };
-                if (ws.readyState === WebSocket.OPEN) send(ws, fallback);
-                const opp2 = getOpponent(room, ws);
-                if (opp2 && opp2.readyState === WebSocket.OPEN) send(opp2, fallback);
-              }
             });
             break;
         }
 
-        // v112: sweep_change, sweep_start, sweep_stop, stone_positions — REMOVED
-        // Sweep is now pre-selected before throw and sent with throw params.
-        // These cases are kept as no-ops for backward compatibility.
-        case 'sweep_change':
+        case 'sweep_change': {
+            const code = playerRooms.get(ws);
+            if (!code) break;
+            const room = rooms.get(code);
+            if (!room || !room.state.throwInProgress) break;
+
+            const team = getPlayerTeam(room, ws);
+            // Only the throwing team can change sweep!
+            if (team === room.state.currentTeam) {
+                room.state.liveSweepLevel = data.level; // 'none', 'light', 'hard'
+                // Re-broadcast to both players so opponent knows you're sweeping
+                const opp = getOpponent(room, ws);
+                if (opp && opp.readyState === WebSocket.OPEN) {
+                    send(opp, { type: 'opponent_sweep_change', level: data.level });
+                }
+            }
+            break;
+        }
+
+        // Keep stone_positions and old sweep actions as no-ops to avoid errors 
+        // if old clients send them
         case 'sweep_start':
         case 'sweep_stop':
         case 'stone_positions': {
@@ -1587,8 +1636,8 @@ async function handleMessage(ws, message) {
             if (hintSlot !== -1 && room.players[hintSlot] === null) {
                 emptySlot = hintSlot;
             } else if (hintSlot !== -1 && room.players[hintSlot] &&
-                     room.players[hintSlot] !== ws &&
-                     room.players[hintSlot].readyState !== WebSocket.OPEN) {
+                room.players[hintSlot] !== ws &&
+                room.players[hintSlot].readyState !== WebSocket.OPEN) {
                 playerRooms.delete(room.players[hintSlot]);
                 playerSessions.delete(room.players[hintSlot]);
                 room.players[hintSlot] = null;
@@ -1730,7 +1779,7 @@ const heartbeatInterval = setInterval(() => {
         }
         ws.isAlive = false;
         // Send WebSocket-level ping (client auto-replies with pong)
-        try { ws.ping(); } catch (_) {}
+        try { ws.ping(); } catch (_) { }
     });
 }, 120000); // 120 seconds per cycle — 3 missed = 6 min tolerance
 

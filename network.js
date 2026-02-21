@@ -49,7 +49,9 @@ const CurlingNetwork = (() => {
         onThrowRejected: null,
         // v112: New server-authoritative callbacks
         onThrowResult: null,          // Server finished physics — both players get final state
+        onSyncPositions: null,        // Server tick real-time stone positions
         onOpponentThrowStarted: null, // Opponent threw — server is simulating
+        onOpponentSweepChange: null,  // Opponent changed sweep level actively
         onOpponentDisconnected: null,
         onOpponentReconnected: null,
         onOpponentLeft: null,
@@ -214,6 +216,14 @@ const CurlingNetwork = (() => {
             case 'opponent_throw_started':
                 console.log('[NET] opponent_throw_started');
                 if (callbacks.onOpponentThrowStarted) callbacks.onOpponentThrowStarted(data);
+                break;
+
+            case 'sync_positions':
+                if (callbacks.onSyncPositions) callbacks.onSyncPositions(data);
+                break;
+
+            case 'opponent_sweep_change':
+                if (callbacks.onOpponentSweepChange) callbacks.onOpponentSweepChange(data);
                 break;
 
             // Legacy no-ops (kept for backward compatibility)
@@ -673,6 +683,7 @@ const CurlingNetwork = (() => {
                 sweepLevel: params.sweepLevel || 'none',
             });
         },
+        sendSweepChange(level) { send({ type: 'sweep_change', level }); },
         sendRematch() { send({ type: 'rematch' }); },
         sendLeave() { send({ type: 'leave' }); },
         sendChatMessage(text) { send({ type: 'chat_message', text }); },
@@ -715,7 +726,9 @@ const CurlingNetwork = (() => {
         onThrowRejected(cb) { callbacks.onThrowRejected = cb; },
         // v112: New server-authoritative callbacks
         onThrowResult(cb) { callbacks.onThrowResult = cb; },
+        onSyncPositions(cb) { callbacks.onSyncPositions = cb; },
         onOpponentThrowStarted(cb) { callbacks.onOpponentThrowStarted = cb; },
+        onOpponentSweepChange(cb) { callbacks.onOpponentSweepChange = cb; },
         onOpponentDisconnected(cb) { callbacks.onOpponentDisconnected = cb; },
         onOpponentReconnected(cb) { callbacks.onOpponentReconnected = cb; },
         onOpponentLeft(cb) { callbacks.onOpponentLeft = cb; },
