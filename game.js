@@ -695,14 +695,30 @@
                 return;
             }
 
-            // Show "throwing" state while server simulates
-            // v113: Thrower doesn't sweep — hide sweep controls, opponent will sweep
+            // v113d: Create local stone immediately for visual feedback.
+            // sync_positions from server will update position every ~100ms.
+            const stoneSpeed = CurlingPhysics.weightToSpeed(weightPct);
+            const aimRad = aimDeg * Math.PI / 180;
+            const startX = 0;
+            const startY = P.hack + 1.0;
+            const vx = stoneSpeed * Math.sin(aimRad);
+            const vy = stoneSpeed * Math.cos(aimRad);
+            const omega = CurlingPhysics.rotationsToAngularVelocity(spinAmount, stoneSpeed) * spinDir;
+
+            const stone = createStone(gameState.currentTeam, startX, startY, vx, vy, omega);
+            stone.moving = true;
+            gameState.stones.push(stone);
+            gameState.deliveredStone = stone;
+            stoneTrail = [{ x: startX, y: startY }];
+
             gameState.phase = 'delivering';
+            VIEW.followStone = true;
             document.getElementById('throw-btn').disabled = true;
             document.getElementById('throw-btn').style.display = 'none';
+            // v113: Thrower doesn't sweep — opponent will sweep
             document.getElementById('sweep-toggle-btn').style.display = 'none';
             updateUI();
-            return; // Server will send throw_result when physics settles
+            return; // Server will send sync_positions + throw_result
         }
 
         // Local/bot mode — run physics on client (unchanged)
@@ -3636,14 +3652,13 @@
                 updateUI();
                 setupTurnControls();
 
-                // v112a: Auto-play replay — thrower sees 1x speed, opponent sees 3x
+                // v113d: Auto-replay only for opponent's throws (thrower already saw theirs in real-time)
                 const wasMyThrow = data.throwerTeam === gameState.myTeam;
-                const replaySpeed = wasMyThrow ? 3.0 : 9.0; // 1x for my throw, 3x for opponent
-                if (!document.hidden && data.throwParams && gameState.lastOpponentShotStones) {
+                if (!wasMyThrow && !document.hidden && data.throwParams && gameState.lastOpponentShotStones) {
                     gameState._autoReplayTimeout = setTimeout(() => {
                         gameState._autoReplayTimeout = null;
                         if (gameState.phase === 'aiming' && !gameState.isReplaying) {
-                            replayLastShot(replaySpeed, data.throwerTeam);
+                            replayLastShot(9.0, data.throwerTeam); // 9x speed for opponent replay
                         }
                     }, 300);
                 } else if (data.throwParams) {
