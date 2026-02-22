@@ -1837,6 +1837,112 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* ================================================
+   LEADERBOARD (v117)
+   ================================================ */
+#lobby-leaderboard-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
+#lobby-leaderboard-panel h3 {
+    color: #fff;
+    margin: 0 0 12px 0;
+    font-size: 18px;
+}
+
+#leaderboard-list {
+    width: 100%;
+    max-height: 55vh;
+    overflow-y: auto;
+    margin-bottom: 12px;
+    scrollbar-width: thin;
+    scrollbar-color: #5c9ae6 rgba(255,255,255,0.05);
+}
+
+.leaderboard-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.leaderboard-row:nth-child(odd) {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.leaderboard-row:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.leaderboard-self {
+    background: rgba(92, 154, 230, 0.15) !important;
+    border: 1px solid rgba(92, 154, 230, 0.4);
+}
+
+.lb-pos {
+    width: 28px;
+    text-align: center;
+    font-weight: bold;
+    color: #888;
+    flex-shrink: 0;
+}
+
+.podium-1 .lb-pos { color: #ffd54f; font-size: 15px; }
+.podium-2 .lb-pos { color: #e0e0e0; font-size: 14px; }
+.podium-3 .lb-pos { color: #cd7f32; font-size: 14px; }
+
+.lb-name {
+    flex: 1;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.leaderboard-row .rank-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    flex-shrink: 0;
+}
+
+.lb-rating {
+    color: #aaa;
+    font-size: 11px;
+    width: 36px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.lb-record {
+    color: #666;
+    font-size: 11px;
+    width: 48px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.lb-action-btn {
+    font-size: 11px !important;
+    padding: 4px 10px !important;
+    min-width: 58px;
+    flex-shrink: 0;
+}
+
+.lb-you {
+    color: #5c9ae6;
+    font-size: 11px;
+    font-weight: bold;
+    min-width: 58px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+/* ================================================
    ONLINE TEAM BADGE
    ================================================ */
 #online-team-badge {

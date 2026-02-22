@@ -3147,15 +3147,16 @@
     }
 
     function showLobbyPanel(panelId) {
-        const panels = ['lobby-menu', 'lobby-ends-panel', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel'];
+        const panels = ['lobby-menu', 'lobby-ends-panel', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel', 'lobby-leaderboard-panel'];
         panels.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = id === panelId ? 'flex' : 'none';
         });
-        // Always sync friends button visibility when showing lobby menu
+        // Always sync friends/leaderboard button visibility when showing lobby menu
         if (panelId === 'lobby-menu') {
             const isLoggedIn = !!localStorage.getItem('curling_token');
             document.getElementById('lobby-friends').style.display = isLoggedIn ? 'block' : 'none';
+            document.getElementById('lobby-leaderboard').style.display = isLoggedIn ? 'block' : 'none';
         }
     }
 
@@ -3348,6 +3349,54 @@
             btn.addEventListener('click', () => {
                 const userId = parseInt(btn.dataset.userId);
                 CurlingNetwork.removeFriend(userId);
+            });
+        });
+    }
+
+    // v117: Leaderboard rendering
+    function renderLeaderboard(players) {
+        const container = document.getElementById('leaderboard-list');
+
+        if (players.length === 0) {
+            container.innerHTML = '<p style="color:#888;font-size:13px;text-align:center;">No players found</p>';
+            return;
+        }
+
+        container.innerHTML = players.map((p, i) => {
+            const pos = i + 1;
+            const posClass = pos <= 3 ? `podium-${pos}` : '';
+            const selfClass = p.isSelf ? 'leaderboard-self' : '';
+            const country = p.country ? countryToFlag(p.country) + ' ' : '';
+            const record = `${p.wins}W ${p.losses}L`;
+            const badgeTextColor = (p.rank.color === '#ffd54f' || p.rank.color === '#e0e0e0') ? '#333' : '#fff';
+
+            let actionHtml = '';
+            if (p.isSelf) {
+                actionHtml = '<span class="lb-you">You</span>';
+            } else if (p.friendStatus === 'accepted') {
+                actionHtml = '<button class="lobby-btn lb-action-btn" disabled>Friends</button>';
+            } else if (p.friendStatus === 'pending') {
+                actionHtml = '<button class="lobby-btn lb-action-btn" disabled>Pending</button>';
+            } else {
+                actionHtml = `<button class="lobby-btn lb-action-btn lb-add-btn" data-username="${p.username}">Add</button>`;
+            }
+
+            return `<div class="leaderboard-row ${selfClass} ${posClass}">
+                <span class="lb-pos">${pos}</span>
+                <span class="lb-name">${country}${p.username}</span>
+                <span class="rank-badge" style="background:${p.rank.color};color:${badgeTextColor}">${p.rank.name}</span>
+                <span class="lb-rating">${p.rating}</span>
+                <span class="lb-record">${record}</span>
+                ${actionHtml}
+            </div>`;
+        }).join('');
+
+        // Wire up Add Friend buttons
+        container.querySelectorAll('.lb-add-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                CurlingNetwork.sendFriendRequest(btn.dataset.username);
+                btn.textContent = 'Sent';
+                btn.disabled = true;
             });
         });
     }
@@ -4087,6 +4136,11 @@
             }
         });
 
+        // ---- LEADERBOARD HANDLER ----
+        CurlingNetwork.onLeaderboard(({ players }) => {
+            renderLeaderboard(players);
+        });
+
         // ---- FRIENDS & INVITE HANDLERS ----
         CurlingNetwork.onFriendsList(({ friends }) => {
             friendsList = friends || [];
@@ -4201,8 +4255,9 @@
             CurlingNetwork.sendGetProfile();
             // Set up push notifications for logged-in users
             PushSetup.setup();
-            // Show friends button for logged-in users
+            // Show friends and leaderboard buttons for logged-in users
             document.getElementById('lobby-friends').style.display = 'block';
+            document.getElementById('lobby-leaderboard').style.display = 'block';
         });
 
         CurlingNetwork.onVapidKey(({ key }) => {
@@ -4476,6 +4531,16 @@
         showLobbyPanel('lobby-menu');
     });
 
+    // v117: Leaderboard button handlers
+    document.getElementById('lobby-leaderboard').addEventListener('click', () => {
+        showLobbyPanel('lobby-leaderboard-panel');
+        CurlingNetwork.sendGetLeaderboard();
+    });
+
+    document.getElementById('lobby-leaderboard-back').addEventListener('click', () => {
+        showLobbyPanel('lobby-menu');
+    });
+
     document.getElementById('friend-search-btn').addEventListener('click', () => {
         const query = document.getElementById('friend-username-input').value.trim();
         if (!query) return;
@@ -4608,6 +4673,7 @@
     document.getElementById('auth-skip').addEventListener('click', () => {
         document.getElementById('auth-panel').style.display = 'none';
         document.getElementById('lobby-friends').style.display = 'none';
+        document.getElementById('lobby-leaderboard').style.display = 'none';
         // If there's a pending join code (from share link), auto-join now
         if (_pendingJoinCode) {
             executePendingJoin();
@@ -4691,6 +4757,7 @@
         document.getElementById('user-rank-badge').style.display = 'none';
         document.getElementById('user-rating').textContent = '';
         document.getElementById('lobby-friends').style.display = 'none';
+        document.getElementById('lobby-leaderboard').style.display = 'none';
         friendsList = [];
         pendingRequests = { incoming: [], outgoing: [] };
     });

@@ -861,6 +861,19 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        case 'get_leaderboard': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'leaderboard', players: [] }); break; }
+            try {
+                const players = await auth.getLeaderboard(session.userId);
+                send(ws, { type: 'leaderboard', players });
+            } catch (e) {
+                console.error('Leaderboard error:', e.message);
+                send(ws, { type: 'leaderboard', players: [] });
+            }
+            break;
+        }
+
         case 'get_security_question': {
             const result = await auth.getSecurityQuestion(data.username);
             if (result.error) {

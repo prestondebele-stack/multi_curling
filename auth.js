@@ -297,4 +297,36 @@ async function searchUsers(query, excludeUserId) {
     }
 }
 
-module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers };
+async function getLeaderboard(userId) {
+    if (!db.isAvailable()) return [];
+    try {
+        const result = await db.query(
+            `SELECT u.id, u.username, u.country, u.wins, u.losses, u.draws, u.rating,
+                    f.status AS friend_status
+             FROM users u
+             LEFT JOIN friendships f
+                ON (f.user_id = $1 AND f.friend_id = u.id)
+                OR (f.friend_id = $1 AND f.user_id = u.id)
+             ORDER BY u.rating DESC
+             LIMIT 50`,
+            [userId]
+        );
+        return result.rows.map(row => ({
+            id: row.id,
+            username: row.username,
+            country: row.country,
+            wins: row.wins,
+            losses: row.losses,
+            draws: row.draws,
+            rating: row.rating,
+            rank: getRank(row.rating),
+            isSelf: row.id === userId,
+            friendStatus: row.friend_status || null,
+        }));
+    } catch (e) {
+        console.error('Leaderboard error:', e.message);
+        return [];
+    }
+}
+
+module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard };
