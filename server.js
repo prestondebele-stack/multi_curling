@@ -174,6 +174,25 @@ function createRoom(hostWs, totalEnds) {
 function joinRoom(code, joinerWs) {
     const room = rooms.get(code.toUpperCase());
     if (!room) return { error: 'room_not_found' };
+
+    // v115h: Check if joiner is the same user as an existing player
+    // (e.g. creator clicking their own share link from a different tab/device)
+    const joinerSession = playerSessions.get(joinerWs);
+    if (joinerSession && joinerSession.userId) {
+        for (let i = 0; i < 2; i++) {
+            const existingSession = playerSessions.get(room.players[i]) || room.sessions[i];
+            if (existingSession && existingSession.userId === joinerSession.userId) {
+                // Same user — swap their connection to this slot (treat as reconnect)
+                if (room.players[i] && room.players[i] !== joinerWs) {
+                    playerRooms.delete(room.players[i]);
+                }
+                room.players[i] = joinerWs;
+                playerRooms.set(joinerWs, code);
+                return { room, sameUser: true, slot: i };
+            }
+        }
+    }
+
     if (room.players[1] !== null) return { error: 'room_full' };
 
     room.players[1] = joinerWs;
@@ -1199,6 +1218,26 @@ async function handleMessage(ws, message) {
             const result = joinRoom(code, ws);
             if (result.error) {
                 send(ws, { type: result.error, code });
+            } else if (result.sameUser) {
+                // v115h: Same user rejoining (clicked their own invite link)
+                // Treat as a reconnect — send them current game state
+                const room = result.room;
+                const team = result.slot === 0 ? 'red' : 'yellow';
+                console.log('[JOIN] Same user rejoining room ' + code + ' as ' + team);
+                send(ws, { type: 'reconnected', yourTeam: team, serverState: {
+                    currentTeam: room.state.currentTeam,
+                    redThrown: room.state.redThrown,
+                    yellowThrown: room.state.yellowThrown,
+                    redScore: room.state.redScore,
+                    yellowScore: room.state.yellowScore,
+                    currentEnd: room.state.currentEnd,
+                    totalEnds: room.state.totalEnds,
+                    hammer: room.state.hammer,
+                    endScores: room.state.endScores,
+                    stones: room.state.settledStones,
+                    phase: room.state.phase,
+                    throwInProgress: room.state.throwInProgress,
+                }});
             } else {
                 send(ws, { type: 'room_joined', code });
                 await startGame(result.room);

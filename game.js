@@ -4723,15 +4723,26 @@
 
     function executePendingJoin() {
         if (!_pendingJoinCode) return;
-        const code = _pendingJoinCode;
+        const code = _pendingJoinCode.toUpperCase();
         _pendingJoinCode = null;
+
+        // v115h: If we're already in this room (creator clicking their own link),
+        // reconnect instead of trying to join as a second player
+        const activeSession = CurlingNetwork.getActiveSession();
+        if (activeSession && activeSession.roomCode && activeSession.roomCode.toUpperCase() === code) {
+            console.log('[INVITE] Already in room ' + code + ' — reconnecting instead of joining');
+            document.getElementById('join-invite-banner').style.display = 'none';
+            CurlingNetwork.sendReconnect(activeSession.roomCode, activeSession.myTeam);
+            return;
+        }
+
         // Hide the invite banner now that we're joining
         document.getElementById('join-invite-banner').style.display = 'none';
         document.getElementById('join-error').style.display = 'none';
         CurlingNetwork.joinRoom(code);
         // Show a brief "joining..." state so they know something is happening
         showLobbyPanel('lobby-join-panel');
-        document.getElementById('room-code-input').value = code.toUpperCase();
+        document.getElementById('room-code-input').value = code;
     }
 
     (function checkAutoJoin() {
