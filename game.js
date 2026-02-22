@@ -4176,7 +4176,7 @@
             // Only show lobby UI if we're NOT in an active game.
             // During reconnect, token_login triggers auth_success — we must
             // NOT overwrite the game screen with the lobby menu.
-            if (!gameState.onlineMode || gameState.phase === 'gameOver') {
+            if (!gameState.onlineMode || gameState.phase === 'gameover') {
                 document.getElementById('auth-panel').style.display = 'none';
                 // If there's a pending join code (from share link), auto-join now
                 if (_pendingJoinCode) {
@@ -4205,7 +4205,7 @@
             // Only show login form if NOT in an active game.
             // During reconnect, token_login may fail (server restarted) but
             // the game reconnect itself already succeeded — don't nuke the game.
-            if (!gameState.onlineMode || gameState.phase === 'gameOver') {
+            if (!gameState.onlineMode || gameState.phase === 'gameover') {
                 document.getElementById('auth-panel').style.display = 'flex';
                 document.getElementById('lobby-menu').style.display = 'none';
                 const errEl = document.getElementById('auth-error');
@@ -4794,8 +4794,8 @@
     // AUTO-REJOIN ACTIVE GAME (page refresh / back swipe recovery)
     // --------------------------------------------------------
     (function checkActiveGameSession() {
-        // Skip if URL auto-join already handled
-        if (new URLSearchParams(window.location.search).get('join')) return;
+        // v115h: Skip if invite link auto-join is pending (URL already cleaned by checkAutoJoin)
+        if (_pendingJoinCode) return;
 
         const session = CurlingNetwork.getActiveSession();
         if (!session || !session.roomCode) return;
