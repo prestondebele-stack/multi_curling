@@ -921,6 +921,46 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        // ---- BEST SHOT OF THE WEEK ----
+        case 'submit_shot': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'shot_submit_result', error: 'Not logged in' }); break; }
+            try {
+                const result = await auth.submitShot(session.userId, data.throwParams, data.preThrowStones, data.finalStones, data.throwerTeam);
+                send(ws, { type: 'shot_submit_result', ...result });
+            } catch (e) {
+                console.error('Submit shot error:', e.message);
+                send(ws, { type: 'shot_submit_result', error: 'Submission failed' });
+            }
+            break;
+        }
+
+        case 'get_best_shots': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'best_shots', shots: [] }); break; }
+            try {
+                const shots = await auth.getBestShots(session.userId);
+                send(ws, { type: 'best_shots', shots });
+            } catch (e) {
+                console.error('Best shots error:', e.message);
+                send(ws, { type: 'best_shots', shots: [] });
+            }
+            break;
+        }
+
+        case 'vote_shot': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'vote_shot_result', error: 'Not logged in' }); break; }
+            try {
+                const result = await auth.voteShot(session.userId, data.shotId);
+                send(ws, { type: 'vote_shot_result', ...result, shotId: data.shotId });
+            } catch (e) {
+                console.error('Vote shot error:', e.message);
+                send(ws, { type: 'vote_shot_result', error: 'Vote failed' });
+            }
+            break;
+        }
+
         case 'get_security_question': {
             const result = await auth.getSecurityQuestion(data.username);
             if (result.error) {

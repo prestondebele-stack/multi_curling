@@ -146,6 +146,7 @@
                     <button id="sweep-toggle-btn" style="display:none;">SWEEP</button>
                     <button id="chat-btn" title="Quick Chat" style="display:none;">&#128172;</button>
                     <button id="replay-btn" title="Replay Last Shot" style="display:none;">&#9654; Replay</button>
+                    <button id="submit-shot-btn" title="Submit for Best Shot" style="display:none;">&#11088; Submit</button>
                     <button id="skip-replay-btn" title="Skip Replay" style="display:none;">&#9193; Skip</button>
                     <button id="sync-btn" title="Sync Game" style="display:none;">&#8635;</button>
                 </div>
@@ -310,6 +311,7 @@
                     <button id="lobby-queue" class="lobby-btn">Quick Match</button>
                     <button id="lobby-leaderboard" class="lobby-btn" style="display:none;">Leaderboard</button>
                     <button id="lobby-history" class="lobby-btn" style="display:none;">Match History</button>
+                    <button id="lobby-best-shots" class="lobby-btn" style="display:none;">Best Shots</button>
                     <button id="lobby-friends" class="lobby-btn" style="display:none;">Friends</button>
                     <button id="lobby-back" class="lobby-btn secondary">Back</button>
                 </div>
@@ -386,6 +388,12 @@
                     <h3>Match History</h3>
                     <div id="history-list"></div>
                     <button id="lobby-history-back" class="lobby-btn secondary">Back</button>
+                </div>
+                <div id="lobby-best-shots-panel" style="display:none;">
+                    <h3>Best Shot of the Week</h3>
+                    <p id="best-shots-week-label" style="color:#888;font-size:12px;margin:0 0 8px;"></p>
+                    <div id="best-shots-list"></div>
+                    <button id="lobby-best-shots-back" class="lobby-btn secondary">Back</button>
                 </div>
             </div>
         </div>

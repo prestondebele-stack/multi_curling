@@ -133,6 +133,7 @@
         opponentInfo: null, // { username, rank: { name, color, rating } }
         lastOpponentShot: null,         // { aim, weight, spinDir, spinAmount }
         lastOpponentShotStones: null,   // snapshot of stone positions before the shot
+        _lastThrowData: null,           // full throw data for Best Shot submission
         isReplaying: false,             // true during replay animation
         _nextTurnScheduled: false,      // guard: prevents double nextTurn() calls
         _awaitingConnectionVerify: false, // true while waiting for pong after tab refocus
@@ -673,8 +674,9 @@
             gameState._replayRestore();
         }
 
-        // Hide replay button when throwing
+        // Hide replay/submit buttons when throwing
         hideReplayButton();
+        hideSubmitShotButton();
 
         // v113: Online mode — send throw to server, server runs physics
         // Sweep is controlled by the NON-throwing player, not the thrower
@@ -2027,6 +2029,21 @@
         if (btn) btn.style.display = 'none';
     }
 
+    function showSubmitShotButton() {
+        const btn = document.getElementById('submit-shot-btn');
+        if (btn) {
+            btn.style.display = '';
+            btn.textContent = '\u2B50 Submit';
+            btn.classList.remove('submitted');
+            btn.disabled = false;
+        }
+    }
+
+    function hideSubmitShotButton() {
+        const btn = document.getElementById('submit-shot-btn');
+        if (btn) btn.style.display = 'none';
+    }
+
     function skipReplay() {
         if (!gameState.isReplaying || !gameState._replayRestore) return;
         console.log('[REPLAY] Skipping replay');
@@ -2058,6 +2075,7 @@
         gameState.isReplaying = true;
         gameState.simSpeed = speed || 9.0; // default 3x for opponent replays
         hideReplayButton();
+        hideSubmitShotButton();
         document.getElementById('skip-replay-btn').style.display = '';
 
         // Determine the team that threw
@@ -2123,6 +2141,86 @@
             document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
             document.getElementById('skip-replay-btn').style.display = 'none';
             updateUI();
+        };
+    }
+
+    // v120: Play a Best Shot submission from the lobby panel
+    function playBestShot(shot) {
+        if (gameState.isReplaying) return;
+
+        // Hide lobby, show game canvas
+        document.getElementById('lobby-screen').style.display = 'none';
+        document.getElementById('game-container').style.display = 'block';
+
+        // Save current state to restore after replay
+        const realStones = gameState.stones;
+        const realPhase = gameState.phase;
+        const realDeliveredStone = gameState.deliveredStone;
+        const realSimSpeed = gameState.simSpeed;
+        const realCurrentTeam = gameState.currentTeam;
+
+        // Set up board from the shot's pre-throw positions
+        gameState.stones = (shot.preThrowStones || []).map(s => ({
+            ...s, vx: 0, vy: 0, omega: 0, angle: 0, moving: false, active: true,
+        }));
+
+        // Create the thrown stone from throwParams
+        const params = shot.throwParams;
+        const stoneSpeed = CurlingPhysics.weightToSpeed(params.weight);
+        const aimRad = params.aim * Math.PI / 180;
+        const startX = 0;
+        const startY = P.hack + 1.0;
+        const vx = stoneSpeed * Math.sin(aimRad);
+        const vy = stoneSpeed * Math.cos(aimRad);
+        const omega = CurlingPhysics.rotationsToAngularVelocity(params.spinAmount, stoneSpeed) * params.spinDir;
+
+        const team = shot.throwerTeam || 'red';
+        const stone = createStone(team, startX, startY, vx, vy, omega);
+        stone.moving = true;
+        gameState.stones.push(stone);
+        gameState.deliveredStone = stone;
+        stoneTrail = [{ x: startX, y: startY }];
+
+        gameState.isReplaying = true;
+        gameState.phase = 'delivering';
+        gameState.simSpeed = 3.0; // normal 1x speed for best shot viewing
+        gameState.currentTeam = team;
+        VIEW.followStone = true;
+
+        // Apply sweep if available
+        gameState._simStepCount = 0;
+        if (params.sweepLevel && params.sweepLevel !== 'none') {
+            gameState.isSweeping = true;
+            gameState.sweepLevel = params.sweepLevel;
+            gameState._replaySweepTimeline = null;
+        } else {
+            gameState.isSweeping = false;
+            gameState._replaySweepTimeline = null;
+        }
+
+        document.getElementById('skip-replay-btn').style.display = '';
+
+        // When replay finishes, restore state and return to Best Shots panel
+        gameState._replayRestore = () => {
+            gameState.stones = realStones;
+            gameState.phase = realPhase;
+            gameState.deliveredStone = realDeliveredStone;
+            gameState.currentTeam = realCurrentTeam;
+            gameState.isReplaying = false;
+            gameState.simSpeed = realSimSpeed;
+            gameState._replayRestore = null;
+            gameState._replaySweepTimeline = null;
+            gameState.isSweeping = false;
+            VIEW.followStone = false;
+            document.getElementById('sweep-toggle-btn').classList.remove('sweeping');
+            document.getElementById('sweep-toggle-btn').textContent = 'SWEEP';
+            document.getElementById('skip-replay-btn').style.display = 'none';
+            updateUI();
+
+            // Return to lobby Best Shots panel
+            document.getElementById('game-container').style.display = 'none';
+            document.getElementById('lobby-screen').style.display = 'flex';
+            showLobbyPanel('lobby-best-shots-panel');
         };
     }
 
@@ -2987,6 +3085,7 @@
         extraEndNotice = null;
         hogLineViolation = null;
         hideReplayButton();
+        hideSubmitShotButton();
         document.getElementById('skip-replay-btn').style.display = 'none';
 
         document.getElementById('zoom-btn').classList.remove('zoomed');
@@ -3055,6 +3154,7 @@
         document.getElementById('sweep-toggle-btn').style.display = 'none';
         document.getElementById('sweep-toggle-btn').classList.remove('sweeping', 'opponent-sweeping');
         hideReplayButton();
+        hideSubmitShotButton();
         // Clear player names from scoreboard
         document.getElementById('red-player-name').textContent = '';
         document.getElementById('yellow-player-name').textContent = '';
@@ -3147,7 +3247,7 @@
     }
 
     function showLobbyPanel(panelId) {
-        const panels = ['lobby-menu', 'lobby-ends-panel', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel', 'lobby-leaderboard-panel', 'lobby-history-panel'];
+        const panels = ['lobby-menu', 'lobby-ends-panel', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel', 'lobby-leaderboard-panel', 'lobby-history-panel', 'lobby-best-shots-panel'];
         panels.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = id === panelId ? 'flex' : 'none';
@@ -3158,6 +3258,7 @@
             document.getElementById('lobby-friends').style.display = isLoggedIn ? 'block' : 'none';
             document.getElementById('lobby-leaderboard').style.display = isLoggedIn ? 'block' : 'none';
             document.getElementById('lobby-history').style.display = isLoggedIn ? 'block' : 'none';
+            document.getElementById('lobby-best-shots').style.display = isLoggedIn ? 'block' : 'none';
         }
     }
 
@@ -3449,6 +3550,76 @@
         }).join('');
     }
 
+    // v120: Render Best Shot of the Week list
+    function renderBestShots(shots) {
+        const container = document.getElementById('best-shots-list');
+        const weekLabel = document.getElementById('best-shots-week-label');
+
+        // Show current week range
+        const now = new Date();
+        const dayOfWeek = now.getDay(); // 0=Sun
+        const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+        const monday = new Date(now);
+        monday.setDate(now.getDate() + mondayOffset);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        weekLabel.textContent = fmt(monday) + ' – ' + fmt(sunday);
+
+        if (!shots || shots.length === 0) {
+            container.innerHTML = '<p style="color:#888;font-size:13px;text-align:center;">No shots submitted this week</p>';
+            return;
+        }
+
+        const myUsername = localStorage.getItem('curling_username');
+
+        container.innerHTML = shots.map((shot, i) => {
+            const rank = i + 1;
+            const rankClass = rank <= 3 ? ' bs-rank-' + rank : '';
+            const badgeColor = shot.rank ? shot.rank.color : '#888';
+            const badgeText = (badgeColor === '#ffd54f' || badgeColor === '#e0e0e0') ? '#333' : '#fff';
+            const badgeName = shot.rank ? shot.rank.name : '';
+            const isOwn = shot.username === myUsername;
+            const votedClass = shot.hasVoted ? ' voted' : '';
+            const voteDisabled = (isOwn || shot.hasVoted) ? ' disabled' : '';
+
+            return `<div class="best-shot-row">
+                <span class="bs-rank${rankClass}">#${rank}</span>
+                <span class="bs-name">${shot.username}
+                    <span class="rank-badge" style="background:${badgeColor};color:${badgeText}">${badgeName}</span>
+                </span>
+                <span class="bs-votes">${shot.voteCount}\u2B50</span>
+                <button class="bs-play-btn" data-shot-index="${i}">\u25B6 Play</button>
+                <button class="bs-vote-btn${votedClass}" data-shot-id="${shot.id}"${voteDisabled}>${shot.hasVoted ? 'Voted' : 'Vote'}</button>
+            </div>`;
+        }).join('');
+
+        // Wire up Play buttons
+        container.querySelectorAll('.bs-play-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.shotIndex);
+                if (shots[idx]) playBestShot(shots[idx]);
+            });
+        });
+
+        // Wire up Vote buttons
+        container.querySelectorAll('.bs-vote-btn').forEach(btn => {
+            if (btn.disabled) return;
+            btn.addEventListener('click', () => {
+                const shotId = parseInt(btn.dataset.shotId);
+                CurlingNetwork.sendVoteShot(shotId);
+                btn.textContent = 'Voted';
+                btn.classList.add('voted');
+                btn.disabled = true;
+                // Optimistically increment the vote count display
+                const row = btn.closest('.best-shot-row');
+                const votesEl = row.querySelector('.bs-votes');
+                const currentCount = parseInt(votesEl.textContent) || 0;
+                votesEl.textContent = (currentCount + 1) + '\u2B50';
+            });
+        });
+    }
+
     function renderPendingRequests(incoming, outgoing) {
         pendingRequests = { incoming, outgoing };
         const section = document.getElementById('friend-requests-section');
@@ -3546,6 +3717,16 @@
 
     document.getElementById('skip-replay-btn').addEventListener('click', () => {
         skipReplay();
+    });
+
+    // v120: Submit shot for Best Shot of the Week
+    document.getElementById('submit-shot-btn').addEventListener('click', () => {
+        const btn = document.getElementById('submit-shot-btn');
+        if (btn.disabled || !gameState._lastThrowData) return;
+        const d = gameState._lastThrowData;
+        CurlingNetwork.sendSubmitShot(d.throwParams, d.preThrowStones, d.finalStones, d.throwerTeam);
+        btn.textContent = 'Submitting...';
+        btn.disabled = true;
     });
 
     // Preset message buttons
@@ -3708,6 +3889,7 @@
                 gameState._replayRestore();
             }
             hideReplayButton();
+            hideSubmitShotButton();
 
             gameState._opponentThrowPending = true;
 
@@ -3847,6 +4029,16 @@
                     }));
                 }
 
+                // v120: Store full throw data for Best Shot submission
+                if (data.throwParams && data.preThrowStones) {
+                    gameState._lastThrowData = {
+                        throwParams: data.throwParams,
+                        preThrowStones: data.preThrowStones,
+                        finalStones: data.stones || [],
+                        throwerTeam: data.throwerTeam || gameState.myTeam,
+                    };
+                }
+
                 // Clean up delivery state
                 gameState.deliveredStone = null;
                 gameState.isSweeping = false;
@@ -3901,6 +4093,11 @@
                 // Just show the replay button if they want to watch it again.
                 if (data.throwParams && gameState.lastOpponentShotStones) {
                     showReplayButton();
+                }
+
+                // v120: Show submit button for Best Shot (only for YOUR throws, logged in)
+                if (data.throwerTeam === gameState.myTeam && localStorage.getItem('curling_token')) {
+                    showSubmitShotButton();
                 }
             } catch (err) {
                 console.error('[THROW_RESULT] ERROR:', err);
@@ -4274,6 +4471,30 @@
             hideGameInvite();
         });
 
+        // ---- BEST SHOTS (v120) ----
+        CurlingNetwork.onBestShots(({ shots }) => {
+            renderBestShots(shots || []);
+        });
+
+        CurlingNetwork.onShotSubmitResult(({ success, error }) => {
+            const btn = document.getElementById('submit-shot-btn');
+            if (success) {
+                btn.textContent = '\u2705 Submitted!';
+                btn.classList.add('submitted');
+            } else {
+                btn.textContent = error || 'Error';
+                btn.disabled = false;
+                setTimeout(() => {
+                    btn.textContent = '\u2B50 Submit';
+                    btn.classList.remove('submitted');
+                }, 3000);
+            }
+        });
+
+        CurlingNetwork.onVoteShotResult(({ success, shotId, newVoteCount }) => {
+            // Server confirmed vote — UI already updated optimistically
+        });
+
         // ---- CHAT ----
         CurlingNetwork.onChatMessage((text, from) => {
             showChatToast(text, from);
@@ -4304,10 +4525,11 @@
             CurlingNetwork.sendGetProfile();
             // Set up push notifications for logged-in users
             PushSetup.setup();
-            // Show friends, leaderboard, and history buttons for logged-in users
+            // Show friends, leaderboard, history, and best shots buttons for logged-in users
             document.getElementById('lobby-friends').style.display = 'block';
             document.getElementById('lobby-leaderboard').style.display = 'block';
             document.getElementById('lobby-history').style.display = 'block';
+            document.getElementById('lobby-best-shots').style.display = 'block';
         });
 
         CurlingNetwork.onVapidKey(({ key }) => {
@@ -4644,6 +4866,16 @@
         showLobbyPanel('lobby-menu');
     });
 
+    // v120: Best Shots button handlers
+    document.getElementById('lobby-best-shots').addEventListener('click', () => {
+        showLobbyPanel('lobby-best-shots-panel');
+        CurlingNetwork.sendGetBestShots();
+    });
+
+    document.getElementById('lobby-best-shots-back').addEventListener('click', () => {
+        showLobbyPanel('lobby-menu');
+    });
+
     document.getElementById('friend-search-btn').addEventListener('click', () => {
         const query = document.getElementById('friend-username-input').value.trim();
         if (!query) return;
@@ -4799,6 +5031,7 @@
         document.getElementById('lobby-friends').style.display = 'none';
         document.getElementById('lobby-leaderboard').style.display = 'none';
         document.getElementById('lobby-history').style.display = 'none';
+        document.getElementById('lobby-best-shots').style.display = 'none';
         // If there's a pending join code (from share link), auto-join now
         if (_pendingJoinCode) {
             executePendingJoin();
@@ -4884,6 +5117,7 @@
         document.getElementById('lobby-friends').style.display = 'none';
         document.getElementById('lobby-leaderboard').style.display = 'none';
         document.getElementById('lobby-history').style.display = 'none';
+        document.getElementById('lobby-best-shots').style.display = 'none';
         document.getElementById('google-username-form').style.display = 'none';
         _googleCredential = null;
         friendsList = [];

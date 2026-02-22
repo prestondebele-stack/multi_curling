@@ -2599,6 +2599,126 @@ input[type="range"]::-moz-range-thumb {
     color: #fff;
 }
 
+#submit-shot-btn {
+    font-size: 13px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 2px solid #ffd54f;
+    background: transparent;
+    color: #ffd54f;
+    cursor: pointer;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background 0.2s, color 0.2s;
+}
+#submit-shot-btn:active {
+    background: #ffd54f;
+    color: #333;
+}
+#submit-shot-btn.submitted {
+    border-color: #4caf50;
+    color: #4caf50;
+    pointer-events: none;
+}
+
+/* Best Shots Panel */
+#lobby-best-shots-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
+#best-shots-list {
+    width: 100%;
+    max-height: 55vh;
+    overflow-y: auto;
+    margin-bottom: 12px;
+    scrollbar-width: thin;
+    scrollbar-color: #5c9ae6 rgba(255,255,255,0.05);
+}
+
+.best-shot-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.best-shot-row:nth-child(odd) {
+    background: rgba(255, 255, 255, 0.04);
+}
+.best-shot-row:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.bs-rank {
+    width: 24px;
+    text-align: center;
+    font-weight: bold;
+    color: #888;
+    flex-shrink: 0;
+}
+.bs-rank-1 { color: #ffd54f; font-size: 15px; }
+.bs-rank-2 { color: #e0e0e0; font-size: 14px; }
+.bs-rank-3 { color: #cd7f32; font-size: 14px; }
+
+.bs-name {
+    flex: 1;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.bs-votes {
+    color: #ffd54f;
+    font-weight: bold;
+    font-size: 12px;
+    flex-shrink: 0;
+    min-width: 30px;
+    text-align: center;
+}
+
+.bs-play-btn,
+.bs-vote-btn {
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid;
+    background: transparent;
+    cursor: pointer;
+    font-weight: 600;
+    flex-shrink: 0;
+    transition: background 0.2s, color 0.2s;
+}
+
+.bs-play-btn {
+    border-color: #fb8c00;
+    color: #fb8c00;
+}
+.bs-play-btn:active {
+    background: #fb8c00;
+    color: #fff;
+}
+
+.bs-vote-btn {
+    border-color: #4caf50;
+    color: #4caf50;
+}
+.bs-vote-btn:active {
+    background: #4caf50;
+    color: #fff;
+}
+.bs-vote-btn.voted {
+    border-color: #666;
+    color: #666;
+    pointer-events: none;
+}
+
 #sync-btn {
     font-size: 18px;
     padding: 6px 10px;

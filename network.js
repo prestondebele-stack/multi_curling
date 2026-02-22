@@ -93,6 +93,10 @@ const CurlingNetwork = (() => {
         onGameInviteCancelled: null,
         // Search
         onSearchResults: null,
+        // Best Shots
+        onBestShots: null,
+        onShotSubmitResult: null,
+        onVoteShotResult: null,
         // Connection verified (pong received after tab refocus)
         onConnectionVerified: null,
         // Chat
@@ -412,6 +416,16 @@ const CurlingNetwork = (() => {
             case 'search_results':
                 if (callbacks.onSearchResults) callbacks.onSearchResults({ results: data.results || [] });
                 break;
+            // Best Shots
+            case 'best_shots':
+                if (callbacks.onBestShots) callbacks.onBestShots({ shots: data.shots || [] });
+                break;
+            case 'shot_submit_result':
+                if (callbacks.onShotSubmitResult) callbacks.onShotSubmitResult(data);
+                break;
+            case 'vote_shot_result':
+                if (callbacks.onVoteShotResult) callbacks.onVoteShotResult(data);
+                break;
             // v112: Legacy message types — no-ops (handled above in the combined case block)
         }
     }
@@ -730,6 +744,11 @@ const CurlingNetwork = (() => {
         sendPushSubscribe(subscription) { send({ type: 'push_subscribe', subscription }); },
         sendPushUnsubscribe(endpoint) { send({ type: 'push_unsubscribe', endpoint }); },
 
+        // Best Shots
+        sendSubmitShot(throwParams, preThrowStones, finalStones, throwerTeam) { send({ type: 'submit_shot', throwParams, preThrowStones, finalStones, throwerTeam }); },
+        sendGetBestShots() { send({ type: 'get_best_shots' }); },
+        sendVoteShot(shotId) { send({ type: 'vote_shot', shotId }); },
+
         // Search
         sendSearchUsers(query) { send({ type: 'search_users', query }); },
 
@@ -793,6 +812,10 @@ const CurlingNetwork = (() => {
         onGameInviteError(cb) { callbacks.onGameInviteError = cb; },
         onGameInviteDenied(cb) { callbacks.onGameInviteDenied = cb; },
         onGameInviteCancelled(cb) { callbacks.onGameInviteCancelled = cb; },
+        // Best Shots
+        onBestShots(cb) { callbacks.onBestShots = cb; },
+        onShotSubmitResult(cb) { callbacks.onShotSubmitResult = cb; },
+        onVoteShotResult(cb) { callbacks.onVoteShotResult = cb; },
         // Search
         onSearchResults(cb) { callbacks.onSearchResults = cb; },
         // Connection verified

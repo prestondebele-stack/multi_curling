@@ -96,6 +96,31 @@ async function initSchema() {
             );
         `);
 
+        // Best Shot of the Week
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS shot_submissions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                throw_params JSONB NOT NULL,
+                pre_throw_stones JSONB NOT NULL,
+                final_stones JSONB NOT NULL,
+                thrower_team VARCHAR(6) NOT NULL,
+                week_start DATE NOT NULL,
+                vote_count INTEGER DEFAULT 0,
+                submitted_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_shots_week ON shot_submissions(week_start);
+            CREATE INDEX IF NOT EXISTS idx_shots_user_week ON shot_submissions(user_id, week_start);
+
+            CREATE TABLE IF NOT EXISTS shot_votes (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                shot_id INTEGER REFERENCES shot_submissions(id) ON DELETE CASCADE,
+                voted_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(user_id, shot_id)
+            );
+        `);
+
         dbAvailable = true;
         console.log('Database schema initialized');
     } catch (err) {

@@ -423,4 +423,78 @@ async function getGameHistory(userId, limit = 20) {
     }
 }
 
-module.exports = { register, login, googleLogin, googleRegister, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard, getGameHistory };
+async function submitShot(userId, throwParams, preThrowStones, finalStones, throwerTeam) {
+    if (!db.isAvailable()) return { error: 'Not available' };
+    try {
+        const countResult = await db.query(
+            "SELECT COUNT(*) AS cnt FROM shot_submissions WHERE user_id = $1 AND week_start = DATE_TRUNC('week', NOW())::DATE",
+            [userId]
+        );
+        if (parseInt(countResult.rows[0].cnt) >= 3) {
+            return { error: 'Max 3 shots per week' };
+        }
+        const result = await db.query(
+            "INSERT INTO shot_submissions (user_id, throw_params, pre_throw_stones, final_stones, thrower_team, week_start) VALUES ($1, $2, $3, $4, $5, DATE_TRUNC('week', NOW())::DATE) RETURNING id",
+            [userId, JSON.stringify(throwParams), JSON.stringify(preThrowStones), JSON.stringify(finalStones), throwerTeam]
+        );
+        return { success: true, shotId: result.rows[0].id };
+    } catch (e) {
+        console.error('Submit shot error:', e.message);
+        return { error: 'Submission failed' };
+    }
+}
+
+async function getBestShots(userId) {
+    if (!db.isAvailable()) return [];
+    try {
+        const result = await db.query(
+            `SELECT s.id, s.throw_params, s.pre_throw_stones, s.final_stones, s.thrower_team,
+                    s.vote_count, s.submitted_at, s.user_id,
+                    u.username, u.rating,
+                    EXISTS(SELECT 1 FROM shot_votes v WHERE v.shot_id = s.id AND v.user_id = $1) AS has_voted
+             FROM shot_submissions s
+             JOIN users u ON u.id = s.user_id
+             WHERE s.week_start = DATE_TRUNC('week', NOW())::DATE
+             ORDER BY s.vote_count DESC, s.submitted_at ASC
+             LIMIT 50`,
+            [userId]
+        );
+        return result.rows.map(row => ({
+            id: row.id,
+            username: row.username,
+            rank: getRank(row.rating),
+            throwParams: row.throw_params,
+            preThrowStones: row.pre_throw_stones,
+            finalStones: row.final_stones,
+            throwerTeam: row.thrower_team,
+            voteCount: row.vote_count,
+            hasVoted: row.has_voted,
+            isSelf: row.user_id === userId,
+            submittedAt: row.submitted_at,
+        }));
+    } catch (e) {
+        console.error('Best shots error:', e.message);
+        return [];
+    }
+}
+
+async function voteShot(userId, shotId) {
+    if (!db.isAvailable()) return { error: 'Not available' };
+    try {
+        const shotResult = await db.query('SELECT user_id FROM shot_submissions WHERE id = $1', [shotId]);
+        if (shotResult.rows.length === 0) return { error: 'Shot not found' };
+        if (shotResult.rows[0].user_id === userId) return { error: "Can't vote on your own shot" };
+        await db.query('INSERT INTO shot_votes (user_id, shot_id) VALUES ($1, $2)', [userId, shotId]);
+        const updated = await db.query(
+            'UPDATE shot_submissions SET vote_count = vote_count + 1 WHERE id = $1 RETURNING vote_count',
+            [shotId]
+        );
+        return { success: true, newVoteCount: updated.rows[0].vote_count };
+    } catch (e) {
+        if (e.code === '23505') return { error: 'Already voted' };
+        console.error('Vote shot error:', e.message);
+        return { error: 'Vote failed' };
+    }
+}
+
+module.exports = { register, login, googleLogin, googleRegister, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard, getGameHistory, submitShot, getBestShots, voteShot };
