@@ -1,7 +1,7 @@
 {
     "name": "curling-multiplayer-server",
     "version": "1.0.0",
-    "description": "WebSocket server for Multiplayer Curling",
+    "description": "WebSocket server for Online Curling",
     "main": "server.js",
     "scripts": {
         "start": "node server.js"
