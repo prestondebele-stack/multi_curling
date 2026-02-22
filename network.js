@@ -72,6 +72,9 @@ const CurlingNetwork = (() => {
         onSecurityQuestion: null,
         onPasswordResetSuccess: null,
         onVapidKey: null,
+        // Google Sign-In
+        onGoogleClientId: null,
+        onGoogleNeedsUsername: null,
         // Friends
         onFriendsList: null,
         onPendingRequests: null,
@@ -347,6 +350,14 @@ const CurlingNetwork = (() => {
 
             case 'password_reset_success':
                 if (callbacks.onPasswordResetSuccess) callbacks.onPasswordResetSuccess();
+                break;
+
+            case 'google_client_id':
+                if (callbacks.onGoogleClientId) callbacks.onGoogleClientId({ clientId: data.clientId });
+                break;
+
+            case 'google_needs_username':
+                if (callbacks.onGoogleNeedsUsername) callbacks.onGoogleNeedsUsername({ name: data.name, firstName: data.firstName, lastName: data.lastName });
                 break;
 
             case 'vapid_key':
@@ -712,6 +723,9 @@ const CurlingNetwork = (() => {
         sendGetGameHistory() { send({ type: 'get_game_history' }); },
         sendGetSecurityQuestion(username) { send({ type: 'get_security_question', username }); },
         sendResetPassword(username, answer, newPassword) { send({ type: 'reset_password', username, answer, newPassword }); },
+        sendGetGoogleClientId() { send({ type: 'get_google_client_id' }); },
+        sendGoogleLogin(credential) { send({ type: 'google_login', credential }); },
+        sendGoogleRegister(credential, username, country) { send({ type: 'google_register', credential, username, country }); },
         sendGetVapidKey() { send({ type: 'get_vapid_key' }); },
         sendPushSubscribe(subscription) { send({ type: 'push_subscribe', subscription }); },
         sendPushUnsubscribe(endpoint) { send({ type: 'push_unsubscribe', endpoint }); },
@@ -760,6 +774,8 @@ const CurlingNetwork = (() => {
         onRatingUpdate(cb) { callbacks.onRatingUpdate = cb; },
         onSecurityQuestion(cb) { callbacks.onSecurityQuestion = cb; },
         onPasswordResetSuccess(cb) { callbacks.onPasswordResetSuccess = cb; },
+        onGoogleClientId(cb) { callbacks.onGoogleClientId = cb; },
+        onGoogleNeedsUsername(cb) { callbacks.onGoogleNeedsUsername = cb; },
         onVapidKey(cb) { callbacks.onVapidKey = cb; },
         // Friends
         onFriendsList(cb) { callbacks.onFriendsList = cb; },

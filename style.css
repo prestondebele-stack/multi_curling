@@ -2143,6 +2143,53 @@ input[type="range"]::-moz-range-thumb {
     opacity: 0.9;
 }
 
+/* Google Sign-In section */
+#google-signin-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 4px;
+    width: 100%;
+    max-width: 280px;
+}
+
+.auth-divider {
+    display: flex;
+    align-items: center;
+    width: 220px;
+    margin: 8px 0;
+    color: #888;
+    font-size: 12px;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #444;
+}
+
+.auth-divider span {
+    padding: 0 10px;
+}
+
+#google-username-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    max-width: 280px;
+}
+
+.google-welcome-text {
+    color: #ccc;
+    font-size: 14px;
+    text-align: center;
+    margin: 0;
+}
+
 #auth-tabs {
     display: flex;
     gap: 4px;

@@ -307,7 +307,7 @@
 
         // v111: Copy full log buffer to clipboard with diagnostic header
         function copyLogs() {
-            const header = '=== Capital Curling Club Debug Log ===\n'
+            const header = '=== Online Curling Debug Log ===\n'
                 + 'Exported: ' + new Date().toISOString() + '\n'
                 + 'Version: ' + (document.getElementById('beta-version')?.textContent || '?') + '\n'
                 + 'UA: ' + navigator.userAgent + '\n'
@@ -4315,6 +4315,13 @@
         });
 
         CurlingNetwork.onAuthError(({ error }) => {
+            // If Google username picker is visible, show error there
+            if (document.getElementById('google-username-form').style.display !== 'none') {
+                const errEl = document.getElementById('auth-error');
+                errEl.textContent = error;
+                errEl.style.display = 'block';
+                return;
+            }
             // If auto-login token expired, clear it
             localStorage.removeItem('curling_token');
             localStorage.removeItem('curling_username');
@@ -4378,6 +4385,41 @@
             document.getElementById('recovery-step-2').style.display = 'none';
             document.getElementById('recovery-success').style.display = 'block';
         });
+
+        // ---- GOOGLE SIGN-IN HANDLERS ----
+        CurlingNetwork.onGoogleClientId(({ clientId }) => {
+            if (!clientId || typeof google === 'undefined') return;
+            const section = document.getElementById('google-signin-section');
+            section.style.display = 'flex';
+            google.accounts.id.initialize({
+                client_id: clientId,
+                callback: (response) => {
+                    _googleCredential = response.credential;
+                    CurlingNetwork.sendGoogleLogin(response.credential);
+                },
+            });
+            google.accounts.id.renderButton(
+                document.getElementById('google-btn-container'),
+                { theme: 'filled_black', size: 'large', width: 280 }
+            );
+        });
+
+        CurlingNetwork.onGoogleNeedsUsername(({ name, firstName, lastName }) => {
+            // Hide other auth UI, show username picker
+            document.getElementById('auth-tabs').style.display = 'none';
+            document.getElementById('auth-login-form').style.display = 'none';
+            document.getElementById('auth-register-form').style.display = 'none';
+            document.getElementById('auth-recovery-form').style.display = 'none';
+            document.getElementById('google-signin-section').style.display = 'none';
+            document.getElementById('auth-skip').style.display = 'none';
+            document.getElementById('auth-error').style.display = 'none';
+            document.getElementById('google-username-form').style.display = 'flex';
+            // Pre-fill username suggestion from Google first name
+            const suggestion = (firstName || name || '').replace(/[^a-zA-Z0-9_]/g, '').substring(0, 20);
+            if (suggestion.length >= 3) {
+                document.getElementById('google-username').value = suggestion;
+            }
+        });
     }
 
     // Online mode button
@@ -4393,6 +4435,7 @@
         // Connect and show lobby
         CurlingNetwork.connect(SERVER_URL).then(() => {
             showLobbyScreen();
+            CurlingNetwork.sendGetGoogleClientId();
 
             // Check for saved auth token
             const savedToken = localStorage.getItem('curling_token');
@@ -4730,6 +4773,27 @@
         if (e.code === 'Enter') document.getElementById('auth-register-btn').click();
     });
 
+    document.getElementById('google-username-submit').addEventListener('click', () => {
+        const username = document.getElementById('google-username').value.trim();
+        const country = document.getElementById('google-country').value;
+        if (!username || username.length < 3 || username.length > 20) {
+            document.getElementById('auth-error').textContent = 'Username must be 3-20 characters';
+            document.getElementById('auth-error').style.display = 'block';
+            return;
+        }
+        if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+            document.getElementById('auth-error').textContent = 'Letters, numbers, underscore only';
+            document.getElementById('auth-error').style.display = 'block';
+            return;
+        }
+        document.getElementById('auth-error').style.display = 'none';
+        CurlingNetwork.sendGoogleRegister(_googleCredential, username, country);
+    });
+
+    document.getElementById('google-username').addEventListener('keydown', (e) => {
+        if (e.code === 'Enter') document.getElementById('google-username-submit').click();
+    });
+
     document.getElementById('auth-skip').addEventListener('click', () => {
         document.getElementById('auth-panel').style.display = 'none';
         document.getElementById('lobby-friends').style.display = 'none';
@@ -4820,6 +4884,8 @@
         document.getElementById('lobby-friends').style.display = 'none';
         document.getElementById('lobby-leaderboard').style.display = 'none';
         document.getElementById('lobby-history').style.display = 'none';
+        document.getElementById('google-username-form').style.display = 'none';
+        _googleCredential = null;
         friendsList = [];
         pendingRequests = { incoming: [], outgoing: [] };
     });
@@ -4862,6 +4928,7 @@
     // we auto-join the room. If they already have a saved token, it joins
     // immediately after token login succeeds.
     let _pendingJoinCode = null;
+    let _googleCredential = null;
 
     function executePendingJoin() {
         if (!_pendingJoinCode) return;
@@ -4911,6 +4978,7 @@
         // Connect to server
         CurlingNetwork.connect(SERVER_URL).then(() => {
             showLobbyScreen();
+            CurlingNetwork.sendGetGoogleClientId();
 
             // Check if user is already logged in (saved token)
             const savedToken = localStorage.getItem('curling_token');

@@ -1,7 +1,7 @@
 {
-    "name": "Capital Curling Club",
+    "name": "Online Curling",
     "short_name": "Curling",
-    "description": "Realistic curling game with real physics — Capital Curling Club, Bismarck ND",
+    "description": "Realistic curling game with real physics — Online Curling",
     "start_url": "./",
     "scope": "./",
     "display": "standalone",

@@ -107,6 +107,9 @@ async function login(username, password) {
         }
 
         const user = result.rows[0];
+        if (user.password_hash === '') {
+            return { error: 'This account uses Google Sign-In' };
+        }
         const valid = await bcrypt.compare(password, user.password_hash);
 
         if (!valid) {
@@ -123,6 +126,56 @@ async function login(username, password) {
     } catch (e) {
         console.error('Login error:', e.message);
         return { error: 'Login failed' };
+    }
+}
+
+async function googleLogin(googleId) {
+    if (!db.isAvailable()) return { error: 'Accounts not available' };
+    try {
+        const result = await db.query(
+            'SELECT id, username FROM users WHERE google_id = $1',
+            [googleId]
+        );
+        if (result.rows.length === 0) {
+            return { needsUsername: true };
+        }
+        const user = result.rows[0];
+        await db.query('UPDATE users SET last_seen = NOW() WHERE id = $1', [user.id]);
+        const token = uuidv4();
+        sessions.set(token, { userId: user.id, username: user.username });
+        return { token, username: user.username, userId: user.id };
+    } catch (e) {
+        console.error('Google login error:', e.message);
+        return { error: 'Google login failed' };
+    }
+}
+
+async function googleRegister(googleId, username, country, firstName, lastName) {
+    if (!db.isAvailable()) return { error: 'Accounts not available' };
+    if (!username || username.length < 3 || username.length > 20) {
+        return { error: 'Username must be 3-20 characters' };
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+        return { error: 'Username: letters, numbers, underscore only' };
+    }
+    try {
+        const result = await db.query(
+            'INSERT INTO users (username, password_hash, country, security_question, security_answer_hash, first_name, last_name, google_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, username',
+            [username.toLowerCase(), '', country || '', '', '', (firstName || '').trim().substring(0, 30), (lastName || '').trim().substring(0, 30), googleId]
+        );
+        const user = result.rows[0];
+        const token = uuidv4();
+        sessions.set(token, { userId: user.id, username: user.username });
+        return { token, username: user.username, userId: user.id };
+    } catch (e) {
+        if (e.code === '23505') {
+            if (e.constraint && e.constraint.includes('google_id')) {
+                return { error: 'This Google account is already registered' };
+            }
+            return { error: 'Username already taken' };
+        }
+        console.error('Google registration error:', e.message);
+        return { error: 'Registration failed' };
     }
 }
 
@@ -370,4 +423,4 @@ async function getGameHistory(userId, limit = 20) {
     }
 }
 
-module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard, getGameHistory };
+module.exports = { register, login, googleLogin, googleRegister, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard, getGameHistory };

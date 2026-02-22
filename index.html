@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport"
         content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0, viewport-fit=cover">
-    <title>Capital Curling Club</title>
+    <title>Online Curling</title>
 
     <!-- PWA -->
     <link rel="manifest" href="manifest.json">
@@ -14,9 +14,10 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Curling">
     <link rel="apple-touch-icon" href="olympic-rings.svg">
-    <meta name="description" content="Realistic curling game with real physics — Capital Curling Club, Bismarck ND">
+    <meta name="description" content="Realistic curling game with real physics — Online Curling">
 
     <link rel="stylesheet" href="style.css">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 
 <body>
@@ -189,6 +190,10 @@
                         <button id="auth-login-tab" class="auth-tab active">Login</button>
                         <button id="auth-register-tab" class="auth-tab">Register</button>
                     </div>
+                    <div id="google-signin-section" style="display:none;">
+                        <div id="google-btn-container"></div>
+                        <div class="auth-divider"><span>or</span></div>
+                    </div>
                     <div id="auth-login-form">
                         <input type="text" id="auth-username" placeholder="Username" maxlength="20" autocomplete="username">
                         <input type="password" id="auth-password" placeholder="Password" maxlength="32" autocomplete="current-password">
@@ -253,6 +258,37 @@
                         </select>
                         <input type="text" id="reg-security-answer" placeholder="Security Answer" maxlength="50" autocomplete="off">
                         <button id="auth-register-btn" class="lobby-btn">Register</button>
+                    </div>
+                    <div id="google-username-form" style="display:none;">
+                        <p class="google-welcome-text">Welcome! Choose a username:</p>
+                        <input type="text" id="google-username" placeholder="Choose a username" maxlength="20" autocomplete="off">
+                        <select id="google-country">
+                            <option value="">Country (optional)</option>
+                            <option value="US">United States</option>
+                            <option value="CA">Canada</option>
+                            <option value="GB">United Kingdom</option>
+                            <option value="SE">Sweden</option>
+                            <option value="NO">Norway</option>
+                            <option value="CH">Switzerland</option>
+                            <option value="JP">Japan</option>
+                            <option value="KR">South Korea</option>
+                            <option value="CN">China</option>
+                            <option value="DE">Germany</option>
+                            <option value="IT">Italy</option>
+                            <option value="DK">Denmark</option>
+                            <option value="FI">Finland</option>
+                            <option value="RU">Russia</option>
+                            <option value="AU">Australia</option>
+                            <option value="NZ">New Zealand</option>
+                            <option value="BR">Brazil</option>
+                            <option value="MX">Mexico</option>
+                            <option value="FR">France</option>
+                            <option value="ES">Spain</option>
+                            <option value="NL">Netherlands</option>
+                            <option value="CZ">Czech Republic</option>
+                            <option value="SC">Scotland</option>
+                        </select>
+                        <button id="google-username-submit" class="lobby-btn">Continue</button>
                     </div>
                     <p id="auth-error" class="lobby-error" style="display:none;"></p>
                     <button id="auth-skip" class="lobby-btn secondary">Play as Guest</button>

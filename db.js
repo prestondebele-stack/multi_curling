@@ -74,6 +74,15 @@ async function initSchema() {
             ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(30) DEFAULT '';
         `);
 
+        // Google Sign-In column (safe migration for existing DBs)
+        await pool.query(`
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(30) DEFAULT NULL;
+        `);
+        // Partial unique index: only one row per google_id, but allow many NULLs
+        await pool.query(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users (google_id) WHERE google_id IS NOT NULL;
+        `);
+
         // Push notification subscriptions
         await pool.query(`
             CREATE TABLE IF NOT EXISTS push_subscriptions (

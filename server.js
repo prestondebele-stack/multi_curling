@@ -5,6 +5,7 @@
 // ============================================================
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
@@ -54,6 +55,39 @@ async function sendPushNotification(userId, title, body) {
     } catch (e) {
         console.error('Push notification error:', e.message);
     }
+}
+
+// --------------------------------------------------------
+// GOOGLE TOKEN VERIFICATION
+// --------------------------------------------------------
+function verifyGoogleToken(idToken) {
+    return new Promise((resolve, reject) => {
+        const url = 'https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken);
+        https.get(url, (res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => {
+                try {
+                    const info = JSON.parse(body);
+                    if (res.statusCode !== 200) {
+                        return reject(new Error(info.error_description || 'Token validation failed'));
+                    }
+                    if (info.aud !== process.env.GOOGLE_CLIENT_ID) {
+                        return reject(new Error('Token audience mismatch'));
+                    }
+                    resolve({
+                        googleId: info.sub,
+                        email: info.email,
+                        name: info.name || '',
+                        firstName: info.given_name || '',
+                        lastName: info.family_name || '',
+                    });
+                } catch (e) {
+                    reject(new Error('Invalid token response'));
+                }
+            });
+        }).on('error', (e) => reject(e));
+    });
 }
 
 // --------------------------------------------------------
@@ -903,6 +937,64 @@ async function handleMessage(ws, message) {
                 send(ws, { type: 'auth_error', error: result.error });
             } else {
                 send(ws, { type: 'password_reset_success' });
+            }
+            break;
+        }
+
+        // ---- GOOGLE SIGN-IN ----
+        case 'get_google_client_id': {
+            send(ws, { type: 'google_client_id', clientId: process.env.GOOGLE_CLIENT_ID || null });
+            break;
+        }
+
+        case 'google_login': {
+            if (!process.env.GOOGLE_CLIENT_ID) {
+                send(ws, { type: 'auth_error', error: 'Google Sign-In not configured' });
+                break;
+            }
+            try {
+                const tokenInfo = await verifyGoogleToken(data.credential);
+                const result = await auth.googleLogin(tokenInfo.googleId);
+                if (result.error) {
+                    send(ws, { type: 'auth_error', error: result.error });
+                } else if (result.needsUsername) {
+                    send(ws, { type: 'google_needs_username', name: tokenInfo.name, firstName: tokenInfo.firstName, lastName: tokenInfo.lastName });
+                } else {
+                    playerSessions.set(ws, { userId: result.userId, username: result.username });
+                    onlineUsers.set(result.userId, ws);
+                    broadcastPresenceToFriends(result.userId, 'online');
+                    const profile = await auth.getProfile(result.userId);
+                    const rank = profile ? profile.rank : auth.getRank(1200);
+                    send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
+                }
+            } catch (e) {
+                console.error('Google login error:', e.message);
+                send(ws, { type: 'auth_error', error: 'Google verification failed' });
+            }
+            break;
+        }
+
+        case 'google_register': {
+            if (!process.env.GOOGLE_CLIENT_ID) {
+                send(ws, { type: 'auth_error', error: 'Google Sign-In not configured' });
+                break;
+            }
+            try {
+                const tokenInfo = await verifyGoogleToken(data.credential);
+                const result = await auth.googleRegister(tokenInfo.googleId, data.username, data.country, tokenInfo.firstName, tokenInfo.lastName);
+                if (result.error) {
+                    send(ws, { type: 'auth_error', error: result.error });
+                } else {
+                    playerSessions.set(ws, { userId: result.userId, username: result.username });
+                    onlineUsers.set(result.userId, ws);
+                    broadcastPresenceToFriends(result.userId, 'online');
+                    const profile = await auth.getProfile(result.userId);
+                    const rank = profile ? profile.rank : auth.getRank(1200);
+                    send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
+                }
+            } catch (e) {
+                console.error('Google register error:', e.message);
+                send(ws, { type: 'auth_error', error: 'Google verification failed' });
             }
             break;
         }
