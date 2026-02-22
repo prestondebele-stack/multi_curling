@@ -994,6 +994,7 @@ async function handleMessage(ws, message) {
                 send(ws, { type: 'friend_request_sent', username: target.username });
                 const targetWs = onlineUsers.get(target.id);
                 if (targetWs) send(targetWs, { type: 'friend_request_received', fromUserId: session.userId, fromUsername: session.username });
+                sendPushNotification(target.id, 'Friend Request', `${session.username} sent you a friend request!`);
             } catch (e) {
                 console.error('Friend request error:', e.message);
                 send(ws, { type: 'friend_request_error', error: 'Failed to send request' });
@@ -1169,6 +1170,7 @@ async function handleMessage(ws, message) {
                 const profile = await auth.getProfile(session.userId);
                 const fromRank = profile ? profile.rank : auth.getRank(1200);
                 send(toWs, { type: 'game_invite_received', inviteId, fromUserId: session.userId, fromUsername: session.username, fromRank });
+                sendPushNotification(toUserId, 'Game Invite!', `${session.username} wants to play curling with you!`);
             } catch (e) {
                 console.error('Send game invite error:', e.message);
                 send(ws, { type: 'game_invite_error', error: 'Failed to send invite' });
