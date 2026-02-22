@@ -77,10 +77,9 @@ const MIME_TYPES = {
 const PUBLIC_DIR = __dirname; // game files are in same directory
 
 const httpServer = http.createServer((req, res) => {
-    // Serve static files
-    let filePath = req.url === '/' ? '/index.html' : req.url;
-    // Remove query strings
-    filePath = filePath.split('?')[0];
+    // Serve static files — strip query string FIRST, then check for root
+    let filePath = req.url.split('?')[0];
+    if (filePath === '/') filePath = '/index.html';
     const fullPath = path.join(PUBLIC_DIR, filePath);
 
     // Security: prevent directory traversal
