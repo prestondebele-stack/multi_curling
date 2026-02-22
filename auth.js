@@ -329,4 +329,45 @@ async function getLeaderboard(userId) {
     }
 }
 
-module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard };
+async function getGameHistory(userId, limit = 20) {
+    if (!db.isAvailable()) return [];
+    try {
+        const result = await db.query(
+            `SELECT g.id, g.red_user_id, g.yellow_user_id, g.red_score, g.yellow_score,
+                    g.winner_id, g.end_count, g.played_at,
+                    ru.username AS red_username, yu.username AS yellow_username,
+                    ru.rating AS red_rating, yu.rating AS yellow_rating
+             FROM game_history g
+             JOIN users ru ON ru.id = g.red_user_id
+             JOIN users yu ON yu.id = g.yellow_user_id
+             WHERE g.red_user_id = $1 OR g.yellow_user_id = $1
+             ORDER BY g.played_at DESC
+             LIMIT $2`,
+            [userId, limit]
+        );
+        return result.rows.map(row => {
+            const wasRed = row.red_user_id === userId;
+            const myScore = wasRed ? row.red_score : row.yellow_score;
+            const oppScore = wasRed ? row.yellow_score : row.red_score;
+            const oppUsername = wasRed ? row.yellow_username : row.red_username;
+            const oppRating = wasRed ? row.yellow_rating : row.red_rating;
+            let outcome = 'draw';
+            if (row.winner_id === userId) outcome = 'win';
+            else if (row.winner_id !== null) outcome = 'loss';
+            return {
+                oppUsername,
+                oppRank: getRank(oppRating),
+                myScore,
+                oppScore,
+                result: outcome,
+                ends: row.end_count,
+                playedAt: row.played_at,
+            };
+        });
+    } catch (e) {
+        console.error('Game history error:', e.message);
+        return [];
+    }
+}
+
+module.exports = { register, login, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard, getGameHistory };

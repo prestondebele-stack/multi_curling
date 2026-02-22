@@ -874,6 +874,19 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        case 'get_game_history': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'game_history', games: [] }); break; }
+            try {
+                const games = await auth.getGameHistory(session.userId);
+                send(ws, { type: 'game_history', games });
+            } catch (e) {
+                console.error('Game history error:', e.message);
+                send(ws, { type: 'game_history', games: [] });
+            }
+            break;
+        }
+
         case 'get_security_question': {
             const result = await auth.getSecurityQuestion(data.username);
             if (result.error) {

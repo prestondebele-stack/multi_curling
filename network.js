@@ -333,6 +333,10 @@ const CurlingNetwork = (() => {
                 if (callbacks.onLeaderboard) callbacks.onLeaderboard({ players: data.players || [] });
                 break;
 
+            case 'game_history':
+                if (callbacks.onGameHistory) callbacks.onGameHistory({ games: data.games || [] });
+                break;
+
             case 'rating_update':
                 if (callbacks.onRatingUpdate) callbacks.onRatingUpdate({ rank: data.rank });
                 break;
@@ -705,6 +709,7 @@ const CurlingNetwork = (() => {
         sendTokenLogin(token) { send({ type: 'token_login', token }); },
         sendGetProfile() { send({ type: 'get_profile' }); },
         sendGetLeaderboard() { send({ type: 'get_leaderboard' }); },
+        sendGetGameHistory() { send({ type: 'get_game_history' }); },
         sendGetSecurityQuestion(username) { send({ type: 'get_security_question', username }); },
         sendResetPassword(username, answer, newPassword) { send({ type: 'reset_password', username, answer, newPassword }); },
         sendGetVapidKey() { send({ type: 'get_vapid_key' }); },
@@ -751,6 +756,7 @@ const CurlingNetwork = (() => {
         onAuthError(cb) { callbacks.onAuthError = cb; },
         onProfileData(cb) { callbacks.onProfileData = cb; },
         onLeaderboard(cb) { callbacks.onLeaderboard = cb; },
+        onGameHistory(cb) { callbacks.onGameHistory = cb; },
         onRatingUpdate(cb) { callbacks.onRatingUpdate = cb; },
         onSecurityQuestion(cb) { callbacks.onSecurityQuestion = cb; },
         onPasswordResetSuccess(cb) { callbacks.onPasswordResetSuccess = cb; },

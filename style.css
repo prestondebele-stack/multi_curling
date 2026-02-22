@@ -1943,6 +1943,111 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* ================================================
+   MATCH HISTORY (v118)
+   ================================================ */
+#lobby-history-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
+#lobby-history-panel h3 {
+    color: #fff;
+    margin: 0 0 12px 0;
+    font-size: 18px;
+}
+
+#history-list {
+    width: 100%;
+    max-height: 55vh;
+    overflow-y: auto;
+    margin-bottom: 12px;
+    scrollbar-width: thin;
+    scrollbar-color: #5c9ae6 rgba(255,255,255,0.05);
+}
+
+.history-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+}
+
+.history-row:nth-child(odd) {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.history-row:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.history-win { border-left-color: #4caf50; }
+.history-loss { border-left-color: #e53935; }
+.history-draw { border-left-color: #888; }
+
+.history-result {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 12px;
+    flex-shrink: 0;
+    color: #fff;
+}
+
+.history-result.win { background: #4caf50; }
+.history-result.loss { background: #e53935; }
+.history-result.draw { background: #666; }
+
+.history-opp {
+    flex: 1;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.history-opp .rank-badge {
+    font-size: 9px;
+    padding: 1px 5px;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+.history-score {
+    color: #fff;
+    font-weight: bold;
+    font-size: 13px;
+    flex-shrink: 0;
+    min-width: 36px;
+    text-align: center;
+}
+
+.history-ends {
+    color: #666;
+    font-size: 11px;
+    flex-shrink: 0;
+    min-width: 42px;
+    text-align: center;
+}
+
+.history-date {
+    color: #666;
+    font-size: 11px;
+    flex-shrink: 0;
+    min-width: 44px;
+    text-align: right;
+}
+
+/* ================================================
    ONLINE TEAM BADGE
    ================================================ */
 #online-team-badge {

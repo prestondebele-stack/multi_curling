@@ -3147,7 +3147,7 @@
     }
 
     function showLobbyPanel(panelId) {
-        const panels = ['lobby-menu', 'lobby-ends-panel', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel', 'lobby-leaderboard-panel'];
+        const panels = ['lobby-menu', 'lobby-ends-panel', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel', 'lobby-leaderboard-panel', 'lobby-history-panel'];
         panels.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = id === panelId ? 'flex' : 'none';
@@ -3157,6 +3157,7 @@
             const isLoggedIn = !!localStorage.getItem('curling_token');
             document.getElementById('lobby-friends').style.display = isLoggedIn ? 'block' : 'none';
             document.getElementById('lobby-leaderboard').style.display = isLoggedIn ? 'block' : 'none';
+            document.getElementById('lobby-history').style.display = isLoggedIn ? 'block' : 'none';
         }
     }
 
@@ -3228,6 +3229,22 @@
             0x1F1E6 + c.charCodeAt(0) - 65,
             0x1F1E6 + c.charCodeAt(1) - 65
         );
+    }
+
+    // v118: Format timestamp as relative date string
+    function formatRelativeDate(dateStr) {
+        const now = new Date();
+        const date = new Date(dateStr);
+        const diffMs = now - date;
+        const diffMin = Math.floor(diffMs / 60000);
+        const diffHr = Math.floor(diffMs / 3600000);
+        const diffDay = Math.floor(diffMs / 86400000);
+
+        if (diffMin < 60) return 'Just now';
+        if (diffHr < 24) return diffHr + 'h ago';
+        if (diffDay < 7) return diffDay + 'd ago';
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return months[date.getMonth()] + ' ' + date.getDate();
     }
 
     function updateScoreboardNames() {
@@ -3404,6 +3421,32 @@
                 btn.disabled = true;
             });
         });
+    }
+
+    // v118: Match History rendering
+    function renderMatchHistory(games) {
+        const container = document.getElementById('history-list');
+        if (games.length === 0) {
+            container.innerHTML = '<p style="color:#888;font-size:13px;text-align:center;">No matches yet</p>';
+            return;
+        }
+        container.innerHTML = games.map(g => {
+            const resultClass = g.result;
+            const resultLabel = g.result === 'win' ? 'W' : g.result === 'loss' ? 'L' : 'D';
+            const badgeColor = g.oppRank.color;
+            const badgeText = (badgeColor === '#ffd54f' || badgeColor === '#e0e0e0') ? '#333' : '#fff';
+            const dateStr = formatRelativeDate(g.playedAt);
+
+            return `<div class="history-row history-${resultClass}">
+                <span class="history-result ${resultClass}">${resultLabel}</span>
+                <span class="history-opp">${g.oppUsername}
+                    <span class="rank-badge" style="background:${badgeColor};color:${badgeText}">${g.oppRank.name}</span>
+                </span>
+                <span class="history-score">${g.myScore} - ${g.oppScore}</span>
+                <span class="history-ends">${g.ends} ends</span>
+                <span class="history-date">${dateStr}</span>
+            </div>`;
+        }).join('');
     }
 
     function renderPendingRequests(incoming, outgoing) {
@@ -4146,6 +4189,11 @@
             renderLeaderboard(players);
         });
 
+        // ---- MATCH HISTORY HANDLER ----
+        CurlingNetwork.onGameHistory(({ games }) => {
+            renderMatchHistory(games);
+        });
+
         // ---- FRIENDS & INVITE HANDLERS ----
         CurlingNetwork.onFriendsList(({ friends }) => {
             friendsList = friends || [];
@@ -4256,9 +4304,10 @@
             CurlingNetwork.sendGetProfile();
             // Set up push notifications for logged-in users
             PushSetup.setup();
-            // Show friends and leaderboard buttons for logged-in users
+            // Show friends, leaderboard, and history buttons for logged-in users
             document.getElementById('lobby-friends').style.display = 'block';
             document.getElementById('lobby-leaderboard').style.display = 'block';
+            document.getElementById('lobby-history').style.display = 'block';
         });
 
         CurlingNetwork.onVapidKey(({ key }) => {
@@ -4542,6 +4591,16 @@
         showLobbyPanel('lobby-menu');
     });
 
+    // v118: Match History button handlers
+    document.getElementById('lobby-history').addEventListener('click', () => {
+        showLobbyPanel('lobby-history-panel');
+        CurlingNetwork.sendGetGameHistory();
+    });
+
+    document.getElementById('lobby-history-back').addEventListener('click', () => {
+        showLobbyPanel('lobby-menu');
+    });
+
     document.getElementById('friend-search-btn').addEventListener('click', () => {
         const query = document.getElementById('friend-username-input').value.trim();
         if (!query) return;
@@ -4675,6 +4734,7 @@
         document.getElementById('auth-panel').style.display = 'none';
         document.getElementById('lobby-friends').style.display = 'none';
         document.getElementById('lobby-leaderboard').style.display = 'none';
+        document.getElementById('lobby-history').style.display = 'none';
         // If there's a pending join code (from share link), auto-join now
         if (_pendingJoinCode) {
             executePendingJoin();
@@ -4759,6 +4819,7 @@
         document.getElementById('user-rating').textContent = '';
         document.getElementById('lobby-friends').style.display = 'none';
         document.getElementById('lobby-leaderboard').style.display = 'none';
+        document.getElementById('lobby-history').style.display = 'none';
         friendsList = [];
         pendingRequests = { incoming: [], outgoing: [] };
     });
