@@ -890,6 +890,15 @@
         }
     });
 
+    // v116: Quick guide popup — shown once after first online login
+    function showQuickGuide() {
+        document.getElementById('quick-guide-overlay').style.display = 'flex';
+    }
+
+    document.getElementById('quick-guide-dismiss').addEventListener('click', () => {
+        document.getElementById('quick-guide-overlay').style.display = 'none';
+    });
+
     function showGameOver() {
         // Game is over — clear the active session so page refresh doesn't try to rejoin
         CurlingNetwork.clearActiveSession();
@@ -4181,6 +4190,10 @@
                 // If there's a pending join code (from share link), auto-join now
                 if (_pendingJoinCode) {
                     executePendingJoin();
+                } else if (!localStorage.getItem('curling_guide_shown')) {
+                    localStorage.setItem('curling_guide_shown', '1');
+                    showLobbyPanel('lobby-menu');
+                    showQuickGuide();
                 } else {
                     showLobbyPanel('lobby-menu');
                 }
