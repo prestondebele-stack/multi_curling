@@ -3163,6 +3163,11 @@
     function showLobbyScreen() {
         document.getElementById('lobby-screen').style.display = 'flex';
         showLobbyPanel('lobby-menu');
+        // v116: Show quick guide once on first visit to online lobby
+        if (!localStorage.getItem('curling_guide_shown')) {
+            localStorage.setItem('curling_guide_shown', '1');
+            showQuickGuide();
+        }
     }
 
     function hideLobbyScreen() {
@@ -4244,10 +4249,6 @@
                 // If there's a pending join code (from share link), auto-join now
                 if (_pendingJoinCode) {
                     executePendingJoin();
-                } else if (!localStorage.getItem('curling_guide_shown')) {
-                    localStorage.setItem('curling_guide_shown', '1');
-                    showLobbyPanel('lobby-menu');
-                    showQuickGuide();
                 } else {
                     showLobbyPanel('lobby-menu');
                 }
