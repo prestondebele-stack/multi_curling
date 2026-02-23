@@ -1276,9 +1276,6 @@
         ctx.lineWidth = 2;
         ctx.strokeRect(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
 
-        // Ice logos (between the hog lines)
-        drawIceLogos();
-
         // Center line
         ctx.strokeStyle = CENTER_LINE;
         ctx.lineWidth = 1;
