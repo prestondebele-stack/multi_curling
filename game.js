@@ -1727,38 +1727,12 @@
         const startX = 0;
         const startY = P.hack + 1.0;
 
-        const showTrajectory = gameState.botMode && CurlingBot.getDifficulty() === 'easy';
+        // v121: Hard bot mode hides aim line entirely; easy shows line + trajectory
+        const isHardBot = gameState.botMode && CurlingBot.getDifficulty() === 'hard';
+        const isEasyBot = gameState.botMode && CurlingBot.getDifficulty() === 'easy';
 
-        if (showTrajectory) {
-            // Curved trajectory preview for easy mode
-            const weightPct = parseFloat(document.getElementById('weight-slider').value);
-            const spinDir = document.getElementById('spin-cw').classList.contains('active') ? 1 : -1;
-            const spinAmount = parseFloat(document.getElementById('spin-amount-slider').value);
-
-            if (_trajCache.aim !== aimDeg || _trajCache.weight !== weightPct ||
-                _trajCache.spin !== spinDir || _trajCache.amount !== spinAmount) {
-                _trajCache.aim = aimDeg;
-                _trajCache.weight = weightPct;
-                _trajCache.spin = spinDir;
-                _trajCache.amount = spinAmount;
-                _trajCache.points = CurlingPhysics.simulateTrajectory(aimDeg, weightPct, spinDir, spinAmount);
-            }
-
-            const pts = _trajCache.points;
-            if (pts && pts.length > 1) {
-                ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
-                ctx.lineWidth = 1.5;
-                ctx.setLineDash([8, 6]);
-                ctx.beginPath();
-                ctx.moveTo(toCanvasX(pts[0].x), toCanvasY(pts[0].y));
-                for (let i = 1; i < pts.length; i++) {
-                    ctx.lineTo(toCanvasX(pts[i].x), toCanvasY(pts[i].y));
-                }
-                ctx.stroke();
-                ctx.setLineDash([]);
-            }
-        } else {
-            // Straight dashed aim line
+        if (!isHardBot) {
+            // Straight dashed aim line (visible on easy, medium, and online)
             const lineLen = 45;
             const endX = startX + lineLen * Math.sin(aimRad);
             const endY = startY + lineLen * Math.cos(aimRad);
@@ -1771,9 +1745,39 @@
             ctx.lineTo(toCanvasX(endX), toCanvasY(endY));
             ctx.stroke();
             ctx.setLineDash([]);
+
+            // Easy mode: also show curved trajectory preview
+            if (isEasyBot) {
+                const weightPct = parseFloat(document.getElementById('weight-slider').value);
+                const spinDir = document.getElementById('spin-cw').classList.contains('active') ? 1 : -1;
+                const spinAmount = parseFloat(document.getElementById('spin-amount-slider').value);
+
+                if (_trajCache.aim !== aimDeg || _trajCache.weight !== weightPct ||
+                    _trajCache.spin !== spinDir || _trajCache.amount !== spinAmount) {
+                    _trajCache.aim = aimDeg;
+                    _trajCache.weight = weightPct;
+                    _trajCache.spin = spinDir;
+                    _trajCache.amount = spinAmount;
+                    _trajCache.points = CurlingPhysics.simulateTrajectory(aimDeg, weightPct, spinDir, spinAmount);
+                }
+
+                const pts = _trajCache.points;
+                if (pts && pts.length > 1) {
+                    ctx.strokeStyle = 'rgba(100, 100, 255, 0.45)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([6, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(toCanvasX(pts[0].x), toCanvasY(pts[0].y));
+                    for (let i = 1; i < pts.length; i++) {
+                        ctx.lineTo(toCanvasX(pts[i].x), toCanvasY(pts[i].y));
+                    }
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            }
         }
 
-        // Draw the stone at delivery position (preview)
+        // Always draw the stone at delivery position (preview)
         const previewStone = {
             team: gameState.currentTeam,
             x: startX,

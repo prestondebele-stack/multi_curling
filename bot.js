@@ -19,7 +19,7 @@ const CurlingBot = (() => {
     // Shot type weight ranges (slider 0-100)
     const WEIGHT = {
         guard: { min: 5, max: 12 },
-        draw: { min: 28, max: 42 },
+        draw: { min: 35, max: 48 },
         control: { min: 43, max: 55 },
         takeout: { min: 60, max: 75 },
         peel: { min: 80, max: 100 },
