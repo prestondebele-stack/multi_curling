@@ -17,10 +17,13 @@ const CurlingBot = (() => {
     let isThinking = false;
 
     // Shot type weight ranges (slider 0-100)
+    // NOTE: guard/draw are approximate references. Actual placement
+    // shots use weightForDistance() for physics-calibrated weight.
+    // These ranges are used by calculateAim's curl threshold.
     const WEIGHT = {
-        guard: { min: 5, max: 12 },
-        draw: { min: 35, max: 48 },
-        control: { min: 43, max: 55 },
+        guard: { min: 20, max: 35 },
+        draw: { min: 35, max: 55 },
+        control: { min: 55, max: 65 },
         takeout: { min: 60, max: 75 },
         peel: { min: 80, max: 100 },
     };
@@ -46,6 +49,53 @@ const CurlingBot = (() => {
 
     function clamp(val, min, max) {
         return Math.max(min, Math.min(max, val));
+    }
+
+    // --------------------------------------------------------
+    // PHYSICS-CALIBRATED WEIGHT LOOKUP (v122)
+    // --------------------------------------------------------
+    // One-time lookup table: for each weight 0-100, simulate a
+    // straight throw and record the stopping Y position.
+    let _stoppingLookup = null;
+
+    function buildStoppingLookup() {
+        if (_stoppingLookup) return _stoppingLookup;
+        _stoppingLookup = [];
+        const P = CurlingPhysics.POSITIONS;
+        const FRIC = CurlingPhysics.FRICTION;
+        const g = 9.81;
+        const dt = 1 / 240; // matches game PHYSICS_DT
+        const startY = P.hack + 1.0;
+
+        for (let w = 0; w <= 100; w++) {
+            const speed = CurlingPhysics.weightToSpeed(w);
+            let y = startY;
+            let vy = speed;
+            while (vy > 0.005) { // matches physics.js stop threshold
+                const mu = FRIC.getMu(vy);
+                vy -= mu * g * dt;
+                if (vy < 0) vy = 0;
+                y += vy * dt;
+            }
+            _stoppingLookup.push(y);
+        }
+        return _stoppingLookup;
+    }
+
+    function weightForDistance(targetY) {
+        const lookup = buildStoppingLookup();
+        if (targetY <= lookup[0]) return 0;
+        if (targetY >= lookup[100]) return 100;
+        let lo = 0, hi = 100;
+        while (hi - lo > 1) {
+            const mid = Math.floor((lo + hi) / 2);
+            if (lookup[mid] < targetY) lo = mid;
+            else hi = mid;
+        }
+        const loY = lookup[lo];
+        const hiY = lookup[hi];
+        const frac = (targetY - loY) / (hiY - loY || 1);
+        return lo + frac;
     }
 
     // Check if any friendly (bot) stone sits behind a target stone,
@@ -328,7 +378,7 @@ const CurlingBot = (() => {
         return {
             targetX: guardX,
             targetY: guardY,
-            weight: rand(WEIGHT.guard.min, WEIGHT.guard.max),
+            weight: weightForDistance(guardY),
             spin: Math.random() > 0.5 ? 1 : -1,
             spinAmount: rand(2.0, 3.5),
             description: 'Center Guard',
@@ -344,7 +394,7 @@ const CurlingBot = (() => {
         return {
             targetX: guardX,
             targetY: guardY,
-            weight: rand(WEIGHT.guard.min, WEIGHT.guard.max),
+            weight: weightForDistance(guardY),
             spin: -side, // curl toward center
             spinAmount: rand(2.5, 3.5),
             description: 'Corner Guard',
@@ -366,7 +416,7 @@ const CurlingBot = (() => {
             return {
                 targetX,
                 targetY,
-                weight: rand(WEIGHT.draw.min, WEIGHT.draw.max),
+                weight: weightForDistance(targetY),
                 spin: targetX > 0 ? -1 : 1, // curl around guard
                 spinAmount: rand(2.5, 4.0),
                 description: 'Come-Around',
@@ -390,7 +440,7 @@ const CurlingBot = (() => {
         return {
             targetX,
             targetY,
-            weight: rand(WEIGHT.draw.min, WEIGHT.draw.max),
+            weight: weightForDistance(targetY),
             spin: -side,
             spinAmount: rand(2.5, 3.5),
             description: 'Draw',
@@ -400,10 +450,11 @@ const CurlingBot = (() => {
     function makeDrawToButton(board) {
         // Precise draw aimed at the button for scoring
         const P = CurlingPhysics.POSITIONS;
+        const targetY = P.farTeeLine + rand(-0.15, 0.15);
         return {
             targetX: rand(-0.15, 0.15),
-            targetY: P.farTeeLine + rand(-0.15, 0.15),
-            weight: rand(WEIGHT.draw.min, WEIGHT.draw.max),
+            targetY,
+            weight: weightForDistance(targetY),
             spin: Math.random() > 0.5 ? 1 : -1,
             spinAmount: rand(2.5, 3.5),
             description: 'Draw to Button',
@@ -416,11 +467,11 @@ const CurlingBot = (() => {
         const scoring = board.inHouseSorted.filter(s => s.team === 'yellow');
         if (scoring.length > 0) {
             const best = scoring[0].stone;
-            const guardY = best.y - rand(2.0, 4.0);
+            const guardY = Math.max(P.farHogLine + 0.5, best.y - rand(2.0, 4.0));
             return {
                 targetX: best.x + rand(-0.2, 0.2),
-                targetY: Math.max(P.farHogLine + 0.5, guardY),
-                weight: rand(WEIGHT.guard.min, WEIGHT.guard.max),
+                targetY: guardY,
+                weight: weightForDistance(guardY),
                 spin: best.x > 0 ? -1 : 1,
                 spinAmount: rand(2.5, 3.5),
                 description: 'Guard Shot Stone',
@@ -547,7 +598,7 @@ const CurlingBot = (() => {
             return {
                 targetX: target.x + offset,
                 targetY: target.y,
-                weight: rand(WEIGHT.draw.max, WEIGHT.draw.max + 8), // just above draw weight (42-50)
+                weight: weightForDistance(target.y) + rand(6, 12), // just above draw weight
                 spin: target.x > 0 ? -1 : 1,
                 spinAmount: rand(2.5, 3.5),
                 description: 'Hit & Roll',
@@ -568,7 +619,7 @@ const CurlingBot = (() => {
             return {
                 targetX,
                 targetY,
-                weight: rand(WEIGHT.draw.min, WEIGHT.draw.max),
+                weight: weightForDistance(targetY),
                 spin: targetX > 0 ? -1 : 1,
                 spinAmount: rand(2.5, 3.5),
                 description: 'Freeze',
@@ -592,7 +643,7 @@ const CurlingBot = (() => {
             return {
                 targetX: target.x,
                 targetY: target.y,
-                weight: rand(WEIGHT.draw.max, WEIGHT.draw.max + 5), // just above draw weight (42-47)
+                weight: weightForDistance(target.y) + rand(3, 6), // just above draw weight
                 spin: target.x > 0 ? -1 : 1,
                 spinAmount: rand(2.5, 3.5),
                 description: 'Tap',
@@ -746,7 +797,7 @@ const CurlingBot = (() => {
 
         // Calculate where stone roughly will end up
         // Simple estimation: distance remaining at current speed with friction
-        const estStopDist = speed * speed / (2 * 0.008 * 9.81); // v²/(2μg)
+        const estStopDist = speed * speed / (2 * CurlingPhysics.FRICTION.getMu(speed) * 9.81); // v²/(2μg)
         const estStopY = stone.y + estStopDist * (stone.vy / Math.max(speed, 0.01));
 
         // Sweep strategy depends on shot type
