@@ -813,6 +813,7 @@
         }
 
         stopPhysicsWorker();
+        hideSubmitShotButton(); // v122b: clear submit button at end of end
         gameState.redThrown = 0;
         gameState.yellowThrown = 0;
         gameState.stones = [];
@@ -3890,7 +3891,8 @@
                 gameState._replayRestore();
             }
             hideReplayButton();
-            hideSubmitShotButton();
+            // v122b: Don't hide submit button here — user needs time to tap it
+            // It will hide on their next throw (deliverStone), end scoring (endEnd), or reset
 
             gameState._opponentThrowPending = true;
 
