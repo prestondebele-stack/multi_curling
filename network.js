@@ -204,7 +204,7 @@ const CurlingNetwork = (() => {
                 isReconnecting = false;
                 hasActiveGame = true;
                 saveActiveSession();
-                if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6 });
+                if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6, isAsync: data.isAsync || false, roomCode: data.roomCode || roomCode });
                 break;
 
             case 'throw_ack':

@@ -1771,6 +1771,85 @@ async function handleMessage(ws, message) {
             const code = (data.code || '').toUpperCase();
             const result = joinRoom(code, ws);
             if (result.error) {
+                // v123b: Before returning room_not_found, check async games in DB
+                if (result.error === 'room_not_found' && db.isAvailable()) {
+                    const session = playerSessions.get(ws);
+                    if (session && session.userId) {
+                        try {
+                            const asyncResult = await auth.joinAsyncGame(code, session.userId);
+                            if (!asyncResult.error) {
+                                // Hydrate room, attach yellow, send game_start, push notify red
+                                let room = rooms.get(code);
+                                if (room) {
+                                    room.yellowUserId = session.userId;
+                                    room.state.phase = 'playing';
+                                } else {
+                                    room = await hydrateRoom(code);
+                                }
+                                if (!room) { send(ws, { type: 'room_not_found', code }); break; }
+
+                                // Attach yellow player
+                                room.players[1] = ws;
+                                room.sessions[1] = session;
+                                playerRooms.set(ws, code);
+
+                                // Get player info for both sides
+                                const yellowInfo = await getPlayerInfo(ws);
+                                let redInfo = null;
+                                const redWs = room.players[0];
+                                if (redWs && redWs.readyState === WebSocket.OPEN) {
+                                    redInfo = await getPlayerInfo(redWs);
+                                } else if (room.redUserId) {
+                                    try {
+                                        const profile = await auth.getProfile(room.redUserId);
+                                        if (profile) {
+                                            redInfo = {
+                                                username: profile.username,
+                                                rank: profile.rank || auth.getRank(profile.rating || 1200),
+                                                country: profile.country || '',
+                                            };
+                                        }
+                                    } catch (e) { /* red info not critical */ }
+                                }
+
+                                // Send game_start to yellow (joiner)
+                                send(ws, {
+                                    type: 'game_start',
+                                    yourTeam: 'yellow',
+                                    opponent: redInfo,
+                                    totalEnds: room.totalEnds || 4,
+                                    roomCode: code,
+                                    isAsync: true,
+                                });
+
+                                // Notify red if online, otherwise push
+                                if (redWs && redWs.readyState === WebSocket.OPEN) {
+                                    send(redWs, {
+                                        type: 'game_start',
+                                        yourTeam: 'red',
+                                        opponent: yellowInfo,
+                                        totalEnds: room.totalEnds || 4,
+                                        roomCode: code,
+                                        isAsync: true,
+                                    });
+                                } else if (room.redUserId) {
+                                    sendPushNotification(room.redUserId, "Game On!",
+                                        `${session.username} joined your game! It's your turn.`);
+                                }
+
+                                // Persist updated state
+                                auth.persistGameState(room.code, room.state, room.redUserId, room.yellowUserId)
+                                    .catch(err => console.error('[ASYNC] Persist error after join:', err.message));
+
+                                console.log(`[ASYNC] Player ${session.username} joined async game ${code} via join_room fallback`);
+                                break;
+                            }
+                        } catch (e) {
+                            console.error('[ASYNC] join_room DB fallback error:', e.message);
+                            /* fall through to original error */
+                        }
+                    }
+                }
                 send(ws, { type: result.error, code });
             } else if (result.sameUser) {
                 // v115h: Same user rejoining (clicked their own invite link)

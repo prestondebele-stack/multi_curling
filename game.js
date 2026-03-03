@@ -5064,6 +5064,12 @@
         showLobbyPanel('lobby-menu');
     });
 
+    document.getElementById('join-friend-game-btn').addEventListener('click', () => {
+        showLobbyPanel('join-async-panel');
+        document.getElementById('async-join-code-input').value = '';
+        document.getElementById('async-join-error').style.display = 'none';
+    });
+
     document.getElementById('create-async-game-btn').addEventListener('click', () => {
         showLobbyPanel('create-async-panel');
         // Reset state

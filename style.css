@@ -1271,11 +1271,15 @@ input[type="range"]::-moz-range-thumb {
 #lobby-create-panel,
 #lobby-join-panel,
 #lobby-queue-panel,
-#lobby-starting-panel {
+#lobby-starting-panel,
+#lobby-my-games-panel,
+#create-async-panel,
+#join-async-panel {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
+    width: 100%;
 }
 
 #opponent-info-bar {
@@ -2976,7 +2980,7 @@ input[type="range"]::-moz-range-thumb {
 /* ================================================
    MY GAMES (v123 - Async Multiplayer)
    ================================================ */
-#my-games-list { max-height: 55vh; overflow-y: auto; }
+#my-games-list { max-height: 55vh; overflow-y: auto; width: 100%; }
 .my-game-card {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 12px; margin: 6px 0; border-radius: 8px;
@@ -2985,7 +2989,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .my-game-card:active { background: rgba(255,255,255,0.12); }
 .my-game-card .game-card-left { flex: 1; min-width: 0; }
-.my-game-card .opponent-name { font-weight: 600; color: #eee; font-size: 14px; }
+.my-game-card .opponent-name { font-weight: 600; color: #eee; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .my-game-card .opponent-name .rank-badge { font-size: 11px; margin-left: 4px; }
 .my-game-card .game-score { color: #aaa; font-size: 12px; margin-top: 2px; }
 .my-game-card .game-time { color: #666; font-size: 11px; margin-top: 1px; }
@@ -3005,7 +3009,12 @@ input[type="range"]::-moz-range-thumb {
     display: flex; gap: 8px; justify-content: center; margin: 8px 0;
 }
 #async-game-code { font-size: 16px; text-align: center; margin: 10px 0; color: #eee; }
-#async-code-text { font-size: 20px; letter-spacing: 3px; color: #4CAF50; }
+#async-code-text { font-size: 24px; font-weight: 700; letter-spacing: 4px; color: #4CAF50; }
+#async-join-code-input {
+    text-align: center; text-transform: uppercase; font-size: 20px; font-weight: 700;
+    letter-spacing: 4px; background: rgba(0,0,0,0.3); border: 1px solid #555;
+    color: #fff; padding: 10px; border-radius: 8px; width: 140px;
+}
 .my-game-card .forfeit-btn {
     background: none; border: 1px solid #e53935; color: #e53935;
     padding: 2px 6px; border-radius: 4px; font-size: 10px; cursor: pointer;
