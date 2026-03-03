@@ -4340,6 +4340,8 @@
         });
 
         CurlingNetwork.onOpponentDisconnected(() => {
+            // v124b: Don't show disconnect overlay for async games — player just left
+            if (gameState.isAsync) return;
             gameState.opponentConnected = false;
             showDisconnectOverlay();
         });

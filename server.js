@@ -809,10 +809,8 @@ function cleanupPlayer(ws) {
         auth.persistGameState(room.code, room.state, room.redUserId, room.yellowUserId)
             .catch(err => console.error(`[ASYNC] Persist on disconnect error (room ${code}):`, err.message));
 
-        // Tell opponent they're temporarily disconnected (game persists)
-        if (opponent && opponent.readyState === WebSocket.OPEN) {
-            send(opponent, { type: 'opponent_disconnected' });
-        }
+        // v124b: Don't notify opponent for async games — player just left, game persists in DB
+        // They can come back hours later. No alarm needed.
 
         // Broadcast offline to friends
         if (session && session.userId) {

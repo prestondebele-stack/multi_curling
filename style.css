@@ -940,6 +940,8 @@ input[type="range"]::-moz-range-thumb {
         gap: 6px;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
+        touch-action: pan-x;              /* v124b: prevent page scroll on controls */
+        overscroll-behavior: contain;     /* v124b: prevent scroll chaining */
     }
 
     /* Compact mode/difficulty selectors */
@@ -1018,20 +1020,26 @@ input[type="range"]::-moz-range-thumb {
         font-size: 11px;
     }
 
-    /* Compact controls */
+    /* v124b: Compact controls — fit all on mobile screen */
     #controls-panel {
-        gap: 6px;
-        padding: 6px;
+        gap: 4px;
+        padding: 4px 6px;
     }
 
     #controls-panel label {
-        font-size: 11px;
-        margin-bottom: 2px;
+        font-size: 10px;
+        margin-bottom: 1px;
+    }
+
+    .action-row button {
+        font-size: 12px;
+        padding: 6px 4px;
     }
 
     /* Larger touch targets for sliders */
     input[type="range"] {
         height: 10px;
+        touch-action: none;   /* v124b: prevent page scroll when dragging sliders */
     }
 
     input[type="range"]::-webkit-slider-thumb {
@@ -1044,28 +1052,28 @@ input[type="range"]::-moz-range-thumb {
         height: 28px;
     }
 
-    /* Larger touch targets for buttons */
+    /* v124b: Compact touch targets — fit all controls on screen */
     .spin-btn,
     .sweep-btn {
-        padding: 10px 6px;
-        font-size: 14px;
+        padding: 6px 4px;
+        font-size: 12px;
         border-radius: 8px;
+        min-height: 32px;
+    }
+
+    /* Compact throw/sweep buttons */
+    #throw-btn {
+        padding: 10px;
+        font-size: 16px;
+        border-radius: 10px;
         min-height: 40px;
     }
 
-    /* Big throw/sweep buttons */
-    #throw-btn {
-        padding: 16px;
-        font-size: 20px;
-        border-radius: 10px;
-        min-height: 52px;
-    }
-
     #sweep-toggle-btn {
-        padding: 16px;
-        font-size: 18px;
+        padding: 10px;
+        font-size: 15px;
         border-radius: 10px;
-        min-height: 52px;
+        min-height: 40px;
     }
 
     /* Hide keyboard instructions on mobile */
