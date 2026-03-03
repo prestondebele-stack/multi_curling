@@ -420,6 +420,7 @@
                         <button id="copy-async-code" class="lobby-btn" style="font-size:12px;padding:4px 8px;">Copy</button>
                     </p>
                     <p id="async-share-msg" style="display:none; color:#4CAF50; font-size:13px;">Code copied!</p>
+                    <button id="async-invite-friend-btn" class="lobby-btn" style="display:none;">Invite a Friend</button>
                     <button id="create-async-back" class="lobby-btn secondary">Back</button>
                 </div>
                 <div id="join-async-panel" style="display:none;">
@@ -439,6 +440,15 @@
                     <button id="invite-accept-btn" class="lobby-btn">Accept</button>
                     <button id="invite-deny-btn" class="lobby-btn secondary">Deny</button>
                 </div>
+            </div>
+        </div>
+        <div id="friend-picker-overlay" style="display:none;">
+            <div class="friend-picker-content">
+                <div class="friend-picker-header">
+                    <h3>Invite a Friend</h3>
+                    <button id="friend-picker-close-btn" class="friend-picker-close">&times;</button>
+                </div>
+                <div id="friend-picker-list"></div>
             </div>
         </div>
         <div id="disconnect-overlay" style="display:none;">

@@ -719,6 +719,20 @@ function cleanupInvitesForUser(userId) {
     }
 }
 
+// v124: Deliver pending async game invites when a user logs in
+async function deliverPendingAsyncInvites(ws, userId) {
+    for (const [inviteId, inv] of pendingInvites) {
+        if (inv.toUserId === userId && inv.gameCode) {
+            try {
+                const profile = await auth.getProfile(inv.fromUserId);
+                const fromRank = profile ? profile.rank : auth.getRank(1200);
+                send(ws, { type: 'game_invite_received', inviteId, fromUserId: inv.fromUserId,
+                    fromUsername: inv.fromUsername, fromRank, gameCode: inv.gameCode });
+            } catch (e) { /* non-critical */ }
+        }
+    }
+}
+
 function removeFromQueue(ws) {
     const idx = matchmakingQueue.indexOf(ws);
     if (idx !== -1) matchmakingQueue.splice(idx, 1);
@@ -916,6 +930,7 @@ async function handleMessage(ws, message) {
                 const profile = await auth.getProfile(result.userId);
                 const rank = profile ? profile.rank : auth.getRank(1200);
                 send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
+                deliverPendingAsyncInvites(ws, result.userId);
             }
             break;
         }
@@ -931,6 +946,7 @@ async function handleMessage(ws, message) {
                 const profile = await auth.getProfile(result.userId);
                 const rank = profile ? profile.rank : auth.getRank(1200);
                 send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
+                deliverPendingAsyncInvites(ws, result.userId);
             }
             break;
         }
@@ -955,6 +971,7 @@ async function handleMessage(ws, message) {
                 const profile = await auth.getProfile(session.userId);
                 const rank = profile ? profile.rank : auth.getRank(1200);
                 send(ws, { type: 'auth_success', token: data.token, username: session.username, rank });
+                deliverPendingAsyncInvites(ws, session.userId);
             }
             break;
         }
@@ -1400,6 +1417,7 @@ async function handleMessage(ws, message) {
                     const profile = await auth.getProfile(result.userId);
                     const rank = profile ? profile.rank : auth.getRank(1200);
                     send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
+                    deliverPendingAsyncInvites(ws, result.userId);
                 }
             } catch (e) {
                 console.error('Google login error:', e.message);
@@ -1425,6 +1443,7 @@ async function handleMessage(ws, message) {
                     const profile = await auth.getProfile(result.userId);
                     const rank = profile ? profile.rank : auth.getRank(1200);
                     send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
+                    deliverPendingAsyncInvites(ws, result.userId);
                 }
             } catch (e) {
                 console.error('Google register error:', e.message);
@@ -1648,55 +1667,90 @@ async function handleMessage(ws, message) {
         case 'send_game_invite': {
             const session = playerSessions.get(ws);
             if (!session) { send(ws, { type: 'game_invite_error', error: 'Must be logged in' }); break; }
-            if (playerRooms.has(ws)) { send(ws, { type: 'game_invite_error', error: 'You are already in a game' }); break; }
+            const asyncCode = data.gameCode || null;
+
+            // v124: For real-time invites, sender can't be in a game. For async, skip this check.
+            if (!asyncCode && playerRooms.has(ws)) { send(ws, { type: 'game_invite_error', error: 'You are already in a game' }); break; }
+
+            // v124: Validate async game code if provided
+            if (asyncCode && db.isAvailable()) {
+                try {
+                    const gameRow = await auth.loadGameState(asyncCode);
+                    if (!gameRow || gameRow.phase !== 'waiting' || gameRow.red_user_id !== session.userId) {
+                        send(ws, { type: 'game_invite_error', error: 'Invalid or already-joined game' }); break;
+                    }
+                } catch (e) {
+                    send(ws, { type: 'game_invite_error', error: 'Could not verify game' }); break;
+                }
+            }
+
             const toUserId = data.toUserId;
             const toWs = onlineUsers.get(toUserId);
-            if (!toWs || toWs.readyState !== WebSocket.OPEN) { send(ws, { type: 'game_invite_error', error: 'Player is offline' }); break; }
-            if (playerRooms.has(toWs)) { send(ws, { type: 'game_invite_error', error: 'Player is in a game' }); break; }
+
+            // v124: For real-time invites, target must be online & not in game. For async, allow offline.
+            if (!asyncCode) {
+                if (!toWs || toWs.readyState !== WebSocket.OPEN) { send(ws, { type: 'game_invite_error', error: 'Player is offline' }); break; }
+                if (playerRooms.has(toWs)) { send(ws, { type: 'game_invite_error', error: 'Player is in a game' }); break; }
+            }
+
             // Check for duplicate invite
             let isDuplicate = false;
             for (const [, inv] of pendingInvites) {
-                if (inv.fromUserId === session.userId && inv.toUserId === toUserId) {
+                if (inv.fromUserId === session.userId && inv.toUserId === toUserId && (inv.gameCode || null) === asyncCode) {
                     send(ws, { type: 'game_invite_error', error: 'Invite already sent' });
                     isDuplicate = true;
                     break;
                 }
             }
             if (isDuplicate) break;
-            // Check for mutual invite (they already invited us) — auto-start game
+
+            // Check for mutual invite (they already invited us) — only for real-time (no gameCode)
             let mutualHandled = false;
-            for (const [existingId, inv] of pendingInvites) {
-                if (inv.fromUserId === toUserId && inv.toUserId === session.userId) {
-                    // Mutual invite — start game immediately
-                    pendingInvites.delete(existingId);
-                    // Clean up other invites for both players
-                    cleanupInvitesForUser(session.userId);
-                    cleanupInvitesForUser(toUserId);
-                    const [red, yellow] = Math.random() < 0.5 ? [ws, toWs] : [toWs, ws];
-                    const room = createRoom(red);
-                    room.players[1] = yellow;
-                    playerRooms.set(yellow, room.code);
-                    await startGame(room);
-                    mutualHandled = true;
-                    break;
+            if (!asyncCode) {
+                for (const [existingId, inv] of pendingInvites) {
+                    if (inv.fromUserId === toUserId && inv.toUserId === session.userId && !inv.gameCode) {
+                        // Mutual invite — start game immediately
+                        pendingInvites.delete(existingId);
+                        cleanupInvitesForUser(session.userId);
+                        cleanupInvitesForUser(toUserId);
+                        const [red, yellow] = Math.random() < 0.5 ? [ws, toWs] : [toWs, ws];
+                        const room = createRoom(red);
+                        room.players[1] = yellow;
+                        playerRooms.set(yellow, room.code);
+                        await startGame(room);
+                        mutualHandled = true;
+                        break;
+                    }
                 }
             }
             if (mutualHandled) break;
-            // Get target username
+
+            // Get target username and create invite
             try {
                 const targetResult = await db.query('SELECT username FROM users WHERE id = $1', [toUserId]);
                 const toUsername = targetResult.rows[0]?.username || '';
                 const inviteId = uuidv4();
                 pendingInvites.set(inviteId, {
                     fromUserId: session.userId, fromUsername: session.username,
-                    toUserId, toUsername, fromWs: ws, createdAt: Date.now()
+                    toUserId, toUsername, fromWs: ws, createdAt: Date.now(),
+                    gameCode: asyncCode    // v124: async game code
                 });
                 send(ws, { type: 'game_invite_sent', inviteId, toUsername });
+
                 // Get sender's rank for the invite display
                 const profile = await auth.getProfile(session.userId);
                 const fromRank = profile ? profile.rank : auth.getRank(1200);
-                send(toWs, { type: 'game_invite_received', inviteId, fromUserId: session.userId, fromUsername: session.username, fromRank });
-                sendPushNotification(toUserId, 'Game Invite!', `${session.username} wants to play curling with you!`);
+
+                // v124: Send to target if online
+                if (toWs && toWs.readyState === WebSocket.OPEN) {
+                    send(toWs, { type: 'game_invite_received', inviteId, fromUserId: session.userId, fromUsername: session.username, fromRank, gameCode: asyncCode });
+                }
+
+                // Push notify
+                const pushMsg = asyncCode
+                    ? `${session.username} invited you to an async game!`
+                    : `${session.username} wants to play curling with you!`;
+                sendPushNotification(toUserId, 'Game Invite!', pushMsg);
             } catch (e) {
                 console.error('Send game invite error:', e.message);
                 send(ws, { type: 'game_invite_error', error: 'Failed to send invite' });
@@ -1710,6 +1764,82 @@ async function handleMessage(ws, message) {
             const invite = pendingInvites.get(data.inviteId);
             if (!invite) { send(ws, { type: 'game_invite_error', error: 'Invite no longer valid' }); break; }
             if (invite.toUserId !== session.userId) break;
+
+            // v124: Async game invite — join existing game instead of creating new room
+            if (invite.gameCode) {
+                pendingInvites.delete(data.inviteId);
+                try {
+                    const asyncResult = await auth.joinAsyncGame(invite.gameCode, session.userId);
+                    if (asyncResult.error) {
+                        send(ws, { type: 'game_invite_error', error: asyncResult.error });
+                        break;
+                    }
+
+                    // Hydrate + attach yellow (same logic as join_async_game handler)
+                    let room = rooms.get(invite.gameCode);
+                    if (room) {
+                        room.yellowUserId = session.userId;
+                        room.state.phase = 'playing';
+                    } else {
+                        room = await hydrateRoom(invite.gameCode);
+                    }
+                    if (!room) {
+                        send(ws, { type: 'game_invite_error', error: 'Game not found' });
+                        break;
+                    }
+
+                    room.players[1] = ws;
+                    room.sessions[1] = session;
+                    playerRooms.set(ws, invite.gameCode);
+
+                    const yellowInfo = await getPlayerInfo(ws);
+                    let redInfo = null;
+                    const redWs = room.players[0];
+                    if (redWs && redWs.readyState === WebSocket.OPEN) {
+                        redInfo = await getPlayerInfo(redWs);
+                    } else if (room.redUserId) {
+                        try {
+                            const profile = await auth.getProfile(room.redUserId);
+                            if (profile) {
+                                redInfo = {
+                                    username: profile.username,
+                                    rank: profile.rank || auth.getRank(profile.rating || 1200),
+                                    country: profile.country || '',
+                                };
+                            }
+                        } catch (e) { /* red info not critical */ }
+                    }
+
+                    // Send game_start to yellow (accepter)
+                    send(ws, {
+                        type: 'game_start', yourTeam: 'yellow', opponent: redInfo,
+                        totalEnds: room.totalEnds || 4, roomCode: invite.gameCode, isAsync: true,
+                    });
+
+                    // Notify red if online, otherwise push
+                    if (redWs && redWs.readyState === WebSocket.OPEN) {
+                        send(redWs, {
+                            type: 'game_start', yourTeam: 'red', opponent: yellowInfo,
+                            totalEnds: room.totalEnds || 4, roomCode: invite.gameCode, isAsync: true,
+                        });
+                    } else if (room.redUserId) {
+                        sendPushNotification(room.redUserId, "Game On!",
+                            `${session.username} joined your game! It's your turn.`);
+                    }
+
+                    auth.persistGameState(room.code, room.state, room.redUserId, room.yellowUserId)
+                        .catch(err => console.error('[ASYNC] Persist error after invite accept:', err.message));
+
+                    console.log(`[ASYNC] Player ${session.username} joined async game ${invite.gameCode} via invite accept`);
+                    break;
+                } catch (e) {
+                    console.error('[ASYNC] Accept invite error:', e.message);
+                    send(ws, { type: 'game_invite_error', error: 'Failed to join game' });
+                    break;
+                }
+            }
+
+            // Real-time invite accept — existing logic
             const fromWs = onlineUsers.get(invite.fromUserId);
             if (!fromWs || fromWs.readyState !== WebSocket.OPEN) {
                 pendingInvites.delete(data.inviteId);

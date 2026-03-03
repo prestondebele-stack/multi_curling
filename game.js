@@ -3694,6 +3694,7 @@
                     <div class="game-score">${score} \u2022 ${endInfo}</div>
                     ${lastMove ? `<div class="game-time">${lastMove}</div>` : ''}
                 </div>
+                ${game.isWaiting ? `<button class="invite-friend-card-btn" data-code="${game.gameCode}">Invite</button>` : ''}
                 <span class="turn-badge ${statusClass}">${statusText}</span>
                 <button class="forfeit-btn" data-code="${game.gameCode}" title="Forfeit">X</button>
             </div>`;
@@ -3736,6 +3737,14 @@
                         badge.style.display = 'none';
                     }
                 }
+            });
+        });
+
+        // v124: Wire up invite friend buttons on waiting game cards
+        container.querySelectorAll('.invite-friend-card-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openFriendPicker(btn.dataset.code);
             });
         });
     }
@@ -3797,11 +3806,13 @@
         }
     }
 
-    function showGameInvite(inviteId, fromUsername, fromRank) {
+    function showGameInvite(inviteId, fromUsername, fromRank, gameCode) {
         const overlay = document.getElementById('game-invite-overlay');
-        let text = fromUsername + ' wants to play!';
+        let text = gameCode
+            ? fromUsername + ' invited you to an async game!'
+            : fromUsername + ' wants to play!';
         if (fromRank) {
-            text = `<span class="rank-badge" style="background:${fromRank.color}">${fromRank.name}</span> ${fromUsername} wants to play!`;
+            text = `<span class="rank-badge" style="background:${fromRank.color}">${fromRank.name}</span> ${text}`;
         }
         document.getElementById('invite-from-text').innerHTML = text;
         document.getElementById('invite-accept-btn').dataset.inviteId = inviteId;
@@ -3811,6 +3822,47 @@
 
     function hideGameInvite() {
         document.getElementById('game-invite-overlay').style.display = 'none';
+    }
+
+    // v124: Friend picker for async game invites
+    function openFriendPicker(gameCode) {
+        const overlay = document.getElementById('friend-picker-overlay');
+        const list = document.getElementById('friend-picker-list');
+
+        // Refresh friends list in background
+        CurlingNetwork.getFriendsList();
+
+        if (friendsList.length === 0) {
+            list.innerHTML = '<p style="color:#888;font-size:13px;text-align:center;">No friends yet. Add friends first!</p>';
+        } else {
+            const statusOrder = { online: 0, in_game: 1, offline: 2 };
+            const sorted = [...friendsList].sort((a, b) => (statusOrder[a.status] || 2) - (statusOrder[b.status] || 2));
+
+            list.innerHTML = sorted.map(f => {
+                const statusLabel = f.status === 'in_game' ? 'In Game' : f.status === 'online' ? 'Online' : 'Offline';
+                const rankHtml = f.rank ? `<span class="rank-badge friend-rank" style="background:${f.rank.color}">${f.rank.name}</span>` : '';
+                return `<div class="friend-picker-item">
+                    <div class="friend-status-dot ${f.status}"></div>
+                    <span class="friend-name">${f.username}</span>
+                    ${rankHtml}
+                    <span class="friend-status-text">${statusLabel}</span>
+                    <button class="friend-picker-invite-btn lobby-btn" data-user-id="${f.userId}">Invite</button>
+                </div>`;
+            }).join('');
+
+            list.querySelectorAll('.friend-picker-invite-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    CurlingNetwork.sendGameInvite(parseInt(btn.dataset.userId), gameCode);
+                    btn.textContent = 'Sent!';
+                    btn.disabled = true;
+                });
+            });
+        }
+        overlay.style.display = 'flex';
+    }
+
+    function closeFriendPicker() {
+        document.getElementById('friend-picker-overlay').style.display = 'none';
     }
 
     // ---- QUICK CHAT ----
@@ -4580,8 +4632,8 @@
             // Invite sent successfully — could show "Invite sent" feedback
         });
 
-        CurlingNetwork.onGameInviteReceived(({ inviteId, fromUsername, fromRank }) => {
-            showGameInvite(inviteId, fromUsername, fromRank);
+        CurlingNetwork.onGameInviteReceived(({ inviteId, fromUsername, fromRank, gameCode }) => {
+            showGameInvite(inviteId, fromUsername, fromRank, gameCode);
         });
 
         CurlingNetwork.onGameInviteError(({ error }) => {
@@ -4633,6 +4685,9 @@
             document.getElementById('async-game-code').style.display = 'block';
             document.getElementById('async-code-text').textContent = code;
             document.getElementById('create-async-confirm').style.display = 'none';
+            // v124: Show invite friend button
+            const invBtn = document.getElementById('async-invite-friend-btn');
+            if (invBtn) { invBtn.style.display = 'inline-block'; invBtn.dataset.gameCode = code; }
         });
 
         CurlingNetwork.onGameLeft(() => {
@@ -5113,7 +5168,19 @@
     document.getElementById('create-async-back').addEventListener('click', () => {
         showLobbyPanel('lobby-my-games-panel');
         CurlingNetwork.sendGetMyGames();
+        // v124: Reset invite button state
+        const invBtn = document.getElementById('async-invite-friend-btn');
+        if (invBtn) invBtn.style.display = 'none';
     });
+
+    // v124: Invite a Friend button in create-async panel
+    document.getElementById('async-invite-friend-btn').addEventListener('click', () => {
+        const code = document.getElementById('async-invite-friend-btn').dataset.gameCode;
+        if (code) openFriendPicker(code);
+    });
+
+    // v124: Friend picker close button
+    document.getElementById('friend-picker-close-btn').addEventListener('click', closeFriendPicker);
 
     // Join async game panel (accessible via URL parameter ?join=CODE)
     document.getElementById('async-join-submit').addEventListener('click', () => {

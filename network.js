@@ -407,7 +407,7 @@ const CurlingNetwork = (() => {
                 if (callbacks.onGameInviteSent) callbacks.onGameInviteSent({ inviteId: data.inviteId, toUsername: data.toUsername });
                 break;
             case 'game_invite_received':
-                if (callbacks.onGameInviteReceived) callbacks.onGameInviteReceived({ inviteId: data.inviteId, fromUserId: data.fromUserId, fromUsername: data.fromUsername, fromRank: data.fromRank });
+                if (callbacks.onGameInviteReceived) callbacks.onGameInviteReceived({ inviteId: data.inviteId, fromUserId: data.fromUserId, fromUsername: data.fromUsername, fromRank: data.fromRank, gameCode: data.gameCode || null });
                 break;
             case 'game_invite_error':
                 if (callbacks.onGameInviteError) callbacks.onGameInviteError({ error: data.error });
@@ -789,7 +789,7 @@ const CurlingNetwork = (() => {
         removeFriend(friendId) { send({ type: 'remove_friend', friendId }); },
         getFriendsList() { send({ type: 'get_friends_list' }); },
         getPendingRequests() { send({ type: 'get_pending_requests' }); },
-        sendGameInvite(toUserId) { send({ type: 'send_game_invite', toUserId }); },
+        sendGameInvite(toUserId, gameCode) { const msg = { type: 'send_game_invite', toUserId }; if (gameCode) msg.gameCode = gameCode; send(msg); },
         acceptGameInvite(inviteId) { send({ type: 'accept_game_invite', inviteId }); },
         denyGameInvite(inviteId) { send({ type: 'deny_game_invite', inviteId }); },
         cancelGameInvite(inviteId) { send({ type: 'cancel_game_invite', inviteId }); },
