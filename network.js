@@ -97,6 +97,12 @@ const CurlingNetwork = (() => {
         onBestShots: null,
         onShotSubmitResult: null,
         onVoteShotResult: null,
+        // Async Multiplayer (v123)
+        onMyGames: null,
+        onAsyncGameCreated: null,
+        onGameLeft: null,
+        onGameForfeited: null,
+        onOpponentForfeited: null,
         // Connection verified (pong received after tab refocus)
         onConnectionVerified: null,
         // Chat
@@ -426,6 +432,22 @@ const CurlingNetwork = (() => {
             case 'vote_shot_result':
                 if (callbacks.onVoteShotResult) callbacks.onVoteShotResult(data);
                 break;
+            // Async Multiplayer (v123)
+            case 'my_games':
+                if (callbacks.onMyGames) callbacks.onMyGames(data);
+                break;
+            case 'async_game_created':
+                if (callbacks.onAsyncGameCreated) callbacks.onAsyncGameCreated(data);
+                break;
+            case 'game_left':
+                if (callbacks.onGameLeft) callbacks.onGameLeft(data);
+                break;
+            case 'game_forfeited':
+                if (callbacks.onGameForfeited) callbacks.onGameForfeited(data);
+                break;
+            case 'opponent_forfeited':
+                if (callbacks.onOpponentForfeited) callbacks.onOpponentForfeited(data);
+                break;
             // v112: Legacy message types — no-ops (handled above in the combined case block)
         }
     }
@@ -749,6 +771,14 @@ const CurlingNetwork = (() => {
         sendGetBestShots() { send({ type: 'get_best_shots' }); },
         sendVoteShot(shotId) { send({ type: 'vote_shot', shotId }); },
 
+        // Async Multiplayer (v123)
+        sendGetMyGames() { send({ type: 'get_my_games' }); },
+        sendCreateAsyncGame(totalEnds) { send({ type: 'create_async_game', totalEnds }); },
+        sendResumeGame(code) { send({ type: 'resume_game', code }); },
+        sendJoinAsyncGame(code) { send({ type: 'join_async_game', code }); },
+        sendForfeitGame(code) { send({ type: 'forfeit_game', code }); },
+        sendLeaveCurrentGame() { send({ type: 'leave_current_game' }); },
+
         // Search
         sendSearchUsers(query) { send({ type: 'search_users', query }); },
 
@@ -816,6 +846,12 @@ const CurlingNetwork = (() => {
         onBestShots(cb) { callbacks.onBestShots = cb; },
         onShotSubmitResult(cb) { callbacks.onShotSubmitResult = cb; },
         onVoteShotResult(cb) { callbacks.onVoteShotResult = cb; },
+        // Async Multiplayer (v123)
+        onMyGames(cb) { callbacks.onMyGames = cb; },
+        onAsyncGameCreated(cb) { callbacks.onAsyncGameCreated = cb; },
+        onGameLeft(cb) { callbacks.onGameLeft = cb; },
+        onGameForfeited(cb) { callbacks.onGameForfeited = cb; },
+        onOpponentForfeited(cb) { callbacks.onOpponentForfeited = cb; },
         // Search
         onSearchResults(cb) { callbacks.onSearchResults = cb; },
         // Connection verified

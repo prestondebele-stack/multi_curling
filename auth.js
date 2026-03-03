@@ -497,4 +497,176 @@ async function voteShot(userId, shotId) {
     }
 }
 
-module.exports = { register, login, googleLogin, googleRegister, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard, getGameHistory, submitShot, getBestShots, voteShot };
+// ============================================================
+// v123: ASYNC MULTIPLAYER — persistent game state
+// ============================================================
+
+async function persistGameState(gameCode, state, redUserId, yellowUserId) {
+    if (!db.isAvailable()) return;
+    try {
+        await db.query(`
+            INSERT INTO async_games (game_code, red_user_id, yellow_user_id,
+                current_team, phase, settled_stones, red_thrown, yellow_thrown,
+                current_end, total_ends, red_score, yellow_score, hammer,
+                end_scores, fgz_protected_stones, last_throw_params, last_pre_throw_stones,
+                updated_at, last_move_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, NOW(), NOW())
+            ON CONFLICT (game_code) DO UPDATE SET
+                current_team = $4, phase = $5, settled_stones = $6,
+                red_thrown = $7, yellow_thrown = $8, current_end = $9,
+                total_ends = $10, red_score = $11, yellow_score = $12,
+                hammer = $13, end_scores = $14, fgz_protected_stones = $15,
+                last_throw_params = $16, last_pre_throw_stones = $17,
+                updated_at = NOW(), last_move_at = NOW()
+        `, [
+            gameCode, redUserId, yellowUserId,
+            state.currentTeam,
+            state.phase === 'finished' ? 'finished' : 'playing',
+            JSON.stringify(state.settledStones || []),
+            state.redThrown || 0,
+            state.yellowThrown || 0,
+            state.currentEnd || 1,
+            state.totalEnds || 4,
+            state.redScore || 0,
+            state.yellowScore || 0,
+            state.hammer || 'yellow',
+            JSON.stringify(state.endScores || []),
+            JSON.stringify(state.fgzProtectedStones || []),
+            state.lastThrowParams ? JSON.stringify(state.lastThrowParams) : null,
+            state.lastPreThrowStones ? JSON.stringify(state.lastPreThrowStones) : null,
+        ]);
+    } catch (e) {
+        console.error('Persist game state error:', e.message);
+    }
+}
+
+async function loadGameState(gameCode) {
+    if (!db.isAvailable()) return null;
+    try {
+        const result = await db.query(
+            'SELECT * FROM async_games WHERE game_code = $1',
+            [gameCode]
+        );
+        return result.rows.length > 0 ? result.rows[0] : null;
+    } catch (e) {
+        console.error('Load game state error:', e.message);
+        return null;
+    }
+}
+
+async function getMyGames(userId) {
+    if (!db.isAvailable()) return [];
+    try {
+        const result = await db.query(`
+            SELECT g.*,
+                ru.username AS red_username, ru.rating AS red_rating,
+                yu.username AS yellow_username, yu.rating AS yellow_rating
+            FROM async_games g
+            LEFT JOIN users ru ON ru.id = g.red_user_id
+            LEFT JOIN users yu ON yu.id = g.yellow_user_id
+            WHERE (g.red_user_id = $1 OR g.yellow_user_id = $1)
+              AND g.phase != 'finished'
+            ORDER BY g.last_move_at DESC
+        `, [userId]);
+
+        return result.rows.map(row => {
+            const isRed = row.red_user_id === userId;
+            const myTeam = isRed ? 'red' : 'yellow';
+            const oppUsername = isRed ? row.yellow_username : row.red_username;
+            const oppRating = isRed ? row.yellow_rating : row.red_rating;
+            const isMyTurn = row.current_team === myTeam && row.phase === 'playing';
+            return {
+                gameCode: row.game_code,
+                myTeam,
+                opponentName: oppUsername || null,
+                opponentRank: oppRating ? getRank(oppRating) : null,
+                isMyTurn,
+                isWaiting: row.phase === 'waiting',
+                redScore: row.red_score,
+                yellowScore: row.yellow_score,
+                currentEnd: row.current_end,
+                totalEnds: row.total_ends,
+                lastMoveAt: row.last_move_at,
+            };
+        });
+    } catch (e) {
+        console.error('Get my games error:', e.message);
+        return [];
+    }
+}
+
+async function createAsyncGame(gameCode, userId, totalEnds) {
+    if (!db.isAvailable()) return { error: 'Not available' };
+    try {
+        await db.query(`
+            INSERT INTO async_games (game_code, red_user_id, total_ends, phase)
+            VALUES ($1, $2, $3, 'waiting')
+        `, [gameCode, userId, totalEnds]);
+        return { success: true, gameCode };
+    } catch (e) {
+        if (e.code === '23505') return { error: 'Game code already exists' };
+        console.error('Create async game error:', e.message);
+        return { error: 'Failed to create game' };
+    }
+}
+
+async function joinAsyncGame(gameCode, userId) {
+    if (!db.isAvailable()) return { error: 'Not available' };
+    try {
+        const result = await db.query(
+            `UPDATE async_games SET yellow_user_id = $1, phase = 'playing', updated_at = NOW()
+             WHERE game_code = $2 AND phase = 'waiting' AND yellow_user_id IS NULL AND red_user_id != $1
+             RETURNING *`,
+            [userId, gameCode]
+        );
+        if (result.rows.length === 0) {
+            // Check why it failed
+            const existing = await db.query('SELECT * FROM async_games WHERE game_code = $1', [gameCode]);
+            if (existing.rows.length === 0) return { error: 'Game not found' };
+            if (existing.rows[0].phase !== 'waiting') return { error: 'Game already started' };
+            if (existing.rows[0].red_user_id === userId) return { error: "Can't join your own game" };
+            return { error: 'Game is full' };
+        }
+        return { success: true, game: result.rows[0] };
+    } catch (e) {
+        console.error('Join async game error:', e.message);
+        return { error: 'Failed to join game' };
+    }
+}
+
+async function forfeitGame(gameCode, forfeitingUserId) {
+    if (!db.isAvailable()) return { error: 'Not available' };
+    try {
+        const gameResult = await db.query(
+            'SELECT * FROM async_games WHERE game_code = $1 AND phase != $2',
+            [gameCode, 'finished']
+        );
+        if (gameResult.rows.length === 0) return { error: 'Game not found' };
+        const game = gameResult.rows[0];
+
+        // Determine winner (the one who didn't forfeit)
+        const winnerId = game.red_user_id === forfeitingUserId ? game.yellow_user_id : game.red_user_id;
+        const opponentId = winnerId;
+
+        // Mark game as finished
+        await db.query(
+            "UPDATE async_games SET phase = 'finished', updated_at = NOW() WHERE game_code = $1",
+            [gameCode]
+        );
+
+        // Record in game history (if both players exist)
+        if (game.red_user_id && game.yellow_user_id) {
+            // Give winner 1 point if score is 0-0
+            const redScore = game.red_user_id === forfeitingUserId ? 0 : Math.max(game.red_score, 1);
+            const yellowScore = game.yellow_user_id === forfeitingUserId ? 0 : Math.max(game.yellow_score, 1);
+            await recordGameResult(game.red_user_id, game.yellow_user_id, redScore, yellowScore, game.current_end);
+        }
+
+        return { success: true, opponentId };
+    } catch (e) {
+        console.error('Forfeit game error:', e.message);
+        return { error: 'Forfeit failed' };
+    }
+}
+
+module.exports = { register, login, googleLogin, googleRegister, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard, getGameHistory, submitShot, getBestShots, voteShot, persistGameState, loadGameState, getMyGames, createAsyncGame, joinAsyncGame, forfeitGame };

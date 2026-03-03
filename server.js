@@ -205,6 +205,45 @@ function createRoom(hostWs, totalEnds) {
     return room;
 }
 
+// v123: Hydrate a room from database (async multiplayer)
+async function hydrateRoom(gameCode) {
+    const row = await auth.loadGameState(gameCode);
+    if (!row) return null;
+    const room = {
+        code: row.game_code,
+        players: [null, null],
+        sessions: [null, null],
+        totalEnds: row.total_ends,
+        isAsync: true,
+        dbId: row.id,
+        redUserId: row.red_user_id,
+        yellowUserId: row.yellow_user_id,
+        state: {
+            currentTeam: row.current_team,
+            phase: row.phase === 'waiting' ? 'waiting' : 'playing',
+            settledStones: row.settled_stones || [],
+            redThrown: row.red_thrown || 0,
+            yellowThrown: row.yellow_thrown || 0,
+            currentEnd: row.current_end || 1,
+            totalEnds: row.total_ends || 4,
+            redScore: row.red_score || 0,
+            yellowScore: row.yellow_score || 0,
+            hammer: row.hammer || 'yellow',
+            endScores: row.end_scores || [],
+            fgzProtectedStones: row.fgz_protected_stones || [],
+            throwInProgress: false,
+            lastThrowParams: row.last_throw_params || null,
+            lastPreThrowStones: row.last_pre_throw_stones || null,
+        },
+        resultRecorded: false,
+        createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+        disconnectTimers: [null, null],
+        pendingMessages: [[], []],
+    };
+    rooms.set(gameCode, room);
+    return room;
+}
+
 function joinRoom(code, joinerWs) {
     const room = rooms.get(code.toUpperCase());
     if (!room) return { error: 'room_not_found' };
@@ -750,6 +789,42 @@ function cleanupPlayer(ws) {
         }
     }
 
+    // v123: Async rooms — persist to DB, use eviction-only timer (game never dies)
+    if (room.isAsync) {
+        // Persist current state to DB immediately
+        auth.persistGameState(room.code, room.state, room.redUserId, room.yellowUserId)
+            .catch(err => console.error(`[ASYNC] Persist on disconnect error (room ${code}):`, err.message));
+
+        // Tell opponent they're temporarily disconnected (game persists)
+        if (opponent && opponent.readyState === WebSocket.OPEN) {
+            send(opponent, { type: 'opponent_disconnected' });
+        }
+
+        // Broadcast offline to friends
+        if (session && session.userId) {
+            broadcastPresenceToFriends(session.userId, 'offline');
+        }
+
+        // 5-min eviction timer — just removes from memory (data safe in DB)
+        room.disconnectTimers[playerIdx] = setTimeout(() => {
+            if (room.players[playerIdx] !== null) return; // They reconnected
+
+            // Clean up user tracking
+            if (session && session.userId) {
+                onlineUsers.delete(session.userId);
+                cleanupInvitesForUser(session.userId);
+            }
+
+            // If both players are gone, evict room from memory
+            if (!room.players[0] && !room.players[1]) {
+                rooms.delete(code);
+                console.log(`[ASYNC] Evicted room ${code} from memory (both players offline)`);
+            }
+        }, 300000); // 5 minutes
+
+        return;
+    }
+
     // Grace timer: after 45s, THEN tell opponent about the disconnect
     room.disconnectTimers[playerIdx] = setTimeout(() => {
         // Check if the player has already reconnected during grace period
@@ -957,6 +1032,325 @@ async function handleMessage(ws, message) {
             } catch (e) {
                 console.error('Vote shot error:', e.message);
                 send(ws, { type: 'vote_shot_result', error: 'Vote failed' });
+            }
+            break;
+        }
+
+        // ---- ASYNC MULTIPLAYER (v123) ----
+        case 'get_my_games': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'my_games', games: [] }); break; }
+            try {
+                const result = await auth.getMyGames(session.userId);
+                send(ws, { type: 'my_games', games: result });
+            } catch (e) {
+                console.error('Get my games error:', e.message);
+                send(ws, { type: 'my_games', games: [], error: 'Failed to load games' });
+            }
+            break;
+        }
+
+        case 'create_async_game': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'auth_error', error: 'Not logged in' }); break; }
+            try {
+                const gameCode = generateRoomCode();
+                const allowedEnds = [4, 6, 8, 10];
+                const totalEnds = allowedEnds.includes(data.totalEnds) ? data.totalEnds : 4;
+                await auth.createAsyncGame(gameCode, session.userId, totalEnds);
+                send(ws, { type: 'async_game_created', code: gameCode });
+                console.log(`[ASYNC] Created game ${gameCode} by ${session.username} (${totalEnds} ends)`);
+            } catch (e) {
+                console.error('Create async game error:', e.message);
+                send(ws, { type: 'auth_error', error: 'Failed to create game' });
+            }
+            break;
+        }
+
+        case 'resume_game': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'reconnect_failed' }); break; }
+            const gameCode = (data.code || '').toUpperCase();
+
+            try {
+                // Get room from memory or hydrate from DB
+                let room = rooms.get(gameCode);
+                if (!room) {
+                    room = await hydrateRoom(gameCode);
+                }
+                if (!room) {
+                    send(ws, { type: 'reconnect_failed' });
+                    break;
+                }
+
+                // Determine which slot this user belongs to
+                let slot = -1;
+                if (room.redUserId === session.userId) slot = 0;
+                else if (room.yellowUserId === session.userId) slot = 1;
+
+                if (slot === -1) {
+                    send(ws, { type: 'reconnect_failed' });
+                    break;
+                }
+
+                // If old ws is still there, clean it up
+                if (room.players[slot] && room.players[slot] !== ws) {
+                    playerRooms.delete(room.players[slot]);
+                    playerSessions.delete(room.players[slot]);
+                }
+
+                // Cancel any disconnect timers
+                if (room.disconnectTimers[slot]) {
+                    clearTimeout(room.disconnectTimers[slot]);
+                    room.disconnectTimers[slot] = null;
+                }
+
+                // Attach ws to room
+                room.players[slot] = ws;
+                room.sessions[slot] = session;
+                playerRooms.set(ws, gameCode);
+
+                const team = slot === 0 ? 'red' : 'yellow';
+
+                // Get opponent info (may be offline)
+                const opponentWs = getOpponent(room, ws);
+                let opponentInfo = null;
+                if (opponentWs && opponentWs.readyState === WebSocket.OPEN) {
+                    opponentInfo = await getPlayerInfo(opponentWs);
+                } else {
+                    // Opponent offline — get info from DB
+                    const oppUserId = slot === 0 ? room.yellowUserId : room.redUserId;
+                    if (oppUserId) {
+                        try {
+                            const profile = await auth.getProfile(oppUserId);
+                            if (profile) {
+                                opponentInfo = {
+                                    username: profile.username,
+                                    rank: profile.rank || auth.getRank(profile.rating || 1200),
+                                    country: profile.country || '',
+                                };
+                            }
+                        } catch (e) { /* opponent info not critical */ }
+                    }
+                }
+
+                console.log(`[ASYNC RESUME] ${session.username} resumed game ${gameCode} as ${team}: currentTeam=${room.state.currentTeam} stones=${room.state.settledStones.length}`);
+
+                // Send reconnected payload (same format as reconnect handler)
+                send(ws, {
+                    type: 'reconnected',
+                    yourTeam: team,
+                    gameState: {
+                        currentTeam: room.state.currentTeam,
+                        settledStones: room.state.settledStones,
+                        redThrown: room.state.redThrown,
+                        yellowThrown: room.state.yellowThrown,
+                        currentEnd: room.state.currentEnd,
+                        totalEnds: room.state.totalEnds,
+                        redScore: room.state.redScore,
+                        yellowScore: room.state.yellowScore,
+                        hammer: room.state.hammer,
+                        endScores: room.state.endScores,
+                        throwInProgress: room.state.throwInProgress,
+                        lastThrowParams: room.state.lastThrowParams,
+                        lastPreThrowStones: room.state.lastPreThrowStones,
+                    },
+                    opponent: opponentInfo,
+                    isAsync: true,
+                    roomCode: gameCode,
+                });
+
+                // Clear any queued messages
+                room.pendingMessages[slot] = [];
+
+                // Notify opponent if online
+                if (opponentWs && opponentWs.readyState === WebSocket.OPEN) {
+                    await new Promise(r => setTimeout(r, 300));
+                    const myInfo = await getPlayerInfo(ws);
+                    send(opponentWs, { type: 'opponent_reconnected', opponent: myInfo });
+                }
+            } catch (e) {
+                console.error('Resume game error:', e.message);
+                send(ws, { type: 'reconnect_failed' });
+            }
+            break;
+        }
+
+        case 'join_async_game': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'auth_error', error: 'Not logged in' }); break; }
+            const gameCode = (data.code || '').toUpperCase();
+
+            try {
+                // Try to join in DB first (validates game exists, is waiting, not own game)
+                const result = await auth.joinAsyncGame(gameCode, session.userId);
+                if (result.error) {
+                    send(ws, { type: 'auth_error', error: result.error });
+                    break;
+                }
+
+                // Get or hydrate room in memory
+                let room = rooms.get(gameCode);
+                if (room) {
+                    // Update existing in-memory room
+                    room.yellowUserId = session.userId;
+                    room.state.phase = 'playing';
+                } else {
+                    // Hydrate from DB (will have phase='playing' since we just updated it)
+                    room = await hydrateRoom(gameCode);
+                }
+                if (!room) {
+                    send(ws, { type: 'auth_error', error: 'Game not found' });
+                    break;
+                }
+
+                // Attach yellow player
+                room.players[1] = ws;
+                room.sessions[1] = session;
+                playerRooms.set(ws, gameCode);
+
+                // Get player info for both sides
+                const yellowInfo = await getPlayerInfo(ws);
+                let redInfo = null;
+                const redWs = room.players[0];
+                if (redWs && redWs.readyState === WebSocket.OPEN) {
+                    redInfo = await getPlayerInfo(redWs);
+                } else if (room.redUserId) {
+                    // Red offline — get from DB
+                    try {
+                        const profile = await auth.getProfile(room.redUserId);
+                        if (profile) {
+                            redInfo = {
+                                username: profile.username,
+                                rank: profile.rank || auth.getRank(profile.rating || 1200),
+                                country: profile.country || '',
+                            };
+                        }
+                    } catch (e) { /* red info not critical */ }
+                }
+
+                // Send game_start to yellow (joiner)
+                send(ws, {
+                    type: 'game_start',
+                    yourTeam: 'yellow',
+                    opponent: redInfo,
+                    totalEnds: room.totalEnds || 4,
+                    roomCode: gameCode,
+                    isAsync: true,
+                });
+
+                // Notify red if online, otherwise push
+                if (redWs && redWs.readyState === WebSocket.OPEN) {
+                    send(redWs, {
+                        type: 'game_start',
+                        yourTeam: 'red',
+                        opponent: yellowInfo,
+                        totalEnds: room.totalEnds || 4,
+                        roomCode: gameCode,
+                        isAsync: true,
+                    });
+                } else if (room.redUserId) {
+                    sendPushNotification(room.redUserId, "Game On!",
+                        `${session.username} joined your game! It's your turn.`);
+                }
+
+                // Persist updated state
+                auth.persistGameState(room.code, room.state, room.redUserId, room.yellowUserId)
+                    .catch(err => console.error(`[ASYNC] Persist after join error:`, err.message));
+
+                console.log(`[ASYNC] ${session.username} joined game ${gameCode}`);
+            } catch (e) {
+                console.error('Join async game error:', e.message);
+                send(ws, { type: 'auth_error', error: 'Failed to join game' });
+            }
+            break;
+        }
+
+        case 'leave_current_game': {
+            const code = playerRooms.get(ws);
+            if (!code) { send(ws, { type: 'game_left' }); break; }
+
+            const room = rooms.get(code);
+            if (!room) {
+                playerRooms.delete(ws);
+                send(ws, { type: 'game_left' });
+                break;
+            }
+
+            const playerIdx = getPlayerIndex(room, ws);
+            if (playerIdx === -1) {
+                playerRooms.delete(ws);
+                send(ws, { type: 'game_left' });
+                break;
+            }
+
+            // Remove player from room (but keep WebSocket connection alive)
+            room.players[playerIdx] = null;
+            playerRooms.delete(ws);
+
+            if (room.isAsync) {
+                // Persist state to DB
+                auth.persistGameState(room.code, room.state, room.redUserId, room.yellowUserId)
+                    .catch(err => console.error(`[ASYNC] Persist on leave error:`, err.message));
+
+                // Tell opponent player left the view (not the game)
+                const opponent = getOpponent(room, ws);
+                if (opponent && opponent.readyState === WebSocket.OPEN) {
+                    send(opponent, { type: 'opponent_disconnected' });
+                }
+
+                // Start eviction timer if both offline
+                room.disconnectTimers[playerIdx] = setTimeout(() => {
+                    if (room.players[playerIdx] !== null) return;
+                    if (!room.players[0] && !room.players[1]) {
+                        rooms.delete(code);
+                        console.log(`[ASYNC] Evicted room ${code} from memory after leave`);
+                    }
+                }, 300000); // 5 min
+            }
+
+            send(ws, { type: 'game_left' });
+            break;
+        }
+
+        case 'forfeit_game': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'auth_error', error: 'Not logged in' }); break; }
+            const gameCode = (data.code || '').toUpperCase();
+
+            try {
+                const result = await auth.forfeitGame(gameCode, session.userId);
+                if (result.error) {
+                    send(ws, { type: 'auth_error', error: result.error });
+                    break;
+                }
+
+                // Clean up room from memory
+                const room = rooms.get(gameCode);
+                if (room) {
+                    room.state.phase = 'finished';
+                    const playerIdx = getPlayerIndex(room, ws);
+                    const opponent = getOpponent(room, ws);
+                    if (opponent && opponent.readyState === WebSocket.OPEN) {
+                        send(opponent, { type: 'opponent_forfeited', username: session.username });
+                        playerRooms.delete(opponent);
+                    }
+                    if (playerIdx !== -1) room.players[playerIdx] = null;
+                    playerRooms.delete(ws);
+                    rooms.delete(gameCode);
+                }
+
+                // Push notify opponent if offline
+                if (result.opponentId) {
+                    sendPushNotification(result.opponentId, "Game Forfeited",
+                        `${session.username} forfeited. You win!`);
+                }
+
+                send(ws, { type: 'game_forfeited' });
+                console.log(`[ASYNC] ${session.username} forfeited game ${gameCode}`);
+            } catch (e) {
+                console.error('Forfeit game error:', e.message);
+                send(ws, { type: 'auth_error', error: 'Failed to forfeit game' });
             }
             break;
         }
@@ -1620,10 +2014,13 @@ async function handleMessage(ws, message) {
                             room.resultRecorded = true;
                             const redSession = (room.players[0] ? playerSessions.get(room.players[0]) : null) || room.sessions[0];
                             const yellowSession = (room.players[1] ? playerSessions.get(room.players[1]) : null) || room.sessions[1];
-                            if (redSession && yellowSession) {
+                            // v123: For async rooms, use stored userIds as fallback
+                            const redUserId = redSession?.userId || (room.isAsync ? room.redUserId : null);
+                            const yellowUserId = yellowSession?.userId || (room.isAsync ? room.yellowUserId : null);
+                            if (redUserId && yellowUserId) {
                                 auth.recordGameResult(
-                                    redSession.userId,
-                                    yellowSession.userId,
+                                    redUserId,
+                                    yellowUserId,
                                     room.state.redScore,
                                     room.state.yellowScore,
                                     room.state.currentEnd
@@ -1653,6 +2050,29 @@ async function handleMessage(ws, message) {
                             } else {
                                 sendPushNotification(nextSession.userId, "It's your turn!",
                                     'Your opponent has thrown. Time to deliver your stone!');
+                            }
+                        }
+                    }
+
+                    // v123: Persist async game state after every throw
+                    if (room.isAsync) {
+                        auth.persistGameState(room.code, room.state, room.redUserId, room.yellowUserId)
+                            .catch(err => console.error(`[ASYNC] Persist error (room ${code}):`, err.message));
+
+                        // Push notify offline opponent
+                        const throwerIdx = team === 'red' ? 0 : 1;
+                        const opponentIdx = 1 - throwerIdx;
+                        if (!room.players[opponentIdx]) {
+                            const oppUserId = opponentIdx === 0 ? room.redUserId : room.yellowUserId;
+                            if (oppUserId) {
+                                if (!gameOver) {
+                                    const throwerName = (playerSessions.get(ws) || room.sessions[throwerIdx])?.username || 'Opponent';
+                                    sendPushNotification(oppUserId, "Your Turn!",
+                                        `${throwerName} just threw — it's your turn!`);
+                                } else {
+                                    sendPushNotification(oppUserId, "Game Over!",
+                                        'Your game has ended. Check the results!');
+                                }
                             }
                         }
                     }

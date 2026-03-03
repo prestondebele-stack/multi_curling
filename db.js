@@ -121,6 +121,35 @@ async function initSchema() {
             );
         `);
 
+        // v123: Async Multiplayer — persistent game state
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS async_games (
+                id SERIAL PRIMARY KEY,
+                game_code VARCHAR(8) UNIQUE NOT NULL,
+                red_user_id INTEGER REFERENCES users(id),
+                yellow_user_id INTEGER REFERENCES users(id),
+                current_team VARCHAR(6) NOT NULL DEFAULT 'red',
+                phase VARCHAR(20) NOT NULL DEFAULT 'waiting',
+                settled_stones JSONB DEFAULT '[]',
+                red_thrown INTEGER DEFAULT 0,
+                yellow_thrown INTEGER DEFAULT 0,
+                current_end INTEGER DEFAULT 1,
+                total_ends INTEGER DEFAULT 4,
+                red_score INTEGER DEFAULT 0,
+                yellow_score INTEGER DEFAULT 0,
+                hammer VARCHAR(6) DEFAULT 'yellow',
+                end_scores JSONB DEFAULT '[]',
+                fgz_protected_stones JSONB DEFAULT '[]',
+                last_throw_params JSONB,
+                last_pre_throw_stones JSONB,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                last_move_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_async_red ON async_games(red_user_id) WHERE phase != 'finished';
+            CREATE INDEX IF NOT EXISTS idx_async_yellow ON async_games(yellow_user_id) WHERE phase != 'finished';
+        `);
+
         dbAvailable = true;
         console.log('Database schema initialized');
     } catch (err) {

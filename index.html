@@ -149,6 +149,7 @@
                     <button id="submit-shot-btn" title="Submit for Best Shot" style="display:none;">&#11088; Submit</button>
                     <button id="skip-replay-btn" title="Skip Replay" style="display:none;">&#9193; Skip</button>
                     <button id="sync-btn" title="Sync Game" style="display:none;">&#8635;</button>
+                    <button id="back-to-games-btn" title="Back to My Games" style="display:none;">&#9664; My Games</button>
                 </div>
                 <div id="chat-popup" style="display:none;">
                     <button class="chat-preset">Good shot!</button>
@@ -312,6 +313,7 @@
                     <button id="lobby-leaderboard" class="lobby-btn" style="display:none;">Leaderboard</button>
                     <button id="lobby-history" class="lobby-btn" style="display:none;">Match History</button>
                     <button id="lobby-best-shots" class="lobby-btn" style="display:none;">Best Shots</button>
+                    <button id="lobby-my-games" class="lobby-btn" style="display:none;">My Games <span id="my-games-badge" class="badge" style="display:none;">0</span></button>
                     <button id="lobby-friends" class="lobby-btn" style="display:none;">Friends</button>
                     <button id="lobby-back" class="lobby-btn secondary">Back</button>
                 </div>
@@ -394,6 +396,38 @@
                     <p id="best-shots-week-label" style="color:#888;font-size:12px;margin:0 0 8px;"></p>
                     <div id="best-shots-list"></div>
                     <button id="lobby-best-shots-back" class="lobby-btn secondary">Back</button>
+                </div>
+                <div id="lobby-my-games-panel" style="display:none;">
+                    <h3>My Games</h3>
+                    <button id="create-async-game-btn" class="lobby-btn">+ New Game</button>
+                    <div id="my-games-list"></div>
+                    <p id="my-games-empty" style="display:none;color:#888;font-size:13px;">No active games. Create one above!</p>
+                    <button id="my-games-back" class="lobby-btn secondary">Back</button>
+                </div>
+                <div id="create-async-panel" style="display:none;">
+                    <h3>New Async Game</h3>
+                    <p>How many ends?</p>
+                    <div id="async-ends-selector" class="ends-selector">
+                        <button class="ends-btn active" data-ends="4">4</button>
+                        <button class="ends-btn" data-ends="6">6</button>
+                        <button class="ends-btn" data-ends="8">8</button>
+                        <button class="ends-btn" data-ends="10">10</button>
+                    </div>
+                    <button id="create-async-confirm" class="lobby-btn">Create Game</button>
+                    <p id="async-game-code" style="display:none;">
+                        Share code: <strong id="async-code-text"></strong>
+                        <button id="copy-async-code" class="lobby-btn" style="font-size:12px;padding:4px 8px;">Copy</button>
+                    </p>
+                    <p id="async-share-msg" style="display:none; color:#4CAF50; font-size:13px;">Code copied!</p>
+                    <button id="create-async-back" class="lobby-btn secondary">Back</button>
+                </div>
+                <div id="join-async-panel" style="display:none;">
+                    <h3>Join Async Game</h3>
+                    <p>Enter game code:</p>
+                    <input type="text" id="async-join-code-input" maxlength="4" placeholder="ABCD" autocomplete="off">
+                    <button id="async-join-submit" class="lobby-btn">Join</button>
+                    <p id="async-join-error" class="lobby-error" style="display:none;"></p>
+                    <button id="async-join-back" class="lobby-btn secondary">Back</button>
                 </div>
             </div>
         </div>

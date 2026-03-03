@@ -2841,6 +2841,13 @@
         }
     });
 
+    // v123: Back to My Games button (async games)
+    document.getElementById('back-to-games-btn').addEventListener('click', () => {
+        if (gameState.isAsync) {
+            CurlingNetwork.sendLeaveCurrentGame();
+        }
+    });
+
     document.getElementById('aim-slider').addEventListener('input', (e) => {
         document.getElementById('aim-value').textContent = parseFloat(e.target.value).toFixed(1) + '°';
     });
@@ -3153,6 +3160,8 @@
         document.getElementById('chat-btn').style.display = 'none';
         document.getElementById('chat-popup').style.display = 'none';
         document.getElementById('sync-btn').style.display = 'none';
+        document.getElementById('back-to-games-btn').style.display = 'none';
+        gameState.isAsync = false;
         document.getElementById('sweep-toggle-btn').style.display = 'none';
         document.getElementById('sweep-toggle-btn').classList.remove('sweeping', 'opponent-sweeping');
         hideReplayButton();
@@ -3249,7 +3258,7 @@
     }
 
     function showLobbyPanel(panelId) {
-        const panels = ['lobby-menu', 'lobby-ends-panel', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel', 'lobby-leaderboard-panel', 'lobby-history-panel', 'lobby-best-shots-panel'];
+        const panels = ['lobby-menu', 'lobby-ends-panel', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel', 'lobby-leaderboard-panel', 'lobby-history-panel', 'lobby-best-shots-panel', 'lobby-my-games-panel', 'create-async-panel', 'join-async-panel'];
         panels.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = id === panelId ? 'flex' : 'none';
@@ -3261,6 +3270,7 @@
             document.getElementById('lobby-leaderboard').style.display = isLoggedIn ? 'block' : 'none';
             document.getElementById('lobby-history').style.display = isLoggedIn ? 'block' : 'none';
             document.getElementById('lobby-best-shots').style.display = isLoggedIn ? 'block' : 'none';
+            document.getElementById('lobby-my-games').style.display = isLoggedIn ? 'block' : 'none';
         }
     }
 
@@ -3622,6 +3632,114 @@
         });
     }
 
+    // v123: Render My Games list
+    function renderMyGames(games) {
+        const container = document.getElementById('my-games-list');
+        const emptyMsg = document.getElementById('my-games-empty');
+        const badge = document.getElementById('my-games-badge');
+
+        if (!games || games.length === 0) {
+            container.innerHTML = '';
+            emptyMsg.style.display = 'block';
+            badge.style.display = 'none';
+            return;
+        }
+        emptyMsg.style.display = 'none';
+
+        // Count games where it's my turn
+        const myTurnCount = games.filter(g => g.isMyTurn && !g.isWaiting).length;
+        if (myTurnCount > 0) {
+            badge.textContent = myTurnCount;
+            badge.style.display = 'inline';
+        } else {
+            badge.style.display = 'none';
+        }
+
+        function timeAgo(dateStr) {
+            if (!dateStr) return '';
+            const diff = Date.now() - new Date(dateStr).getTime();
+            const mins = Math.floor(diff / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return mins + 'm ago';
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return hrs + 'h ago';
+            const days = Math.floor(hrs / 24);
+            return days + 'd ago';
+        }
+
+        container.innerHTML = games.map(game => {
+            const oppName = game.opponentName || 'Waiting...';
+            const rankBadge = game.opponentRank
+                ? `<span class="rank-badge" style="background:${game.opponentRank.color};color:${(game.opponentRank.color === '#ffd54f' || game.opponentRank.color === '#e0e0e0') ? '#333' : '#fff'}">${game.opponentRank.name}</span>`
+                : '';
+            const score = `${game.redScore || 0} - ${game.yellowScore || 0}`;
+            const endInfo = `End ${game.currentEnd || 1}/${game.totalEnds || 4}`;
+            const lastMove = timeAgo(game.lastMoveAt);
+
+            let statusClass, statusText;
+            if (game.isWaiting) {
+                statusClass = 'needs-opponent';
+                statusText = 'Share Code';
+            } else if (game.isMyTurn) {
+                statusClass = 'your-turn';
+                statusText = 'Your Turn';
+            } else {
+                statusClass = 'waiting';
+                statusText = 'Waiting...';
+            }
+
+            return `<div class="my-game-card" data-code="${game.gameCode}">
+                <div class="game-card-left">
+                    <div class="opponent-name">${oppName} ${rankBadge}</div>
+                    <div class="game-score">${score} \u2022 ${endInfo}</div>
+                    ${lastMove ? `<div class="game-time">${lastMove}</div>` : ''}
+                </div>
+                <span class="turn-badge ${statusClass}">${statusText}</span>
+                <button class="forfeit-btn" data-code="${game.gameCode}" title="Forfeit">X</button>
+            </div>`;
+        }).join('');
+
+        // Wire up game card clicks
+        container.querySelectorAll('.my-game-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                if (e.target.classList.contains('forfeit-btn')) return; // Don't navigate on forfeit click
+                const code = card.dataset.code;
+                const game = games.find(g => g.gameCode === code);
+                if (game && game.isWaiting) {
+                    // Show/copy the code for sharing
+                    const shareText = `Join my Online Curling game! Code: ${code}\n${window.location.origin}?join=${code}`;
+                    if (navigator.share) {
+                        navigator.share({ title: 'Online Curling', text: shareText }).catch(() => {});
+                    } else if (navigator.clipboard) {
+                        navigator.clipboard.writeText(shareText).then(() => {
+                            card.querySelector('.turn-badge').textContent = 'Copied!';
+                            setTimeout(() => { card.querySelector('.turn-badge').textContent = 'Share Code'; }, 2000);
+                        });
+                    }
+                } else {
+                    CurlingNetwork.sendResumeGame(code);
+                }
+            });
+        });
+
+        // Wire up forfeit buttons
+        container.querySelectorAll('.forfeit-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const code = btn.dataset.code;
+                if (confirm('Forfeit this game? Your opponent will win.')) {
+                    CurlingNetwork.sendForfeitGame(code);
+                    // Remove card optimistically
+                    btn.closest('.my-game-card').remove();
+                    if (container.children.length === 0) {
+                        emptyMsg.style.display = 'block';
+                        badge.style.display = 'none';
+                    }
+                }
+            });
+        });
+    }
+
     function renderPendingRequests(incoming, outgoing) {
         pendingRequests = { incoming, outgoing };
         const section = document.getElementById('friend-requests-section');
@@ -3837,11 +3955,12 @@
     }
 
     function setupOnlineHandlers() {
-        CurlingNetwork.onGameStart(({ yourTeam, opponent, totalEnds }) => {
+        CurlingNetwork.onGameStart(({ yourTeam, opponent, totalEnds, isAsync, roomCode }) => {
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.botMode = false;
-            gameState.roomCode = CurlingNetwork.getRoomCode();
+            gameState.isAsync = !!isAsync;
+            gameState.roomCode = roomCode || CurlingNetwork.getRoomCode();
             gameState.opponentInfo = opponent;
 
             // Brief "starting" panel
@@ -3860,6 +3979,7 @@
                 updateUI();
                 document.getElementById('chat-btn').style.display = '';
                 document.getElementById('sync-btn').style.display = '';
+                document.getElementById('back-to-games-btn').style.display = gameState.isAsync ? '' : 'none';
                 if (isMyTurn()) {
                     enableControlsForHuman();
                     document.getElementById('throw-btn').disabled = false;
@@ -4251,20 +4371,25 @@
         // ============================================================
         // v112: SIMPLIFIED RECONNECT — server owns all state
         // ============================================================
-        CurlingNetwork.onReconnected(({ yourTeam, gameState: serverState, opponent }) => {
-            console.log('[GAME] onReconnected v112: myTeam=' + yourTeam + ' serverState=' + !!serverState);
+        CurlingNetwork.onReconnected(({ yourTeam, gameState: serverState, opponent, isAsync, roomCode }) => {
+            console.log('[GAME] onReconnected v112: myTeam=' + yourTeam + ' serverState=' + !!serverState + ' isAsync=' + !!isAsync);
             gameState._awaitingConnectionVerify = false;
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.opponentConnected = true;
             gameState.opponentInfo = opponent;
+            if (isAsync) gameState.isAsync = true;
+            if (roomCode) gameState.roomCode = roomCode;
             gameState._opponentThrowPending = false;
             gameState._myThrowInFlight = false;
             hideDisconnectOverlay();
             dismissWelcome();
+            hideLobbyScreen();
             showOnlineTeamBadge();
             updateScoreboardNames();
+            document.getElementById('chat-btn').style.display = '';
             document.getElementById('sync-btn').style.display = '';
+            document.getElementById('back-to-games-btn').style.display = gameState.isAsync ? '' : 'none';
 
             _endOfEndStuckTimer = 0;
 
@@ -4498,6 +4623,55 @@
             // Server confirmed vote — UI already updated optimistically
         });
 
+        // ---- ASYNC MULTIPLAYER (v123) ----
+        CurlingNetwork.onMyGames(({ games }) => {
+            renderMyGames(games || []);
+        });
+
+        CurlingNetwork.onAsyncGameCreated(({ code }) => {
+            // Show the code for sharing
+            document.getElementById('async-game-code').style.display = 'block';
+            document.getElementById('async-code-text').textContent = code;
+            document.getElementById('create-async-confirm').style.display = 'none';
+        });
+
+        CurlingNetwork.onGameLeft(() => {
+            // Returned to lobby from an async game — reset UI without disconnecting WS
+            gameState.onlineMode = false;
+            gameState.myTeam = null;
+            gameState.roomCode = null;
+            gameState.opponentInfo = null;
+            gameState.isAsync = false;
+            gameState._opponentThrowPending = false;
+            gameState._myThrowInFlight = false;
+            document.getElementById('online-team-badge').style.display = 'none';
+            document.getElementById('chat-btn').style.display = 'none';
+            document.getElementById('sync-btn').style.display = 'none';
+            document.getElementById('back-to-games-btn').style.display = 'none';
+            document.getElementById('sweep-toggle-btn').style.display = 'none';
+            hideReplayButton();
+            hideSubmitShotButton();
+            document.getElementById('red-player-name').textContent = '';
+            document.getElementById('yellow-player-name').textContent = '';
+            resetGame();
+            showLobbyScreen();
+            showLobbyPanel('lobby-my-games-panel');
+            CurlingNetwork.sendGetMyGames();
+        });
+
+        CurlingNetwork.onGameForfeited(() => {
+            // Our forfeit was confirmed — refresh My Games
+            CurlingNetwork.sendGetMyGames();
+        });
+
+        CurlingNetwork.onOpponentForfeited(({ username }) => {
+            // Opponent forfeited — show alert and return to lobby
+            alert(username + ' forfeited. You win!');
+            showLobbyScreen();
+            showLobbyPanel('lobby-my-games-panel');
+            CurlingNetwork.sendGetMyGames();
+        });
+
         // ---- CHAT ----
         CurlingNetwork.onChatMessage((text, from) => {
             showChatToast(text, from);
@@ -4533,6 +4707,7 @@
             document.getElementById('lobby-leaderboard').style.display = 'block';
             document.getElementById('lobby-history').style.display = 'block';
             document.getElementById('lobby-best-shots').style.display = 'block';
+            document.getElementById('lobby-my-games').style.display = 'block';
         });
 
         CurlingNetwork.onVapidKey(({ key }) => {
@@ -4879,6 +5054,78 @@
         showLobbyPanel('lobby-menu');
     });
 
+    // ---- MY GAMES (v123) ----
+    document.getElementById('lobby-my-games').addEventListener('click', () => {
+        showLobbyPanel('lobby-my-games-panel');
+        CurlingNetwork.sendGetMyGames();
+    });
+
+    document.getElementById('my-games-back').addEventListener('click', () => {
+        showLobbyPanel('lobby-menu');
+    });
+
+    document.getElementById('create-async-game-btn').addEventListener('click', () => {
+        showLobbyPanel('create-async-panel');
+        // Reset state
+        document.getElementById('async-game-code').style.display = 'none';
+        document.getElementById('async-share-msg').style.display = 'none';
+        document.getElementById('create-async-confirm').style.display = 'block';
+        // Wire up ends selector buttons
+        const btns = document.querySelectorAll('#async-ends-selector .ends-btn');
+        btns.forEach(b => {
+            b.classList.remove('active');
+            if (b.dataset.ends === '4') b.classList.add('active');
+        });
+    });
+
+    document.querySelectorAll('#async-ends-selector .ends-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#async-ends-selector .ends-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        });
+    });
+
+    document.getElementById('create-async-confirm').addEventListener('click', () => {
+        const activeBtn = document.querySelector('#async-ends-selector .ends-btn.active');
+        const ends = activeBtn ? parseInt(activeBtn.dataset.ends) : 4;
+        CurlingNetwork.sendCreateAsyncGame(ends);
+    });
+
+    document.getElementById('copy-async-code').addEventListener('click', () => {
+        const code = document.getElementById('async-code-text').textContent;
+        const shareText = `Join my Online Curling game! Code: ${code}\n${window.location.origin}?join=${code}`;
+        if (navigator.share) {
+            navigator.share({ title: 'Online Curling', text: shareText }).catch(() => {});
+        } else if (navigator.clipboard) {
+            navigator.clipboard.writeText(shareText).then(() => {
+                document.getElementById('async-share-msg').style.display = 'block';
+                setTimeout(() => { document.getElementById('async-share-msg').style.display = 'none'; }, 2000);
+            });
+        }
+    });
+
+    document.getElementById('create-async-back').addEventListener('click', () => {
+        showLobbyPanel('lobby-my-games-panel');
+        CurlingNetwork.sendGetMyGames();
+    });
+
+    // Join async game panel (accessible via URL parameter ?join=CODE)
+    document.getElementById('async-join-submit').addEventListener('click', () => {
+        const code = document.getElementById('async-join-code-input').value.trim().toUpperCase();
+        if (!code || code.length < 4) {
+            document.getElementById('async-join-error').textContent = 'Enter a valid code';
+            document.getElementById('async-join-error').style.display = 'block';
+            return;
+        }
+        document.getElementById('async-join-error').style.display = 'none';
+        CurlingNetwork.sendJoinAsyncGame(code);
+    });
+
+    document.getElementById('async-join-back').addEventListener('click', () => {
+        showLobbyPanel('lobby-my-games-panel');
+        CurlingNetwork.sendGetMyGames();
+    });
+
     document.getElementById('friend-search-btn').addEventListener('click', () => {
         const query = document.getElementById('friend-username-input').value.trim();
         if (!query) return;
@@ -5035,6 +5282,7 @@
         document.getElementById('lobby-leaderboard').style.display = 'none';
         document.getElementById('lobby-history').style.display = 'none';
         document.getElementById('lobby-best-shots').style.display = 'none';
+        document.getElementById('lobby-my-games').style.display = 'none';
         // If there's a pending join code (from share link), auto-join now
         if (_pendingJoinCode) {
             executePendingJoin();
@@ -5121,6 +5369,7 @@
         document.getElementById('lobby-leaderboard').style.display = 'none';
         document.getElementById('lobby-history').style.display = 'none';
         document.getElementById('lobby-best-shots').style.display = 'none';
+        document.getElementById('lobby-my-games').style.display = 'none';
         document.getElementById('google-username-form').style.display = 'none';
         _googleCredential = null;
         friendsList = [];
