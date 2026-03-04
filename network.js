@@ -14,6 +14,7 @@ const CurlingNetwork = (() => {
     let lastPongTime = Date.now();
     let isReconnecting = false;       // Guard against parallel reconnect cycles
     let hasActiveGame = false;        // True once game_start or reconnected received
+    let isAsyncGame = false;          // v126d: True for async games — use resume_game on reconnect
     // v112: lastThrowSeq removed — server is authoritative, no more throw_settled
 
     // Persist active game session to sessionStorage + localStorage so page refresh,
@@ -201,6 +202,7 @@ const CurlingNetwork = (() => {
             case 'game_start':
                 myTeam = data.yourTeam;
                 if (data.roomCode) roomCode = data.roomCode;
+                if (data.isAsync) isAsyncGame = true;
                 reconnectAttempts = 0;
                 isReconnecting = false;
                 hasActiveGame = true;
@@ -283,6 +285,8 @@ const CurlingNetwork = (() => {
 
             case 'reconnected':
                 myTeam = data.yourTeam;
+                if (data.roomCode) roomCode = data.roomCode;
+                if (data.isAsync) isAsyncGame = true;
                 reconnectAttempts = 0;
                 isReconnecting = false;
                 hasActiveGame = true;
@@ -292,6 +296,8 @@ const CurlingNetwork = (() => {
                     yourTeam: data.yourTeam,
                     gameState: data.gameState || null,
                     opponent: data.opponent || null,
+                    isAsync: data.isAsync || false,
+                    roomCode: data.roomCode || roomCode,
                 });
                 break;
 
@@ -519,8 +525,12 @@ const CurlingNetwork = (() => {
                 };
                 isReconnecting = false;
                 startHeartbeat();
-                // Try to rejoin room (include team hint to preserve original slot)
-                send({ type: 'reconnect', code: roomCode, team: myTeam || undefined });
+                // v126d: For async games, skip reconnect (room likely not in memory).
+                // token_login will fire auth_success → game.js sends resume_game.
+                if (!isAsyncGame) {
+                    // Try to rejoin room (include team hint to preserve original slot)
+                    send({ type: 'reconnect', code: roomCode, team: myTeam || undefined });
+                }
                 // Re-auth with saved token if available
                 const savedToken = localStorage.getItem('curling_token');
                 if (savedToken) {
@@ -705,6 +715,7 @@ const CurlingNetwork = (() => {
             }
             myTeam = null;
             roomCode = null;
+            isAsyncGame = false;
             reconnectAttempts = 0;
             clearActiveSession();
         },

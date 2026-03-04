@@ -2313,10 +2313,15 @@
         }
         // v101: Screen coming back — show welcome back popup
         if (!document.hidden && gameState.onlineMode) {
-            // v126: For async games, skip popup — just re-sync state automatically
+            // v126d: For async games, skip popup — auto re-sync state
             if (gameState.isAsync && gameState.roomCode) {
                 console.log('[VISIBILITY] Async game — auto-resuming room=' + gameState.roomCode);
-                CurlingNetwork.sendResumeGame(gameState.roomCode);
+                const sent = CurlingNetwork.sendResumeGame(gameState.roomCode);
+                if (!sent) {
+                    // WS is dead — flag for retry after reconnect + auth
+                    console.log('[VISIBILITY] WS not open — deferring resume_game until auth');
+                    gameState._pendingAsyncResume = gameState.roomCode;
+                }
                 return;
             }
             showWelcomeBack();
@@ -4475,6 +4480,7 @@
         CurlingNetwork.onReconnected(({ yourTeam, gameState: serverState, opponent, isAsync, roomCode }) => {
             console.log('[GAME] onReconnected v112: myTeam=' + yourTeam + ' serverState=' + !!serverState + ' isAsync=' + !!isAsync);
             gameState._awaitingConnectionVerify = false;
+            gameState._pendingAsyncResume = null; // v126d: clear deferred resume
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.opponentConnected = true;
@@ -4820,6 +4826,12 @@
             document.getElementById('lobby-my-games').style.display = 'block';
             // v126: Fetch My Games immediately so badge shows turn count on lobby
             CurlingNetwork.sendGetMyGames();
+            // v126d: If async game was pending resume (WS was dead), send now
+            if (gameState._pendingAsyncResume) {
+                console.log('[AUTH] Deferred async resume — sending resume_game for ' + gameState._pendingAsyncResume);
+                CurlingNetwork.sendResumeGame(gameState._pendingAsyncResume);
+                gameState._pendingAsyncResume = null;
+            }
         });
 
         CurlingNetwork.onVapidKey(({ key }) => {
