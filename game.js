@@ -3632,6 +3632,24 @@
         });
     }
 
+    // v126: Update welcome screen Online button badge
+    function updateWelcomeBadge(count) {
+        const el = document.getElementById('welcome-online-badge');
+        if (!el) return;
+        if (count > 0) {
+            el.textContent = count;
+            el.style.display = 'inline-block';
+        } else {
+            el.style.display = 'none';
+        }
+    }
+
+    // v126: Show cached turn count on welcome screen immediately
+    (function() {
+        const cached = parseInt(localStorage.getItem('curling_my_turn_count'), 10);
+        if (cached > 0) updateWelcomeBadge(cached);
+    })();
+
     // v123: Render My Games list
     function renderMyGames(games) {
         const container = document.getElementById('my-games-list');
@@ -4703,6 +4721,10 @@
         // ---- ASYNC MULTIPLAYER (v123) ----
         CurlingNetwork.onMyGames(({ games }) => {
             renderMyGames(games || []);
+            // v126: Cache turn count for welcome screen badge
+            const turnCount = (games || []).filter(g => g.isMyTurn && !g.isWaiting).length;
+            localStorage.setItem('curling_my_turn_count', turnCount);
+            updateWelcomeBadge(turnCount);
         });
 
         CurlingNetwork.onAsyncGameCreated(({ code }) => {
@@ -4788,6 +4810,8 @@
             document.getElementById('lobby-history').style.display = 'block';
             document.getElementById('lobby-best-shots').style.display = 'block';
             document.getElementById('lobby-my-games').style.display = 'block';
+            // v126: Fetch My Games immediately so badge shows turn count on lobby
+            CurlingNetwork.sendGetMyGames();
         });
 
         CurlingNetwork.onVapidKey(({ key }) => {
@@ -5393,6 +5417,8 @@
         localStorage.removeItem('curling_token');
         localStorage.removeItem('curling_username');
         localStorage.removeItem('curling_country');
+        localStorage.removeItem('curling_my_turn_count');
+        updateWelcomeBadge(0);
         document.getElementById('user-info-bar').style.display = 'none';
         document.getElementById('auth-panel').style.display = 'flex';
         document.getElementById('lobby-menu').style.display = 'none';
