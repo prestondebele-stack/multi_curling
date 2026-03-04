@@ -4122,14 +4122,14 @@
     }
 
     function setupOnlineHandlers() {
-        CurlingNetwork.onGameStart(({ yourTeam, opponent, totalEnds, isAsync, roomCode }) => {
+        CurlingNetwork.onGameStart(({ yourTeam, opponent, totalEnds, isAsync, roomCode, opponentOnline }) => {
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
             gameState.botMode = false;
             gameState.isAsync = !!isAsync;
             gameState.roomCode = roomCode || CurlingNetwork.getRoomCode();
             gameState.opponentInfo = opponent;
-            gameState.opponentConnected = data.opponentOnline !== false; // v128
+            gameState.opponentConnected = opponentOnline !== false; // v128
 
             // Brief "starting" panel
             showLobbyPanel('lobby-starting-panel');
@@ -4542,13 +4542,13 @@
         // ============================================================
         // v112: SIMPLIFIED RECONNECT — server owns all state
         // ============================================================
-        CurlingNetwork.onReconnected(({ yourTeam, gameState: serverState, opponent, isAsync, roomCode }) => {
+        CurlingNetwork.onReconnected(({ yourTeam, gameState: serverState, opponent, isAsync, roomCode, opponentOnline }) => {
             console.log('[GAME] onReconnected v112: myTeam=' + yourTeam + ' serverState=' + !!serverState + ' isAsync=' + !!isAsync);
             gameState._awaitingConnectionVerify = false;
             gameState._pendingAsyncResume = null; // v126d: clear deferred resume
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
-            gameState.opponentConnected = data.opponentOnline !== false; // v128
+            gameState.opponentConnected = opponentOnline !== false; // v128
             gameState.opponentInfo = opponent;
             if (isAsync) gameState.isAsync = true;
             if (roomCode) gameState.roomCode = roomCode;

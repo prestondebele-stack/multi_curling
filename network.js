@@ -210,7 +210,7 @@ const CurlingNetwork = (() => {
                 isReconnecting = false;
                 hasActiveGame = true;
                 saveActiveSession();
-                if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6, isAsync: data.isAsync || false, roomCode: data.roomCode || roomCode });
+                if (callbacks.onGameStart) callbacks.onGameStart({ yourTeam: data.yourTeam, opponent: data.opponent || null, totalEnds: data.totalEnds || 6, isAsync: data.isAsync || false, roomCode: data.roomCode || roomCode, opponentOnline: data.opponentOnline });
                 break;
 
             case 'throw_ack':
@@ -301,6 +301,7 @@ const CurlingNetwork = (() => {
                     opponent: data.opponent || null,
                     isAsync: data.isAsync || false,
                     roomCode: data.roomCode || roomCode,
+                    opponentOnline: data.opponentOnline,
                 });
                 break;
 
