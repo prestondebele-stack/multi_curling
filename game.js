@@ -4782,6 +4782,12 @@
             CurlingNetwork.sendGetMyGames();
         });
 
+        // v127b: Notify creator when their invite is accepted
+        CurlingNetwork.onInviteAccepted(({ username, gameCode }) => {
+            showLobbyToast((username || 'Your opponent') + ' accepted your invite!');
+            CurlingNetwork.sendGetMyGames();
+        });
+
         // ---- BEST SHOTS (v120) ----
         CurlingNetwork.onBestShots(({ shots }) => {
             renderBestShots(shots || []);

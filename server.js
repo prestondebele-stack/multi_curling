@@ -1271,6 +1271,12 @@ async function handleMessage(ws, message) {
                         roomCode: gameCode,
                         isAsync: true,
                     });
+                    // v127b: Also tell creator so their My Games list refreshes
+                    send(redWs, {
+                        type: 'invite_accepted',
+                        username: session.username,
+                        gameCode,
+                    });
                 } else if (room.redUserId) {
                     sendPushNotification(room.redUserId, "Game On!",
                         `${session.username} joined your game! It's your turn.`);
