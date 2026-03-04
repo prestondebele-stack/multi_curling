@@ -670,4 +670,20 @@ async function forfeitGame(gameCode, forfeitingUserId) {
     }
 }
 
-module.exports = { register, login, googleLogin, googleRegister, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard, getGameHistory, submitShot, getBestShots, voteShot, persistGameState, loadGameState, getMyGames, createAsyncGame, joinAsyncGame, forfeitGame };
+// v125b: Cancel a waiting game — no result, no rating impact, just delete it
+async function cancelGame(gameCode, userId) {
+    if (!db.isAvailable()) return { error: 'Not available' };
+    try {
+        const result = await db.query(
+            "DELETE FROM async_games WHERE game_code = $1 AND phase = 'waiting' AND red_user_id = $2 RETURNING *",
+            [gameCode, userId]
+        );
+        if (result.rows.length === 0) return { error: 'Game not found or already started' };
+        return { success: true };
+    } catch (e) {
+        console.error('Cancel game error:', e.message);
+        return { error: 'Cancel failed' };
+    }
+}
+
+module.exports = { register, login, googleLogin, googleRegister, getSession, removeSession, getProfile, recordGameResult, getRank, getSecurityQuestion, resetPassword, searchUsers, getLeaderboard, getGameHistory, submitShot, getBestShots, voteShot, persistGameState, loadGameState, getMyGames, createAsyncGame, joinAsyncGame, forfeitGame, cancelGame };

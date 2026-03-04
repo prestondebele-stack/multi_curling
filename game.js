@@ -3696,14 +3696,14 @@
                 </div>
                 ${game.isWaiting ? `<button class="invite-friend-card-btn" data-code="${game.gameCode}">Invite</button>` : ''}
                 <span class="turn-badge ${statusClass}">${statusText}</span>
-                <button class="forfeit-btn" data-code="${game.gameCode}" title="Forfeit">X</button>
+                <button class="${game.isWaiting ? 'cancel-btn' : 'forfeit-btn'}" data-code="${game.gameCode}" title="${game.isWaiting ? 'Cancel' : 'Forfeit'}">X</button>
             </div>`;
         }).join('');
 
         // Wire up game card clicks
         container.querySelectorAll('.my-game-card').forEach(card => {
             card.addEventListener('click', (e) => {
-                if (e.target.classList.contains('forfeit-btn')) return; // Don't navigate on forfeit click
+                if (e.target.classList.contains('forfeit-btn') || e.target.classList.contains('cancel-btn')) return;
                 const code = card.dataset.code;
                 const game = games.find(g => g.gameCode === code);
                 if (game && game.isWaiting) {
@@ -3723,14 +3723,29 @@
             });
         });
 
-        // Wire up forfeit buttons
+        // Wire up forfeit buttons (active games only — affects record)
         container.querySelectorAll('.forfeit-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const code = btn.dataset.code;
                 if (confirm('Forfeit this game? Your opponent will win.')) {
                     CurlingNetwork.sendForfeitGame(code);
-                    // Remove card optimistically
+                    btn.closest('.my-game-card').remove();
+                    if (container.children.length === 0) {
+                        emptyMsg.style.display = 'block';
+                        badge.style.display = 'none';
+                    }
+                }
+            });
+        });
+
+        // v125b: Wire up cancel buttons (waiting games — no record impact)
+        container.querySelectorAll('.cancel-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const code = btn.dataset.code;
+                if (confirm('Cancel this game?')) {
+                    CurlingNetwork.sendCancelGame(code);
                     btn.closest('.my-game-card').remove();
                     if (container.children.length === 0) {
                         emptyMsg.style.display = 'block';

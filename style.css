@@ -3023,12 +3023,15 @@ input[type="range"]::-moz-range-thumb {
     letter-spacing: 4px; background: rgba(0,0,0,0.3); border: 1px solid #555;
     color: #fff; padding: 10px; border-radius: 8px; width: 140px;
 }
-.my-game-card .forfeit-btn {
+.my-game-card .forfeit-btn,
+.my-game-card .cancel-btn {
     background: none; border: 1px solid #e53935; color: #e53935;
     padding: 2px 6px; border-radius: 4px; font-size: 10px; cursor: pointer;
     margin-left: 6px; flex-shrink: 0;
 }
+.my-game-card .cancel-btn { border-color: #888; color: #888; }
 .my-game-card .forfeit-btn:active { background: #e53935; color: #fff; }
+.my-game-card .cancel-btn:active { background: #888; color: #fff; }
 #back-to-games-btn {
     font-size: 11px; padding: 4px 8px; border-radius: 6px;
     background: rgba(255,255,255,0.1); color: #aaa; border: 1px solid #555;

@@ -1328,6 +1328,32 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        // v125b: Cancel a waiting game — no result, no rating impact
+        case 'cancel_game': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'auth_error', error: 'Not logged in' }); break; }
+            const cancelCode = (data.code || '').toUpperCase();
+            try {
+                const result = await auth.cancelGame(cancelCode, session.userId);
+                if (result.error) {
+                    send(ws, { type: 'auth_error', error: result.error });
+                    break;
+                }
+                // Clean up room from memory if it exists
+                const room = rooms.get(cancelCode);
+                if (room) {
+                    playerRooms.delete(ws);
+                    rooms.delete(cancelCode);
+                }
+                send(ws, { type: 'game_cancelled' });
+                console.log(`[ASYNC] ${session.username} cancelled waiting game ${cancelCode}`);
+            } catch (e) {
+                console.error('Cancel game error:', e.message);
+                send(ws, { type: 'auth_error', error: 'Failed to cancel game' });
+            }
+            break;
+        }
+
         case 'forfeit_game': {
             const session = playerSessions.get(ws);
             if (!session || !db.isAvailable()) { send(ws, { type: 'auth_error', error: 'Not logged in' }); break; }
