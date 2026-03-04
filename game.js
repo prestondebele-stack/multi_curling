@@ -2313,6 +2313,12 @@
         }
         // v101: Screen coming back — show welcome back popup
         if (!document.hidden && gameState.onlineMode) {
+            // v126: For async games, skip popup — just re-sync state automatically
+            if (gameState.isAsync && gameState.roomCode) {
+                console.log('[VISIBILITY] Async game — auto-resuming room=' + gameState.roomCode);
+                CurlingNetwork.sendResumeGame(gameState.roomCode);
+                return;
+            }
             showWelcomeBack();
         }
     });
