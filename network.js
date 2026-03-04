@@ -106,6 +106,7 @@ const CurlingNetwork = (() => {
         onGameCancelled: null,
         onInviteDeclined: null, // v127b
         onInviteAccepted: null, // v127b
+        onOpponentPresence: null, // v128
         onOpponentForfeited: null,
         // Connection verified (pong received after tab refocus)
         onConnectionVerified: null,
@@ -462,6 +463,9 @@ const CurlingNetwork = (() => {
                 break;
             case 'invite_accepted':
                 if (callbacks.onInviteAccepted) callbacks.onInviteAccepted(data);
+                break;
+            case 'opponent_presence':
+                if (callbacks.onOpponentPresence) callbacks.onOpponentPresence(data);
                 break;
             case 'opponent_forfeited':
                 if (callbacks.onOpponentForfeited) callbacks.onOpponentForfeited(data);
@@ -879,6 +883,7 @@ const CurlingNetwork = (() => {
         onGameCancelled(cb) { callbacks.onGameCancelled = cb; },
         onInviteDeclined(cb) { callbacks.onInviteDeclined = cb; }, // v127b
         onInviteAccepted(cb) { callbacks.onInviteAccepted = cb; }, // v127b
+        onOpponentPresence(cb) { callbacks.onOpponentPresence = cb; }, // v128
         onOpponentForfeited(cb) { callbacks.onOpponentForfeited = cb; },
         // Search
         onSearchResults(cb) { callbacks.onSearchResults = cb; },

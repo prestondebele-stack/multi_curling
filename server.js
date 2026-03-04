@@ -711,6 +711,30 @@ async function broadcastPresenceToFriends(userId, status) {
     }
 }
 
+// v128: Notify async game opponents about online/offline status changes
+async function broadcastPresenceToAsyncOpponents(userId, online) {
+    if (!db.isAvailable()) return;
+    try {
+        const result = await db.query(
+            `SELECT CASE WHEN red_user_id = $1 THEN yellow_user_id ELSE red_user_id END AS opponent_id
+             FROM async_games
+             WHERE (red_user_id = $1 OR yellow_user_id = $1)
+               AND phase != 'finished'
+               AND red_user_id IS NOT NULL AND yellow_user_id IS NOT NULL`,
+            [userId]
+        );
+        for (const row of result.rows) {
+            if (!row.opponent_id) continue;
+            const oppWs = onlineUsers.get(row.opponent_id);
+            if (oppWs && oppWs.readyState === WebSocket.OPEN) {
+                send(oppWs, { type: 'opponent_presence', online });
+            }
+        }
+    } catch (e) {
+        console.error('Async presence broadcast error:', e.message);
+    }
+}
+
 function cleanupInvitesForUser(userId) {
     for (const [inviteId, invite] of pendingInvites) {
         if (invite.fromUserId === userId) {
@@ -757,6 +781,7 @@ function cleanupPlayer(ws) {
             onlineUsers.delete(session.userId);
             cleanupInvitesForUser(session.userId);
             broadcastPresenceToFriends(session.userId, 'offline');
+            broadcastPresenceToAsyncOpponents(session.userId, false); // v128
         }
         playerSessions.delete(ws);
         return;
@@ -768,6 +793,7 @@ function cleanupPlayer(ws) {
             onlineUsers.delete(session.userId);
             cleanupInvitesForUser(session.userId);
             broadcastPresenceToFriends(session.userId, 'offline');
+            broadcastPresenceToAsyncOpponents(session.userId, false); // v128
         }
         playerSessions.delete(ws);
         playerRooms.delete(ws);
@@ -779,6 +805,7 @@ function cleanupPlayer(ws) {
         if (session && session.userId) {
             onlineUsers.delete(session.userId);
             broadcastPresenceToFriends(session.userId, 'offline');
+            broadcastPresenceToAsyncOpponents(session.userId, false); // v128
         }
         playerSessions.delete(ws);
         playerRooms.delete(ws);
@@ -819,9 +846,10 @@ function cleanupPlayer(ws) {
         // v124b: Don't notify opponent for async games — player just left, game persists in DB
         // They can come back hours later. No alarm needed.
 
-        // Broadcast offline to friends
+        // Broadcast offline to friends + async opponents
         if (session && session.userId) {
             broadcastPresenceToFriends(session.userId, 'offline');
+            broadcastPresenceToAsyncOpponents(session.userId, false); // v128
         }
 
         // 5-min eviction timer — just removes from memory (data safe in DB)
@@ -853,9 +881,10 @@ function cleanupPlayer(ws) {
             send(opponent, { type: 'opponent_disconnected' });
         }
 
-        // NOW broadcast offline to friends (grace period expired without reconnect)
+        // NOW broadcast offline to friends + async opponents (grace period expired without reconnect)
         if (session && session.userId) {
             broadcastPresenceToFriends(session.userId, 'offline');
+            broadcastPresenceToAsyncOpponents(session.userId, false); // v128
         }
 
         // Now start the 5-minute hard timer for room destruction
@@ -932,6 +961,7 @@ async function handleMessage(ws, message) {
                 playerSessions.set(ws, { userId: result.userId, username: result.username });
                 onlineUsers.set(result.userId, ws);
                 broadcastPresenceToFriends(result.userId, 'online');
+                broadcastPresenceToAsyncOpponents(result.userId, true); // v128
                 const profile = await auth.getProfile(result.userId);
                 const rank = profile ? profile.rank : auth.getRank(1200);
                 send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
@@ -948,6 +978,7 @@ async function handleMessage(ws, message) {
                 playerSessions.set(ws, { userId: result.userId, username: result.username });
                 onlineUsers.set(result.userId, ws);
                 broadcastPresenceToFriends(result.userId, 'online');
+                broadcastPresenceToAsyncOpponents(result.userId, true); // v128
                 const profile = await auth.getProfile(result.userId);
                 const rank = profile ? profile.rank : auth.getRank(1200);
                 send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
@@ -973,6 +1004,7 @@ async function handleMessage(ws, message) {
                     }
                 }
                 broadcastPresenceToFriends(session.userId, 'online');
+                broadcastPresenceToAsyncOpponents(session.userId, true); // v128
                 const profile = await auth.getProfile(session.userId);
                 const rank = profile ? profile.rank : auth.getRank(1200);
                 send(ws, { type: 'auth_success', token: data.token, username: session.username, rank });
@@ -1064,6 +1096,10 @@ async function handleMessage(ws, message) {
             if (!session || !db.isAvailable()) { send(ws, { type: 'my_games', games: [] }); break; }
             try {
                 const result = await auth.getMyGames(session.userId);
+                // v128: Annotate each game with opponent online status
+                for (const game of result) {
+                    game.opponentOnline = game.opponentUserId ? onlineUsers.has(game.opponentUserId) : false;
+                }
                 send(ws, { type: 'my_games', games: result });
             } catch (e) {
                 console.error('Get my games error:', e.message);
@@ -1178,6 +1214,8 @@ async function handleMessage(ws, message) {
                         lastPreThrowStones: room.state.lastPreThrowStones,
                     },
                     opponent: opponentInfo,
+                    opponentOnline: !!(opponentWs && opponentWs.readyState === WebSocket.OPEN)
+                        || onlineUsers.has(slot === 0 ? room.yellowUserId : room.redUserId), // v128
                     isAsync: true,
                     roomCode: gameCode,
                 });
@@ -1256,6 +1294,8 @@ async function handleMessage(ws, message) {
                     type: 'game_start',
                     yourTeam: 'yellow',
                     opponent: redInfo,
+                    opponentOnline: !!(redWs && redWs.readyState === WebSocket.OPEN)
+                        || (room.redUserId ? onlineUsers.has(room.redUserId) : false), // v128
                     totalEnds: room.totalEnds || 4,
                     roomCode: gameCode,
                     isAsync: true,
@@ -1279,6 +1319,7 @@ async function handleMessage(ws, message) {
                         type: 'game_start',
                         yourTeam: 'red',
                         opponent: yellowInfo,
+                        opponentOnline: true, // v128: joiner is obviously online
                         totalEnds: room.totalEnds || 4,
                         roomCode: gameCode,
                         isAsync: true,
@@ -1490,6 +1531,7 @@ async function handleMessage(ws, message) {
                     playerSessions.set(ws, { userId: result.userId, username: result.username });
                     onlineUsers.set(result.userId, ws);
                     broadcastPresenceToFriends(result.userId, 'online');
+                    broadcastPresenceToAsyncOpponents(result.userId, true); // v128
                     const profile = await auth.getProfile(result.userId);
                     const rank = profile ? profile.rank : auth.getRank(1200);
                     send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });
@@ -1516,6 +1558,7 @@ async function handleMessage(ws, message) {
                     playerSessions.set(ws, { userId: result.userId, username: result.username });
                     onlineUsers.set(result.userId, ws);
                     broadcastPresenceToFriends(result.userId, 'online');
+                    broadcastPresenceToAsyncOpponents(result.userId, true); // v128
                     const profile = await auth.getProfile(result.userId);
                     const rank = profile ? profile.rank : auth.getRank(1200);
                     send(ws, { type: 'auth_success', token: result.token, username: result.username, rank });

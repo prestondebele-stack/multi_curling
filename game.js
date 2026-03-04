@@ -3392,12 +3392,16 @@
         const myLabel = myFlag + (myName ? ' ' + myName + ' (you)' : ' You');
         const oppLabel = oppFlag + (oppInfo ? ' ' + oppInfo.username : ' Guest');
 
-        if (myTeam === TEAMS.RED) {
-            redNameEl.textContent = myLabel;
-            yellowNameEl.textContent = oppLabel;
+        const myEl = myTeam === TEAMS.RED ? redNameEl : yellowNameEl;
+        const oppEl = myTeam === TEAMS.RED ? yellowNameEl : redNameEl;
+        myEl.textContent = myLabel;
+
+        // v128: Show green/gray presence dot for async games
+        if (gameState.isAsync) {
+            const dotColor = gameState.opponentConnected ? '#4caf50' : '#888';
+            oppEl.innerHTML = '<span class="presence-dot" style="background:' + dotColor + '"></span>' + oppLabel;
         } else {
-            yellowNameEl.textContent = myLabel;
-            redNameEl.textContent = oppLabel;
+            oppEl.textContent = oppLabel;
         }
     }
 
@@ -3736,7 +3740,7 @@
 
             return `<div class="my-game-card" data-code="${game.gameCode}">
                 <div class="game-card-left">
-                    <div class="opponent-name">${oppName} ${rankBadge}</div>
+                    <div class="opponent-name">${game.opponentName && !game.isWaiting ? '<span class="presence-dot" style="background:' + (game.opponentOnline ? '#4caf50' : '#888') + '"></span>' : ''}${oppName} ${rankBadge}</div>
                     <div class="game-score">${score} \u2022 ${endInfo}</div>
                     ${lastMove ? `<div class="game-time">${lastMove}</div>` : ''}
                 </div>
@@ -4125,6 +4129,7 @@
             gameState.isAsync = !!isAsync;
             gameState.roomCode = roomCode || CurlingNetwork.getRoomCode();
             gameState.opponentInfo = opponent;
+            gameState.opponentConnected = data.opponentOnline !== false; // v128
 
             // Brief "starting" panel
             showLobbyPanel('lobby-starting-panel');
@@ -4543,7 +4548,7 @@
             gameState._pendingAsyncResume = null; // v126d: clear deferred resume
             gameState.myTeam = yourTeam;
             gameState.onlineMode = true;
-            gameState.opponentConnected = true;
+            gameState.opponentConnected = data.opponentOnline !== false; // v128
             gameState.opponentInfo = opponent;
             if (isAsync) gameState.isAsync = true;
             if (roomCode) gameState.roomCode = roomCode;
@@ -4786,6 +4791,20 @@
         CurlingNetwork.onInviteAccepted(({ username, gameCode }) => {
             showLobbyToast((username || 'Your opponent') + ' accepted your invite!');
             CurlingNetwork.sendGetMyGames();
+        });
+
+        // v128: Opponent online/offline status updates
+        CurlingNetwork.onOpponentPresence(({ online }) => {
+            // Update in-game scoreboard dot
+            if (gameState.isAsync && gameState.onlineMode) {
+                gameState.opponentConnected = online;
+                updateScoreboardNames();
+            }
+            // Refresh My Games list if lobby is visible
+            const myGamesPanel = document.getElementById('lobby-my-games-panel');
+            if (myGamesPanel && myGamesPanel.style.display !== 'none') {
+                CurlingNetwork.sendGetMyGames();
+            }
         });
 
         // ---- BEST SHOTS (v120) ----

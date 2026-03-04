@@ -3130,3 +3130,15 @@ input[type="range"]::-moz-range-thumb {
     color: #fff;
 }
 .invite-deny-btn:active { background: #888; }
+
+/* ================================================
+   PRESENCE DOT (v128)
+   ================================================ */
+.presence-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+}

@@ -590,6 +590,7 @@ async function getMyGames(userId) {
                 isWaiting: row.phase === 'waiting' && !isPendingInvite,
                 isPendingInvite, // v127b
                 invitedUsername: row.invited_username || null,
+                opponentUserId: isPendingInvite ? row.red_user_id : (isRed ? row.yellow_user_id : row.red_user_id), // v128
                 redScore: row.red_score,
                 yellowScore: row.yellow_score,
                 currentEnd: row.current_end,
