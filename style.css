@@ -3068,3 +3068,22 @@ input[type="range"]::-moz-range-thumb {
     margin-left: 4px; flex-shrink: 0;
 }
 .invite-friend-card-btn:active { background: #3a5a8a; }
+
+/* ================================================
+   LOBBY TOAST (v125)
+   ================================================ */
+#lobby-toast-container {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    z-index: 10000; pointer-events: none;
+}
+.lobby-toast {
+    background: #4CAF50; color: white; padding: 10px 20px;
+    border-radius: 8px; font-size: 14px; font-weight: 600;
+    margin-bottom: 8px; animation: toast-fade 3s ease-in-out forwards;
+}
+@keyframes toast-fade {
+    0% { opacity: 0; transform: translateY(-10px); }
+    10% { opacity: 1; transform: translateY(0); }
+    80% { opacity: 1; }
+    100% { opacity: 0; }
+}

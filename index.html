@@ -307,34 +307,14 @@
                 </div>
 
                 <div id="lobby-menu">
-                    <button id="lobby-create" class="lobby-btn">Create Game</button>
+                    <button id="lobby-my-games" class="lobby-btn" style="display:none;">My Games <span id="my-games-badge" class="badge" style="display:none;">0</span></button>
                     <button id="lobby-join" class="lobby-btn">Join Game</button>
                     <button id="lobby-queue" class="lobby-btn">Quick Match</button>
+                    <button id="lobby-friends" class="lobby-btn" style="display:none;">Friends</button>
                     <button id="lobby-leaderboard" class="lobby-btn" style="display:none;">Leaderboard</button>
                     <button id="lobby-history" class="lobby-btn" style="display:none;">Match History</button>
                     <button id="lobby-best-shots" class="lobby-btn" style="display:none;">Best Shots</button>
-                    <button id="lobby-my-games" class="lobby-btn" style="display:none;">My Games <span id="my-games-badge" class="badge" style="display:none;">0</span></button>
-                    <button id="lobby-friends" class="lobby-btn" style="display:none;">Friends</button>
                     <button id="lobby-back" class="lobby-btn secondary">Back</button>
-                </div>
-                <div id="lobby-ends-panel" style="display:none;">
-                    <p>How many ends?</p>
-                    <div id="ends-selector">
-                        <button class="ends-btn active" data-ends="4">4</button>
-                        <button class="ends-btn" data-ends="6">6</button>
-                        <button class="ends-btn" data-ends="8">8</button>
-                        <button class="ends-btn" data-ends="10">10</button>
-                    </div>
-                    <button id="lobby-create-confirm" class="lobby-btn">Create Game</button>
-                    <button id="lobby-cancel-ends" class="lobby-btn secondary">Back</button>
-                </div>
-                <div id="lobby-create-panel" style="display:none;">
-                    <p>Share this code with your opponent:</p>
-                    <div id="room-code-display">----</div>
-                    <button id="share-invite-btn" class="lobby-btn">&#x1F4E4; Share Invite Link</button>
-                    <p id="share-copied-msg" style="display:none; color:#4CAF50; font-size:13px; margin:4px 0;">Link copied!</p>
-                    <p class="lobby-status">Waiting for opponent...</p>
-                    <button id="lobby-cancel-create" class="lobby-btn secondary">Cancel</button>
                 </div>
                 <div id="lobby-join-panel" style="display:none;">
                     <p>Enter room code:</p>
@@ -451,6 +431,7 @@
                 <div id="friend-picker-list"></div>
             </div>
         </div>
+        <div id="lobby-toast-container"></div>
         <div id="disconnect-overlay" style="display:none;">
             <div class="disconnect-content">
                 <p>Opponent disconnected</p>

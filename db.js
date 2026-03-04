@@ -148,6 +148,9 @@ async function initSchema() {
             );
             CREATE INDEX IF NOT EXISTS idx_async_red ON async_games(red_user_id) WHERE phase != 'finished';
             CREATE INDEX IF NOT EXISTS idx_async_yellow ON async_games(yellow_user_id) WHERE phase != 'finished';
+
+            -- v125: Track invited friend on waiting game cards
+            ALTER TABLE async_games ADD COLUMN IF NOT EXISTS invited_username VARCHAR(30) DEFAULT NULL;
         `);
 
         dbAvailable = true;

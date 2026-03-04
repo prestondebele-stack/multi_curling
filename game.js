@@ -3258,7 +3258,7 @@
     }
 
     function showLobbyPanel(panelId) {
-        const panels = ['lobby-menu', 'lobby-ends-panel', 'lobby-create-panel', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel', 'lobby-leaderboard-panel', 'lobby-history-panel', 'lobby-best-shots-panel', 'lobby-my-games-panel', 'create-async-panel', 'join-async-panel'];
+        const panels = ['lobby-menu', 'lobby-join-panel', 'lobby-queue-panel', 'lobby-starting-panel', 'auth-panel', 'lobby-friends-panel', 'lobby-leaderboard-panel', 'lobby-history-panel', 'lobby-best-shots-panel', 'lobby-my-games-panel', 'create-async-panel', 'join-async-panel'];
         panels.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = id === panelId ? 'flex' : 'none';
@@ -3668,7 +3668,7 @@
         }
 
         container.innerHTML = games.map(game => {
-            const oppName = game.opponentName || 'Waiting...';
+            const oppName = game.opponentName || (game.invitedUsername ? 'Invited: ' + game.invitedUsername : 'Waiting...');
             const rankBadge = game.opponentRank
                 ? `<span class="rank-badge" style="background:${game.opponentRank.color};color:${(game.opponentRank.color === '#ffd54f' || game.opponentRank.color === '#e0e0e0') ? '#333' : '#fff'}">${game.opponentRank.name}</span>`
                 : '';
@@ -3822,6 +3822,17 @@
 
     function hideGameInvite() {
         document.getElementById('game-invite-overlay').style.display = 'none';
+    }
+
+    // v125: Lobby toast notifications
+    function showLobbyToast(message) {
+        const container = document.getElementById('lobby-toast-container');
+        if (!container) return;
+        const toast = document.createElement('div');
+        toast.className = 'lobby-toast';
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(() => { toast.remove(); }, 3000);
     }
 
     // v124: Friend picker for async game invites
@@ -4388,10 +4399,7 @@
             }
         });
 
-        CurlingNetwork.onRoomCreated(({ code }) => {
-            document.getElementById('room-code-display').textContent = code;
-            showLobbyPanel('lobby-create-panel');
-        });
+        // v125: Create Game removed — games created from My Games panel
 
         CurlingNetwork.onRoomJoined(() => {
             // Game will start via onGameStart
@@ -4630,8 +4638,8 @@
             }
         });
 
-        CurlingNetwork.onGameInviteSent(() => {
-            // Invite sent successfully — could show "Invite sent" feedback
+        CurlingNetwork.onGameInviteSent(({ toUsername }) => {
+            showLobbyToast('Invite sent to ' + toUsername + '!');
         });
 
         CurlingNetwork.onGameInviteReceived(({ inviteId, fromUsername, fromRank, gameCode }) => {
@@ -4922,28 +4930,6 @@
     });
 
     // Lobby button handlers
-    document.getElementById('lobby-create').addEventListener('click', () => {
-        showLobbyPanel('lobby-ends-panel');
-    });
-
-    // Ends selector buttons
-    document.querySelectorAll('.ends-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.ends-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-        });
-    });
-
-    document.getElementById('lobby-create-confirm').addEventListener('click', () => {
-        const activeBtn = document.querySelector('.ends-btn.active');
-        const totalEnds = activeBtn ? parseInt(activeBtn.dataset.ends) : 4;
-        CurlingNetwork.createRoom(totalEnds);
-    });
-
-    document.getElementById('lobby-cancel-ends').addEventListener('click', () => {
-        showLobbyPanel('lobby-menu');
-    });
-
     document.getElementById('lobby-join').addEventListener('click', () => {
         showLobbyPanel('lobby-join-panel');
         document.getElementById('join-error').style.display = 'none';
@@ -4980,48 +4966,6 @@
         document.getElementById('difficulty-selector').classList.remove('hidden');
         document.getElementById('user-info-bar').style.display = 'none';
         document.getElementById('auth-panel').style.display = 'none';
-    });
-
-    document.getElementById('lobby-cancel-create').addEventListener('click', () => {
-        CurlingNetwork.sendLeave();
-        showLobbyPanel('lobby-menu');
-    });
-
-    // Share invite link button
-    document.getElementById('share-invite-btn').addEventListener('click', () => {
-        const roomCode = document.getElementById('room-code-display').textContent.trim();
-        if (!roomCode || roomCode === '----') return;
-        const shareUrl = window.location.origin + window.location.pathname + '?join=' + roomCode;
-        const shareText = 'Join my curling game! ' + shareUrl;
-        const copiedMsg = document.getElementById('share-copied-msg');
-
-        if (navigator.share) {
-            // Include URL in 'text' for maximum SMS/messaging compatibility.
-            // Some apps ignore the 'url' field entirely and only send 'text'.
-            navigator.share({
-                text: 'Join my curling game! ' + shareUrl,
-            }).catch(() => {
-                // User cancelled share — no action needed
-            });
-        } else {
-            // Desktop fallback: copy to clipboard
-            navigator.clipboard.writeText(shareUrl).then(() => {
-                copiedMsg.style.display = 'block';
-                setTimeout(() => { copiedMsg.style.display = 'none'; }, 2500);
-            }).catch(() => {
-                // Fallback for older browsers without clipboard API
-                const ta = document.createElement('textarea');
-                ta.value = shareUrl;
-                ta.style.position = 'fixed';
-                ta.style.opacity = '0';
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-                copiedMsg.style.display = 'block';
-                setTimeout(() => { copiedMsg.style.display = 'none'; }, 2500);
-            });
-        }
     });
 
     document.getElementById('lobby-cancel-join').addEventListener('click', () => {

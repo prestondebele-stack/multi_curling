@@ -1735,6 +1735,14 @@ async function handleMessage(ws, message) {
                 });
                 send(ws, { type: 'game_invite_sent', inviteId, toUsername });
 
+                // v125: Store invited username on the async game card
+                if (asyncCode) {
+                    db.query(
+                        'UPDATE async_games SET invited_username = $1 WHERE game_code = $2 AND phase = $3',
+                        [toUsername, asyncCode, 'waiting']
+                    ).catch(e => console.error('[ASYNC] Failed to store invited username:', e.message));
+                }
+
                 // Get sender's rank for the invite display
                 const profile = await auth.getProfile(session.userId);
                 const fromRank = profile ? profile.rank : auth.getRank(1200);

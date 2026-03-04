@@ -1,5 +1,5 @@
 // Service Worker for Online Curling PWA
-const CACHE_NAME = 'curling-v124b';
+const CACHE_NAME = 'curling-v125';
 const ASSETS = [
     './',
     './index.html',

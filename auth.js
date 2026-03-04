@@ -582,6 +582,7 @@ async function getMyGames(userId) {
                 opponentRank: oppRating ? getRank(oppRating) : null,
                 isMyTurn,
                 isWaiting: row.phase === 'waiting',
+                invitedUsername: row.invited_username || null,  // v125
                 redScore: row.red_score,
                 yellowScore: row.yellow_score,
                 currentEnd: row.current_end,
@@ -614,7 +615,7 @@ async function joinAsyncGame(gameCode, userId) {
     if (!db.isAvailable()) return { error: 'Not available' };
     try {
         const result = await db.query(
-            `UPDATE async_games SET yellow_user_id = $1, phase = 'playing', updated_at = NOW()
+            `UPDATE async_games SET yellow_user_id = $1, phase = 'playing', invited_username = NULL, updated_at = NOW()
              WHERE game_code = $2 AND phase = 'waiting' AND yellow_user_id IS NULL AND red_user_id != $1
              RETURNING *`,
             [userId, gameCode]
