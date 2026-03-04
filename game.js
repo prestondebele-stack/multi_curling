@@ -3880,44 +3880,58 @@
     }
 
     // v124: Friend picker for async game invites
+    let _friendPickerGameCode = null; // v126d: track open picker for re-render
+
     function openFriendPicker(gameCode) {
         const overlay = document.getElementById('friend-picker-overlay');
         const list = document.getElementById('friend-picker-list');
+        _friendPickerGameCode = gameCode;
 
-        // Refresh friends list in background
-        CurlingNetwork.getFriendsList();
-
-        if (friendsList.length === 0) {
-            list.innerHTML = '<p style="color:#888;font-size:13px;text-align:center;">No friends yet. Add friends first!</p>';
+        // Show cached list immediately if available, otherwise loading state
+        if (friendsList.length > 0) {
+            renderFriendPicker(friendsList, gameCode);
         } else {
-            const statusOrder = { online: 0, in_game: 1, offline: 2 };
-            const sorted = [...friendsList].sort((a, b) => (statusOrder[a.status] || 2) - (statusOrder[b.status] || 2));
-
-            list.innerHTML = sorted.map(f => {
-                const statusLabel = f.status === 'in_game' ? 'In Game' : f.status === 'online' ? 'Online' : 'Offline';
-                const rankHtml = f.rank ? `<span class="rank-badge friend-rank" style="background:${f.rank.color}">${f.rank.name}</span>` : '';
-                return `<div class="friend-picker-item">
-                    <div class="friend-status-dot ${f.status}"></div>
-                    <span class="friend-name">${f.username}</span>
-                    ${rankHtml}
-                    <span class="friend-status-text">${statusLabel}</span>
-                    <button class="friend-picker-invite-btn lobby-btn" data-user-id="${f.userId}">Invite</button>
-                </div>`;
-            }).join('');
-
-            list.querySelectorAll('.friend-picker-invite-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    CurlingNetwork.sendGameInvite(parseInt(btn.dataset.userId), gameCode);
-                    btn.textContent = 'Sent!';
-                    btn.disabled = true;
-                });
-            });
+            list.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">Loading friends...</p>';
         }
         overlay.style.display = 'flex';
+
+        // Always refresh — response will re-render the picker via onFriendsList
+        CurlingNetwork.getFriendsList();
+    }
+
+    function renderFriendPicker(friends, gameCode) {
+        const list = document.getElementById('friend-picker-list');
+        if (friends.length === 0) {
+            list.innerHTML = '<p style="color:#888;font-size:13px;text-align:center;">No friends yet. Add friends first!</p>';
+            return;
+        }
+        const statusOrder = { online: 0, in_game: 1, offline: 2 };
+        const sorted = [...friends].sort((a, b) => (statusOrder[a.status] || 2) - (statusOrder[b.status] || 2));
+
+        list.innerHTML = sorted.map(f => {
+            const statusLabel = f.status === 'in_game' ? 'In Game' : f.status === 'online' ? 'Online' : 'Offline';
+            const rankHtml = f.rank ? `<span class="rank-badge friend-rank" style="background:${f.rank.color}">${f.rank.name}</span>` : '';
+            return `<div class="friend-picker-item">
+                <div class="friend-status-dot ${f.status}"></div>
+                <span class="friend-name">${f.username}</span>
+                ${rankHtml}
+                <span class="friend-status-text">${statusLabel}</span>
+                <button class="friend-picker-invite-btn lobby-btn" data-user-id="${f.userId}">Invite</button>
+            </div>`;
+        }).join('');
+
+        list.querySelectorAll('.friend-picker-invite-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                CurlingNetwork.sendGameInvite(parseInt(btn.dataset.userId), gameCode);
+                btn.textContent = 'Sent!';
+                btn.disabled = true;
+            });
+        });
     }
 
     function closeFriendPicker() {
         document.getElementById('friend-picker-overlay').style.display = 'none';
+        _friendPickerGameCode = null;
     }
 
     // ---- QUICK CHAT ----
@@ -4630,6 +4644,11 @@
         CurlingNetwork.onFriendsList(({ friends }) => {
             friendsList = friends || [];
             renderFriendsList(friendsList);
+            // v126d: Re-render friend picker if it's open (fixes empty on first open)
+            const pickerOverlay = document.getElementById('friend-picker-overlay');
+            if (pickerOverlay && pickerOverlay.style.display !== 'none' && _friendPickerGameCode) {
+                renderFriendPicker(friendsList, _friendPickerGameCode);
+            }
         });
 
         CurlingNetwork.onPendingRequests(({ incoming, outgoing }) => {
@@ -4826,6 +4845,8 @@
             document.getElementById('lobby-my-games').style.display = 'block';
             // v126: Fetch My Games immediately so badge shows turn count on lobby
             CurlingNetwork.sendGetMyGames();
+            // v126d: Pre-fetch friends list so invite picker is ready
+            CurlingNetwork.getFriendsList();
             // v126d: If async game was pending resume (WS was dead), send now
             if (gameState._pendingAsyncResume) {
                 console.log('[AUTH] Deferred async resume — sending resume_game for ' + gameState._pendingAsyncResume);
