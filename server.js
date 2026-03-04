@@ -535,6 +535,10 @@ function runServerPhysics(room, throwParams, callback) {
 
     room.state.liveSweepLevel = sweepLevel || 'none';
     room.state.liveStones = stones;
+    // v127: Record sweep timeline for accurate opponent replays
+    const initSweep = sweepLevel || 'none';
+    room.state.sweepTimeline = [{ step: 0, sweeping: initSweep !== 'none', level: initSweep }];
+    room.state.simStepCount = 0;
 
     const sweep = sweepLevel || 'none';
     let stepCount = 0;
@@ -570,6 +574,7 @@ function runServerPhysics(room, throwParams, callback) {
         for (let i = 0; i < STEPS_PER_TICK; i++) {
             anyMoving = CurlingPhysics.simulate(stones, PHYSICS_DT, currentSweep);
             stepCount++;
+            room.state.simStepCount = stepCount; // v127: expose for sweep_change timeline
             checkOOB();
             if (!anyMoving) break;
         }
@@ -589,6 +594,8 @@ function runServerPhysics(room, throwParams, callback) {
 
             delete room.state.liveSweepLevel;
             delete room.state.liveStones;
+            // v127: Keep sweepTimeline for throw_result, clean up simStepCount
+            delete room.state.simStepCount;
 
             callback({
                 stones: finalStones,
@@ -2231,6 +2238,7 @@ async function handleMessage(ws, message) {
                         endScores: room.state.endScores,
                         throwParams,
                         preThrowStones,
+                        sweepTimeline: room.state.sweepTimeline || [], // v127
                         hogViolation: result.hogViolation,
                         fgzViolation: result.fgzViolation,
                         throwerTeam: team,
@@ -2246,6 +2254,8 @@ async function handleMessage(ws, message) {
                     if (opp && opp.readyState === WebSocket.OPEN) {
                         send(opp, throwResultMsg);
                     }
+                    // v127: Clean up sweep timeline after sending
+                    delete room.state.sweepTimeline;
 
                     // Record game result if game over
                     if (gameOver) {
@@ -2352,6 +2362,14 @@ async function handleMessage(ws, message) {
             // v115b: Only the THROWING team can sweep their own stone
             if (team === room.state.currentTeam) {
                 room.state.liveSweepLevel = data.level; // 'none', 'light', 'hard'
+                // v127: Record in sweep timeline for replay
+                if (room.state.sweepTimeline) {
+                    room.state.sweepTimeline.push({
+                        step: room.state.simStepCount || 0,
+                        sweeping: data.level !== 'none',
+                        level: data.level
+                    });
+                }
                 // Broadcast to opponent so they see sweep feedback
                 const opp = getOpponent(room, ws);
                 if (opp && opp.readyState === WebSocket.OPEN) {

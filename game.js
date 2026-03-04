@@ -4266,6 +4266,10 @@
                 if (data.throwParams) {
                     gameState.lastOpponentShot = { ...data.throwParams };
                     gameState.lastOpponentShot.sweepLevel = data.throwParams.sweepLevel || 'none';
+                    // v127: Store sweep timeline for accurate replay
+                    if (data.sweepTimeline && data.sweepTimeline.length > 0) {
+                        gameState.lastOpponentShot.sweepTimeline = data.sweepTimeline;
+                    }
                 }
                 if (data.preThrowStones) {
                     gameState.lastOpponentShotStones = data.preThrowStones.map(s => ({
