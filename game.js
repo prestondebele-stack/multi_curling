@@ -3675,10 +3675,12 @@
         }
         emptyMsg.style.display = 'none';
 
-        // Count games where it's my turn
+        // v127b: Badge counts my-turn games + pending invites
         const myTurnCount = games.filter(g => g.isMyTurn && !g.isWaiting).length;
-        if (myTurnCount > 0) {
-            badge.textContent = myTurnCount;
+        const pendingInviteCount = games.filter(g => g.isPendingInvite).length;
+        const badgeCount = myTurnCount + pendingInviteCount;
+        if (badgeCount > 0) {
+            badge.textContent = badgeCount;
             badge.style.display = 'inline';
         } else {
             badge.style.display = 'none';
@@ -3697,6 +3699,21 @@
         }
 
         container.innerHTML = games.map(game => {
+            // v127b: Pending invite card (someone invited me)
+            if (game.isPendingInvite) {
+                const rankBadge = game.opponentRank
+                    ? `<span class="rank-badge" style="background:${game.opponentRank.color};color:${(game.opponentRank.color === '#ffd54f' || game.opponentRank.color === '#e0e0e0') ? '#333' : '#fff'}">${game.opponentRank.name}</span>`
+                    : '';
+                return `<div class="my-game-card pending-invite-card" data-code="${game.gameCode}">
+                    <div class="game-card-left">
+                        <div class="opponent-name">\u{1F4EC} ${game.opponentName || 'Someone'} ${rankBadge}</div>
+                        <div class="game-score">${game.totalEnds || 4} ends \u2022 Invited you!</div>
+                    </div>
+                    <button class="invite-accept-btn" data-code="${game.gameCode}">Accept</button>
+                    <button class="invite-deny-btn" data-code="${game.gameCode}">Deny</button>
+                </div>`;
+            }
+
             const oppName = game.opponentName || (game.invitedUsername ? 'Invited: ' + game.invitedUsername : 'Waiting...');
             const rankBadge = game.opponentRank
                 ? `<span class="rank-badge" style="background:${game.opponentRank.color};color:${(game.opponentRank.color === '#ffd54f' || game.opponentRank.color === '#e0e0e0') ? '#333' : '#fff'}">${game.opponentRank.name}</span>`
@@ -3729,10 +3746,35 @@
             </div>`;
         }).join('');
 
+        // v127b: Wire up accept/deny buttons on pending invite cards
+        container.querySelectorAll('.invite-accept-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const code = btn.dataset.code;
+                CurlingNetwork.sendJoinAsyncGame(code);
+                btn.textContent = 'Joining...';
+                btn.disabled = true;
+            });
+        });
+        container.querySelectorAll('.invite-deny-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const code = btn.dataset.code;
+                CurlingNetwork.sendDeclineInvite(code);
+                btn.closest('.my-game-card').remove();
+                if (container.children.length === 0) {
+                    emptyMsg.style.display = 'block';
+                    badge.style.display = 'none';
+                }
+            });
+        });
+
         // Wire up game card clicks
         container.querySelectorAll('.my-game-card').forEach(card => {
             card.addEventListener('click', (e) => {
                 if (e.target.classList.contains('forfeit-btn') || e.target.classList.contains('cancel-btn')) return;
+                if (e.target.classList.contains('invite-accept-btn') || e.target.classList.contains('invite-deny-btn')) return;
+                if (card.classList.contains('pending-invite-card')) return; // skip click-to-play for invites
                 const code = card.dataset.code;
                 const game = games.find(g => g.gameCode === code);
                 if (game && game.isWaiting) {
@@ -4711,6 +4753,12 @@
         });
 
         CurlingNetwork.onGameInviteReceived(({ inviteId, fromUsername, fromRank, gameCode }) => {
+            // v127b: For async game invites, refresh My Games instead of popup
+            if (gameCode) {
+                CurlingNetwork.sendGetMyGames();
+                showLobbyToast(fromUsername + ' invited you to a game!');
+                return;
+            }
             showGameInvite(inviteId, fromUsername, fromRank, gameCode);
         });
 
@@ -4727,6 +4775,11 @@
 
         CurlingNetwork.onGameInviteCancelled(() => {
             hideGameInvite();
+        });
+
+        // v127b: Refresh My Games after declining an invite
+        CurlingNetwork.onInviteDeclined(() => {
+            CurlingNetwork.sendGetMyGames();
         });
 
         // ---- BEST SHOTS (v120) ----
@@ -4756,10 +4809,12 @@
         // ---- ASYNC MULTIPLAYER (v123) ----
         CurlingNetwork.onMyGames(({ games }) => {
             renderMyGames(games || []);
-            // v126: Cache turn count for welcome screen badge
+            // v127b: Badge counts my-turn games + pending invites
             const turnCount = (games || []).filter(g => g.isMyTurn && !g.isWaiting).length;
-            localStorage.setItem('curling_my_turn_count', turnCount);
-            updateWelcomeBadge(turnCount);
+            const inviteCount = (games || []).filter(g => g.isPendingInvite).length;
+            const totalBadge = turnCount + inviteCount;
+            localStorage.setItem('curling_my_turn_count', totalBadge);
+            updateWelcomeBadge(totalBadge);
         });
 
         CurlingNetwork.onAsyncGameCreated(({ code }) => {

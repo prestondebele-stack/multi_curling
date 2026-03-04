@@ -1361,6 +1361,29 @@ async function handleMessage(ws, message) {
             break;
         }
 
+        // v127b: Decline an async game invite (clear invite from game row)
+        case 'decline_invite': {
+            const session = playerSessions.get(ws);
+            if (!session || !db.isAvailable()) { send(ws, { type: 'auth_error', error: 'Not logged in' }); break; }
+            const declineCode = (data.code || '').toUpperCase();
+            try {
+                const result = await db.query(
+                    "UPDATE async_games SET invited_user_id = NULL, invited_username = NULL WHERE game_code = $1 AND phase = 'waiting' AND invited_user_id = $2 RETURNING *",
+                    [declineCode, session.userId]
+                );
+                if (result.rows.length === 0) {
+                    send(ws, { type: 'auth_error', error: 'Invite not found' });
+                    break;
+                }
+                send(ws, { type: 'invite_declined' });
+                console.log(`[ASYNC] ${session.username} declined invite for game ${declineCode}`);
+            } catch (e) {
+                console.error('Decline invite error:', e.message);
+                send(ws, { type: 'auth_error', error: 'Failed to decline invite' });
+            }
+            break;
+        }
+
         case 'forfeit_game': {
             const session = playerSessions.get(ws);
             if (!session || !db.isAvailable()) { send(ws, { type: 'auth_error', error: 'Not logged in' }); break; }
@@ -1768,12 +1791,12 @@ async function handleMessage(ws, message) {
                 });
                 send(ws, { type: 'game_invite_sent', inviteId, toUsername });
 
-                // v125: Store invited username on the async game card
+                // v127b: Store invited user info so invite shows in their My Games
                 if (asyncCode) {
                     db.query(
-                        'UPDATE async_games SET invited_username = $1 WHERE game_code = $2 AND phase = $3',
-                        [toUsername, asyncCode, 'waiting']
-                    ).catch(e => console.error('[ASYNC] Failed to store invited username:', e.message));
+                        'UPDATE async_games SET invited_username = $1, invited_user_id = $2 WHERE game_code = $3 AND phase = $4',
+                        [toUsername, toUserId, asyncCode, 'waiting']
+                    ).catch(e => console.error('[ASYNC] Failed to store invite:', e.message));
                 }
 
                 // Get sender's rank for the invite display

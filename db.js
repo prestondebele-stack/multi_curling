@@ -151,6 +151,9 @@ async function initSchema() {
 
             -- v125: Track invited friend on waiting game cards
             ALTER TABLE async_games ADD COLUMN IF NOT EXISTS invited_username VARCHAR(30) DEFAULT NULL;
+
+            -- v127b: Track invited user ID so invites show in their My Games
+            ALTER TABLE async_games ADD COLUMN IF NOT EXISTS invited_user_id INTEGER DEFAULT NULL;
         `);
 
         dbAvailable = true;

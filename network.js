@@ -104,6 +104,7 @@ const CurlingNetwork = (() => {
         onGameLeft: null,
         onGameForfeited: null,
         onGameCancelled: null,
+        onInviteDeclined: null, // v127b
         onOpponentForfeited: null,
         // Connection verified (pong received after tab refocus)
         onConnectionVerified: null,
@@ -455,6 +456,9 @@ const CurlingNetwork = (() => {
             case 'game_cancelled':
                 if (callbacks.onGameCancelled) callbacks.onGameCancelled(data);
                 break;
+            case 'invite_declined':
+                if (callbacks.onInviteDeclined) callbacks.onInviteDeclined(data);
+                break;
             case 'opponent_forfeited':
                 if (callbacks.onOpponentForfeited) callbacks.onOpponentForfeited(data);
                 break;
@@ -793,6 +797,7 @@ const CurlingNetwork = (() => {
         sendJoinAsyncGame(code) { send({ type: 'join_async_game', code }); },
         sendForfeitGame(code) { send({ type: 'forfeit_game', code }); },
         sendCancelGame(code) { send({ type: 'cancel_game', code }); },
+        sendDeclineInvite(code) { send({ type: 'decline_invite', code }); }, // v127b
         sendLeaveCurrentGame() { send({ type: 'leave_current_game' }); },
 
         // Search
@@ -868,6 +873,7 @@ const CurlingNetwork = (() => {
         onGameLeft(cb) { callbacks.onGameLeft = cb; },
         onGameForfeited(cb) { callbacks.onGameForfeited = cb; },
         onGameCancelled(cb) { callbacks.onGameCancelled = cb; },
+        onInviteDeclined(cb) { callbacks.onInviteDeclined = cb; }, // v127b
         onOpponentForfeited(cb) { callbacks.onOpponentForfeited = cb; },
         // Search
         onSearchResults(cb) { callbacks.onSearchResults = cb; },

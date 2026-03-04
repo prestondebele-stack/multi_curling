@@ -557,6 +557,7 @@ async function loadGameState(gameCode) {
 async function getMyGames(userId) {
     if (!db.isAvailable()) return [];
     try {
+        // v127b: Also return games where this user has been invited
         const result = await db.query(`
             SELECT g.*,
                 ru.username AS red_username, ru.rating AS red_rating,
@@ -564,25 +565,31 @@ async function getMyGames(userId) {
             FROM async_games g
             LEFT JOIN users ru ON ru.id = g.red_user_id
             LEFT JOIN users yu ON yu.id = g.yellow_user_id
-            WHERE (g.red_user_id = $1 OR g.yellow_user_id = $1)
-              AND g.phase != 'finished'
+            WHERE ((g.red_user_id = $1 OR g.yellow_user_id = $1)
+              AND g.phase != 'finished')
+              OR (g.invited_user_id = $1 AND g.phase = 'waiting')
             ORDER BY g.last_move_at DESC
         `, [userId]);
 
         return result.rows.map(row => {
+            // v127b: Check if this is a pending invite (user is invited but hasn't joined)
+            const isPendingInvite = row.invited_user_id === userId
+                && row.red_user_id !== userId
+                && (row.yellow_user_id === null || row.yellow_user_id !== userId);
             const isRed = row.red_user_id === userId;
-            const myTeam = isRed ? 'red' : 'yellow';
-            const oppUsername = isRed ? row.yellow_username : row.red_username;
-            const oppRating = isRed ? row.yellow_rating : row.red_rating;
-            const isMyTurn = row.current_team === myTeam && row.phase === 'playing';
+            const myTeam = isPendingInvite ? null : (isRed ? 'red' : 'yellow');
+            const oppUsername = isPendingInvite ? row.red_username : (isRed ? row.yellow_username : row.red_username);
+            const oppRating = isPendingInvite ? row.red_rating : (isRed ? row.yellow_rating : row.red_rating);
+            const isMyTurn = !isPendingInvite && row.current_team === myTeam && row.phase === 'playing';
             return {
                 gameCode: row.game_code,
                 myTeam,
                 opponentName: oppUsername || null,
                 opponentRank: oppRating ? getRank(oppRating) : null,
                 isMyTurn,
-                isWaiting: row.phase === 'waiting',
-                invitedUsername: row.invited_username || null,  // v125
+                isWaiting: row.phase === 'waiting' && !isPendingInvite,
+                isPendingInvite, // v127b
+                invitedUsername: row.invited_username || null,
                 redScore: row.red_score,
                 yellowScore: row.yellow_score,
                 currentEnd: row.current_end,
@@ -615,7 +622,7 @@ async function joinAsyncGame(gameCode, userId) {
     if (!db.isAvailable()) return { error: 'Not available' };
     try {
         const result = await db.query(
-            `UPDATE async_games SET yellow_user_id = $1, phase = 'playing', invited_username = NULL, updated_at = NOW()
+            `UPDATE async_games SET yellow_user_id = $1, phase = 'playing', invited_username = NULL, invited_user_id = NULL, updated_at = NOW()
              WHERE game_code = $2 AND phase = 'waiting' AND yellow_user_id IS NULL AND red_user_id != $1
              RETURNING *`,
             [userId, gameCode]

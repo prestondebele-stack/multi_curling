@@ -3103,3 +3103,30 @@ input[type="range"]::-moz-range-thumb {
     80% { opacity: 1; }
     100% { opacity: 0; }
 }
+
+/* ================================================
+   PENDING INVITE CARDS (v127b)
+   ================================================ */
+.pending-invite-card {
+    border: 1px solid rgba(76, 175, 80, 0.5) !important;
+    background: rgba(76, 175, 80, 0.08) !important;
+}
+.invite-accept-btn, .invite-deny-btn {
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.invite-accept-btn {
+    background: #4CAF50;
+    color: #fff;
+}
+.invite-accept-btn:active { background: #388E3C; }
+.invite-deny-btn {
+    background: #666;
+    color: #fff;
+}
+.invite-deny-btn:active { background: #888; }
