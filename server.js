@@ -1262,8 +1262,20 @@ async function handleMessage(ws, message) {
                 });
 
                 // Notify red if online, otherwise push
-                if (redWs && redWs.readyState === WebSocket.OPEN) {
-                    send(redWs, {
+                // v127c: Find creator's active WS — they may be in the lobby
+                // (not attached to this room) so room.players[0] could be null
+                let creatorWs = redWs;
+                if ((!creatorWs || creatorWs.readyState !== WebSocket.OPEN) && room.redUserId) {
+                    for (const [clientWs, sess] of playerSessions) {
+                        if (sess.userId === room.redUserId && clientWs.readyState === WebSocket.OPEN) {
+                            creatorWs = clientWs;
+                            break;
+                        }
+                    }
+                }
+
+                if (creatorWs && creatorWs.readyState === WebSocket.OPEN) {
+                    send(creatorWs, {
                         type: 'game_start',
                         yourTeam: 'red',
                         opponent: yellowInfo,
@@ -1271,12 +1283,16 @@ async function handleMessage(ws, message) {
                         roomCode: gameCode,
                         isAsync: true,
                     });
-                    // v127b: Also tell creator so their My Games list refreshes
-                    send(redWs, {
+                    // v127c: Tell creator so their My Games list refreshes + toast
+                    send(creatorWs, {
                         type: 'invite_accepted',
                         username: session.username,
                         gameCode,
                     });
+                    // Also attach them to the room now
+                    room.players[0] = creatorWs;
+                    room.sessions[0] = playerSessions.get(creatorWs);
+                    playerRooms.set(creatorWs, gameCode);
                 } else if (room.redUserId) {
                     sendPushNotification(room.redUserId, "Game On!",
                         `${session.username} joined your game! It's your turn.`);
