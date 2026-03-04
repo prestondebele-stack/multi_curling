@@ -4798,7 +4798,9 @@
             // Only show lobby UI if we're NOT in an active game.
             // During reconnect, token_login triggers auth_success — we must
             // NOT overwrite the game screen with the lobby menu.
-            if (!gameState.onlineMode || gameState.phase === 'gameover') {
+            // v126b: Also show lobby if auth panel is visible (user just logged in from lobby)
+            const authPanelVisible = document.getElementById('auth-panel').style.display !== 'none';
+            if (!gameState.onlineMode || gameState.phase === 'gameover' || authPanelVisible) {
                 document.getElementById('auth-panel').style.display = 'none';
                 // If there's a pending join code (from share link), auto-join now
                 if (_pendingJoinCode) {
