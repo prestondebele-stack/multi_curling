@@ -1,5 +1,5 @@
 // Service Worker for Online Curling PWA
-const CACHE_NAME = 'curling-v128b';
+const CACHE_NAME = 'curling-v129';
 const ASSETS = [
     './',
     './index.html',
@@ -98,7 +98,7 @@ self.addEventListener('fetch', (event) => {
     );
 });
 
-// Push notification: only show if no focused game tab exists
+// Push notification: only skip if a game tab is actively focused and visible
 self.addEventListener('push', (event) => {
     const data = event.data ? event.data.json() : {};
     const title = data.title || "It's your turn!";
@@ -106,9 +106,9 @@ self.addEventListener('push', (event) => {
 
     event.waitUntil(
         self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-            // If any game tab is focused, skip the notification
-            const hasFocused = clients.some((c) => c.focused);
-            if (hasFocused) return;
+            // Only skip if the user is actively looking at the game tab
+            const hasFocusedAndVisible = clients.some((c) => c.focused && c.visibilityState === 'visible');
+            if (hasFocusedAndVisible) return;
 
             return self.registration.showNotification(title, {
                 body,

@@ -1228,7 +1228,11 @@ async function handleMessage(ws, message) {
                     await new Promise(r => setTimeout(r, 300));
                     const myInfo = await getPlayerInfo(ws);
                     send(opponentWs, { type: 'opponent_reconnected', opponent: myInfo });
+                    send(opponentWs, { type: 'opponent_presence', online: true }); // v128
                 }
+
+                // v128: Broadcast presence to all async game opponents (not just this room)
+                broadcastPresenceToAsyncOpponents(session.userId, true);
             } catch (e) {
                 console.error('Resume game error:', e.message);
                 send(ws, { type: 'reconnect_failed' });
@@ -1940,6 +1944,8 @@ async function handleMessage(ws, message) {
                     // Send game_start to yellow (accepter)
                     send(ws, {
                         type: 'game_start', yourTeam: 'yellow', opponent: redInfo,
+                        opponentOnline: !!(redWs && redWs.readyState === WebSocket.OPEN)
+                            || (room.redUserId ? onlineUsers.has(room.redUserId) : false),
                         totalEnds: room.totalEnds || 4, roomCode: invite.gameCode, isAsync: true,
                     });
 
@@ -1947,6 +1953,7 @@ async function handleMessage(ws, message) {
                     if (redWs && redWs.readyState === WebSocket.OPEN) {
                         send(redWs, {
                             type: 'game_start', yourTeam: 'red', opponent: yellowInfo,
+                            opponentOnline: true,
                             totalEnds: room.totalEnds || 4, roomCode: invite.gameCode, isAsync: true,
                         });
                     } else if (room.redUserId) {
@@ -2217,6 +2224,10 @@ async function handleMessage(ws, message) {
                 return;
             }
 
+            // Lock immediately to prevent any possibility of double-throw
+            room.state.throwInProgress = true;
+            room.state.phase = 'throwing';
+
             const throwParams = {
                 aim: data.aim,
                 weight: data.weight,
@@ -2239,10 +2250,6 @@ async function handleMessage(ws, message) {
 
             // Snapshot FGZ-protected stones BEFORE physics runs
             serverSnapshotFGZ(room, team);
-
-            // Mark throw in progress
-            room.state.throwInProgress = true;
-            room.state.phase = 'throwing';
 
             console.log(`[THROW OK] ${team} throwing: aim=${data.aim} weight=${data.weight} sweep=${throwParams.sweepLevel} redThrown=${room.state.redThrown} yellowThrown=${room.state.yellowThrown} (room ${code})`);
 
@@ -2286,6 +2293,12 @@ async function handleMessage(ws, message) {
             runServerPhysics(room, throwParams, (result) => {
                 try {
                     clearTimeout(physicsTimeout);
+
+                    // Room may have been destroyed during physics (both players disconnected)
+                    if (!rooms.has(code)) {
+                        console.log(`[THROW] Room ${code} destroyed during physics — discarding result`);
+                        return;
+                    }
 
                     // Physics settled — update authoritative state
                     room.state.settledStones = result.stones;
@@ -2698,6 +2711,12 @@ async function handleMessage(ws, message) {
                 room.sessions[emptySlot] = playerSessions.get(ws) || room.sessions[emptySlot];
                 const myInfo = await getPlayerInfo(ws);
                 send(opponentWs, { type: 'opponent_reconnected', opponent: myInfo });
+            }
+
+            // v128: Broadcast presence to async game opponents on reconnect
+            const reconnSession = playerSessions.get(ws);
+            if (reconnSession?.userId) {
+                broadcastPresenceToAsyncOpponents(reconnSession.userId, true);
             }
             break;
         }
