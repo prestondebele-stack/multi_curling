@@ -31,14 +31,14 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
     console.log('No VAPID keys — push notifications disabled');
 }
 
-async function sendPushNotification(userId, title, body) {
+async function sendPushNotification(userId, title, body, extra) {
     if (!db.isAvailable() || !process.env.VAPID_PUBLIC_KEY) return;
     try {
         const result = await db.query(
             'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1',
             [userId]
         );
-        const payload = JSON.stringify({ title, body, url: '/' });
+        const payload = JSON.stringify({ title, body, url: '/', ...(extra || {}) });
         for (const row of result.rows) {
             const subscription = {
                 endpoint: row.endpoint,
@@ -1340,7 +1340,7 @@ async function handleMessage(ws, message) {
                     playerRooms.set(creatorWs, gameCode);
                 } else if (room.redUserId) {
                     sendPushNotification(room.redUserId, "Game On!",
-                        `${session.username} joined your game! It's your turn.`);
+                        `${session.username} joined your game! It's your turn.`, { gameCode });
                 }
 
                 // Persist updated state
@@ -1958,7 +1958,7 @@ async function handleMessage(ws, message) {
                         });
                     } else if (room.redUserId) {
                         sendPushNotification(room.redUserId, "Game On!",
-                            `${session.username} joined your game! It's your turn.`);
+                            `${session.username} joined your game! It's your turn.`, { gameCode: invite.gameCode });
                     }
 
                     auth.persistGameState(room.code, room.state, room.redUserId, room.yellowUserId)
@@ -2098,7 +2098,7 @@ async function handleMessage(ws, message) {
                                     });
                                 } else if (room.redUserId) {
                                     sendPushNotification(room.redUserId, "Game On!",
-                                        `${session.username} joined your game! It's your turn.`);
+                                        `${session.username} joined your game! It's your turn.`, { gameCode: code });
                                 }
 
                                 // Persist updated state
@@ -2390,6 +2390,12 @@ async function handleMessage(ws, message) {
                         }
                     }
 
+                    // Build rich push context
+                    const pushScore = `${room.state.redScore}-${room.state.yellowScore}`;
+                    const pushEnd = `End ${room.state.currentEnd}/${room.state.totalEnds || 4}`;
+                    const pushExtra = { gameCode: code };
+                    const throwerName = (playerSessions.get(ws) || room.sessions[team === 'red' ? 0 : 1])?.username || 'Opponent';
+
                     // Send push notification to next player (if not game over)
                     if (!gameOver && process.env.VAPID_PUBLIC_KEY) {
                         const nextIdx = room.state.currentTeam === 'red' ? 0 : 1;
@@ -2398,10 +2404,10 @@ async function handleMessage(ws, message) {
                         if (nextSession?.userId) {
                             if (endResult) {
                                 sendPushNotification(nextSession.userId, 'New end starting!',
-                                    `End ${room.state.currentEnd} is starting. You throw first!`);
+                                    `${pushEnd} — Score: ${pushScore}. You throw first!`, pushExtra);
                             } else {
                                 sendPushNotification(nextSession.userId, "It's your turn!",
-                                    'Your opponent has thrown. Time to deliver your stone!');
+                                    `${throwerName} threw — ${pushEnd}, Score: ${pushScore}`, pushExtra);
                             }
                         }
                     }
@@ -2418,12 +2424,12 @@ async function handleMessage(ws, message) {
                             const oppUserId = opponentIdx === 0 ? room.redUserId : room.yellowUserId;
                             if (oppUserId) {
                                 if (!gameOver) {
-                                    const throwerName = (playerSessions.get(ws) || room.sessions[throwerIdx])?.username || 'Opponent';
                                     sendPushNotification(oppUserId, "Your Turn!",
-                                        `${throwerName} just threw — it's your turn!`);
+                                        `${throwerName} threw — ${pushEnd}, Score: ${pushScore}`, pushExtra);
                                 } else {
+                                    const winner = room.state.redScore > room.state.yellowScore ? 'Red' : 'Yellow';
                                     sendPushNotification(oppUserId, "Game Over!",
-                                        'Your game has ended. Check the results!');
+                                        `Final: ${pushScore} — ${winner} wins!`, pushExtra);
                                 }
                             }
                         }
@@ -2802,9 +2808,56 @@ const cleanupInterval = setInterval(() => {
     }
 }, 60000);
 
+// --------------------------------------------------------
+// v129b: STALE GAME REMINDERS — nudge players who haven't moved in 24+ hours
+// Runs every 6 hours. Sends at most one reminder per game per 24h window.
+// --------------------------------------------------------
+const staleReminderInterval = setInterval(async () => {
+    if (!db.isAvailable()) return;
+    try {
+        // Find async games where it's been 24+ hours since last move, game isn't finished,
+        // and both players have joined
+        const result = await db.query(`
+            SELECT game_code, current_team, red_user_id, yellow_user_id,
+                   red_score, yellow_score, current_end, total_ends,
+                   last_move_at
+            FROM async_games
+            WHERE phase NOT IN ('finished', 'waiting')
+              AND red_user_id IS NOT NULL
+              AND yellow_user_id IS NOT NULL
+              AND last_move_at < NOW() - INTERVAL '24 hours'
+              AND last_move_at > NOW() - INTERVAL '7 days'
+        `);
+        for (const game of result.rows) {
+            const waitingUserId = game.current_team === 'red' ? game.red_user_id : game.yellow_user_id;
+            const opponentUserId = game.current_team === 'red' ? game.yellow_user_id : game.red_user_id;
+            // Look up opponent username for a friendlier message
+            let oppName = 'Your opponent';
+            try {
+                const userResult = await db.query('SELECT username FROM users WHERE id = $1', [opponentUserId]);
+                if (userResult.rows.length > 0) oppName = userResult.rows[0].username;
+            } catch (_) { /* ignore */ }
+            const score = `${game.red_score}-${game.yellow_score}`;
+            const endInfo = `End ${game.current_end}/${game.total_ends}`;
+            sendPushNotification(
+                waitingUserId,
+                'Your move is waiting!',
+                `${oppName} is waiting — ${endInfo}, Score: ${score}`,
+                { gameCode: game.game_code }
+            );
+        }
+        if (result.rows.length > 0) {
+            console.log(`[STALE] Sent ${result.rows.length} stale game reminder(s)`);
+        }
+    } catch (err) {
+        console.error('[STALE] Reminder check failed:', err.message);
+    }
+}, 6 * 60 * 60 * 1000); // Every 6 hours
+
 wss.on('close', () => {
     clearInterval(heartbeatInterval);
     clearInterval(cleanupInterval);
+    clearInterval(staleReminderInterval);
 });
 
 // --------------------------------------------------------

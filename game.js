@@ -3657,6 +3657,14 @@
         } else {
             el.style.display = 'none';
         }
+        // v129: Update PWA app icon badge (home screen installs)
+        if ('setAppBadge' in navigator) {
+            if (count > 0) {
+                navigator.setAppBadge(count).catch(() => {});
+            } else {
+                navigator.clearAppBadge().catch(() => {});
+            }
+        }
     }
 
     // v126: Show cached turn count on welcome screen immediately
@@ -4914,6 +4922,11 @@
                 // If there's a pending join code (from share link), auto-join now
                 if (_pendingJoinCode) {
                     executePendingJoin();
+                } else if (_pendingResumeCode) {
+                    // v129b: Deep-link from push notification — auto-resume game
+                    const code = _pendingResumeCode;
+                    _pendingResumeCode = null;
+                    CurlingNetwork.sendResumeGame(code);
                 } else {
                     showLobbyPanel('lobby-menu');
                 }
@@ -5599,6 +5612,7 @@
     // we auto-join the room. If they already have a saved token, it joins
     // immediately after token login succeeds.
     let _pendingJoinCode = null;
+    let _pendingResumeCode = null; // v129: Deep-link from push notification
     let _googleCredential = null;
 
     function executePendingJoin() {
@@ -5683,11 +5697,60 @@
     })();
 
     // --------------------------------------------------------
+    // v129b: AUTO-RESUME FROM PUSH NOTIFICATION DEEP-LINK (?game=CODE)
+    // --------------------------------------------------------
+    (function checkAutoResume() {
+        const params = new URLSearchParams(window.location.search);
+        const gameCode = params.get('game');
+        if (!gameCode) return;
+
+        // Clean the URL so refresh doesn't re-resume
+        history.replaceState({}, '', window.location.pathname);
+
+        _pendingResumeCode = gameCode.toUpperCase();
+
+        // Dismiss welcome screen and switch to online mode
+        dismissWelcome();
+        document.getElementById('mode-online').classList.add('active');
+        document.getElementById('mode-1p').classList.remove('active');
+        document.getElementById('mode-2p').classList.remove('active');
+        document.getElementById('difficulty-selector').classList.add('hidden');
+        document.getElementById('ends-selector-local').classList.add('hidden');
+
+        // Connect to server
+        CurlingNetwork.connect(SERVER_URL).then(() => {
+            showLobbyScreen();
+            CurlingNetwork.sendGetGoogleClientId();
+
+            const savedToken = localStorage.getItem('curling_token');
+            const savedUsername = localStorage.getItem('curling_username');
+            if (savedToken) {
+                // Token login will trigger onAuthSuccess → auto-resume via _pendingResumeCode
+                CurlingNetwork.sendTokenLogin(savedToken);
+                if (savedUsername) {
+                    document.getElementById('auth-panel').style.display = 'none';
+                    document.getElementById('user-info-bar').style.display = 'flex';
+                    document.getElementById('logged-in-as').textContent = savedUsername;
+                }
+                showLobbyPanel('lobby-menu');
+            } else {
+                // Not logged in — show auth panel; after login, onAuthSuccess handles resume
+                document.getElementById('auth-panel').style.display = 'flex';
+                document.getElementById('user-info-bar').style.display = 'none';
+                document.getElementById('lobby-menu').style.display = 'none';
+            }
+        }).catch(() => {
+            _pendingResumeCode = null;
+            alert('Could not connect to server. Please try again.');
+        });
+    })();
+
+    // --------------------------------------------------------
     // AUTO-REJOIN ACTIVE GAME (page refresh / back swipe recovery)
     // --------------------------------------------------------
     (function checkActiveGameSession() {
         // v115h: Skip if invite link auto-join is pending (URL already cleaned by checkAutoJoin)
-        if (_pendingJoinCode) return;
+        if (_pendingJoinCode || _pendingResumeCode) return;
 
         const session = CurlingNetwork.getActiveSession();
         if (!session || !session.roomCode) return;

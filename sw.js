@@ -1,5 +1,5 @@
 // Service Worker for Online Curling PWA
-const CACHE_NAME = 'curling-v129';
+const CACHE_NAME = 'curling-v129b';
 const ASSETS = [
     './',
     './index.html',
@@ -103,6 +103,7 @@ self.addEventListener('push', (event) => {
     const data = event.data ? event.data.json() : {};
     const title = data.title || "It's your turn!";
     const body = data.body || 'Your opponent has thrown. Time to deliver your stone!';
+    const gameCode = data.gameCode || '';
 
     event.waitUntil(
         self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
@@ -114,28 +115,37 @@ self.addEventListener('push', (event) => {
                 body,
                 icon: './olympic-rings.svg',
                 badge: './olympic-rings.svg',
-                tag: 'turn-notification',
+                // Per-game tag so multiple games get separate notifications
+                tag: gameCode ? `turn-${gameCode}` : 'turn-notification',
                 renotify: true,
                 vibrate: [200, 100, 200],
+                data: { gameCode }, // Pass to click handler
+                actions: gameCode ? [{ action: 'play', title: 'Play Now' }] : [],
             });
         })
     );
 });
 
-// Notification click: focus existing game tab or open a new one
+// Notification click: deep-link to the specific game
 self.addEventListener('notificationclick', (event) => {
     event.notification.close();
+    const gameCode = event.notification.data?.gameCode || '';
+    const targetUrl = gameCode ? `./?game=${gameCode}` : './';
 
     event.waitUntil(
         self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-            // Try to focus an existing game tab
+            // Try to focus an existing game tab and navigate it
             for (const client of clients) {
                 if (client.url && client.focus) {
+                    // Navigate to the game if we have a code
+                    if (gameCode && client.navigate) {
+                        return client.navigate(targetUrl).then((c) => c.focus());
+                    }
                     return client.focus();
                 }
             }
             // No existing tab — open the game
-            return self.clients.openWindow('./');
+            return self.clients.openWindow(targetUrl);
         })
     );
 });
